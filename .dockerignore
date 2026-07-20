@@ -1,0 +1,14 @@
+.venv/
+.venv_old/
+.git/
+__pycache__/
+*.pyc
+.env
+storage/
+node_modules/
+.vscode/
+tests/
+test_*.py
+*.pdf
+*.log
+*.egg-info/

@@ -1,0 +1,31 @@
+[project]
+name = "tutelas-online"
+version = "0.1.0"
+description = "Plataforma de radicación automática de tutelas vía WhatsApp"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115",
+    "uvicorn[standard]>=0.34",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "pydantic-settings>=2.7",
+    "openai>=1.60",
+    "fpdf2>=2.8",
+    "playwright>=1.50",
+    "twilio>=9.4",
+    "apscheduler>=3.11",
+    "python-multipart>=0.0.18",
+    "aiofiles>=24.1",
+    "python-dotenv>=1.1",
+    "jinja2>=3.1",
+]
+
+[tool.setuptools.packages.find]
+exclude = ["storage*", "tests*"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "httpx>=0.28",
+]

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat - Tutelas Online</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #e5ddd5; height: 100vh; display: flex; justify-content: center; align-items: center; }
+  .chat { width: 420px; height: 90vh; max-height: 700px; background: #fff; border-radius: 12px; box-shadow: 0 2px 20px rgba(0,0,0,.15); display: flex; flex-direction: column; overflow: hidden; }
+  .chat-header { background: #075e54; color: #fff; padding: 15px 20px; display: flex; align-items: center; gap: 10px; }
+  .chat-header .avatar { width: 40px; height: 40px; border-radius: 50%; background: #128c7e; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+  .chat-header h3 { font-size: 15px; }
+  .chat-header p { font-size: 12px; opacity: .8; }
+  .messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; background: #e5ddd5; }
+  .msg { max-width: 80%; padding: 8px 12px; border-radius: 8px; font-size: 14px; line-height: 1.4; position: relative; }
+  .msg.user { background: #dcf8c6; align-self: flex-end; border-bottom-right-radius: 2px; }
+  .msg.bot { background: #fff; align-self: flex-start; border-bottom-left-radius: 2px; }
+  .msg .time { font-size: 10px; color: #999; text-align: right; margin-top: 3px; }
+  .options { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 15px; background: #fff; border-top: 1px solid #eee; }
+  .options button { padding: 6px 14px; border: 1px solid #128c7e; border-radius: 16px; background: #fff; color: #128c7e; cursor: pointer; font-size: 13px; transition: .2s; }
+  .options button:hover { background: #128c7e; color: #fff; }
+  .input-area { display: flex; padding: 10px 15px; background: #f0f0f0; gap: 8px; }
+  .input-area input { flex: 1; padding: 10px 15px; border: none; border-radius: 20px; outline: none; font-size: 14px; }
+  .input-area button { width: 45px; height: 45px; border: none; border-radius: 50%; background: #128c7e; color: #fff; font-size: 20px; cursor: pointer; transition: .2s; }
+  .input-area button:hover { background: #075e54; }
+  .typing { font-style: italic; color: #666; font-size: 12px; padding: 5px 15px; }
+  .btn-foto { padding: 10px 15px; background: #f0f0f0; text-align: center; }
+  .btn-foto button { padding: 8px 20px; border: none; border-radius: 8px; background: #128c7e; color: #fff; cursor: pointer; font-size: 13px; }
+  .btn-foto button:hover { background: #075e54; }
+  .result { padding: 8px 12px; background: #e8f5e9; border-radius: 8px; font-size: 12px; color: #2e7d32; align-self: center; max-width: 90%; }
+</style>
+</head>
+<body>
+<div class="chat">
+  <div class="chat-header">
+    <div class="avatar">⚖</div>
+    <div>
+      <h3>Tutelas Online</h3>
+      <p>Asistente Legal Virtual</p>
+    </div>
+  </div>
+  <div class="messages" id="messages"></div>
+  <div class="options" id="options"></div>
+  <div class="input-area">
+    <input type="text" id="input" placeholder="Escribe un mensaje..." autofocus>
+    <button id="sendBtn">➤</button>
+  </div>
+</div>
+
+<script>
+const NUMERO = 'whatsapp:+573106161629';
+const messages = document.getElementById('messages');
+const input = document.getElementById('input');
+const options = document.getElementById('options');
+const sendBtn = document.getElementById('sendBtn');
+
+function addMsg(text, tipo) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + tipo;
+  const now = new Date();
+  div.innerHTML = text + '<div class="time">' + now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>';
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function addResult(text) {
+  const div = document.createElement('div');
+  div.className = 'result';
+  div.textContent = text;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+async function send(body, media) {
+  const data = new URLSearchParams();
+  data.set('From', NUMERO);
+  data.set('Body', body);
+  data.set('NumMedia', media ? '1' : '0');
+  if (media) {
+    data.set('MediaUrl0', 'https://fakeimg.pl/400x200');
+    data.set('MediaContentType0', 'image/jpeg');
+  }
+  try {
+    const r = await fetch('/webhook/whatsapp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: data
+    });
+    return await r.json();
+  } catch(e) {
+    return { error: e.message };
+  }
+}
+
+async function handleInput(text) {
+  if (!text.trim()) return;
+  addMsg(text, 'user');
+  input.value = '';
+  options.innerHTML = '';
+
+  let r = null;
+  let media = false;
+  if (text === '\ud83d\udce8 Enviar foto') {
+    text = '';
+    media = true;
+    addResult('✅ Foto enviada. Procesando...');
+  }
+  r = await send(text, media);
+
+  if (r && r.respuestas) {
+    r.respuestas.forEach(msg => {
+      addMsg(msg, 'bot');
+      if (msg.includes('motivo')) {
+        setOptions(['1', '2', '3']);
+      } else if (msg.includes('soportes') || msg.includes('foto')) {
+        setOptions(['\ud83d\udce8 Enviar foto']);
+      } else if (msg.includes('correcto') || msg.includes('Resumen')) {
+        setOptions(['S\u00ed']);
+      } else       if (msg.includes('JURAMENTO') || msg.includes('juramento')) {
+        setOptions(['S\u00ed, juro', 'No']);
+      } else if (msg.includes('nombre completo')) {
+        setOptions([]);
+      } else if (msg.includes('teléfono') || msg.includes('telefono')) {
+        setOptions([]);
+      } else if (msg.includes('correo')) {
+        setOptions([]);
+      } else if (msg.includes('cédula') || msg.includes('cedula') || msg.includes('documento')) {
+        setOptions([]);
+      } else if (msg.includes('ciudad')) {
+        setOptions([]);
+      } else if (msg.includes('entidad') || msg.includes('contra qué')) {
+        setOptions([]);
+      } else if (msg.includes('NIT') || msg.includes('nit')) {
+        setOptions(['no s\u00e9']);
+      }
+    });
+  }
+  if (r && r.error) {
+    addResult('\u26a0 Error: ' + r.error);
+  }
+}
+
+function setOptions(opts) {
+  options.innerHTML = '';
+  opts.forEach(o => {
+    const btn = document.createElement('button');
+    btn.textContent = o;
+    btn.onclick = () => handleInput(o);
+    options.appendChild(btn);
+  });
+}
+
+sendBtn.onclick = () => handleInput(input.value);
+input.onkeydown = (e) => { if (e.key === 'Enter') handleInput(input.value); };
+</script>
+</body>
+</html>

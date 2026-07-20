@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tutelas Online - Admin</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+  .header { background: #1a237e; color: #fff; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 20px; }
+  .header span { font-size: 14px; opacity: .8; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+  .stat-card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .stat-card .num { font-size: 28px; font-weight: bold; color: #1a237e; }
+  .stat-card .label { font-size: 13px; color: #666; margin-top: 5px; }
+  .filtros { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; }
+  .filtros select, .filtros input { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+  .filtros label { font-size: 13px; color: #666; }
+  table { width: 100%; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  th { background: #fafafa; padding: 12px 15px; text-align: left; font-size: 12px; text-transform: uppercase; color: #666; }
+  td { padding: 12px 15px; border-top: 1px solid #eee; font-size: 14px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+  .badge-success { background: #e8f5e9; color: #2e7d32; }
+  .badge-warning { background: #fff3e0; color: #e65100; }
+  .badge-info { background: #e3f2fd; color: #1565c0; }
+  .badge-error { background: #fce4ec; color: #c62828; }
+  .btn { display: inline-block; padding: 5px 12px; border-radius: 5px; text-decoration: none; font-size: 13px; cursor: pointer; border: none; }
+  .btn-primary { background: #1a237e; color: #fff; }
+  .btn-small { padding: 3px 8px; font-size: 12px; background: #e0e0e0; color: #333; border: none; cursor: pointer; }
+  .btn-danger { background: #c62828; color: #fff; padding: 6px 14px; }
+  .tr-hover { cursor: pointer; }
+  .tr-hover:hover { background: #f5f5ff; }
+  .empty { text-align: center; padding: 60px 20px; color: #999; }
+  .refresh { color: #fff; text-decoration: none; font-size: 14px; opacity: .8; }
+
+  .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.4); z-index: 1000; justify-content: center; align-items: flex-start; padding-top: 40px; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: #fff; border-radius: 12px; width: 680px; max-height: 85vh; overflow-y: auto; box-shadow: 0 8px 30px rgba(0,0,0,.2); padding: 0; }
+  .modal-header { background: #1a237e; color: #fff; padding: 15px 20px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; }
+  .modal-header h2 { font-size: 16px; }
+  .modal-close { background: none; border: none; color: #fff; font-size: 22px; cursor: pointer; opacity: .7; }
+  .modal-close:hover { opacity: 1; }
+  .modal-body { padding: 20px; }
+  .modal-section { margin-bottom: 20px; }
+  .modal-section h3 { font-size: 13px; text-transform: uppercase; color: #999; margin-bottom: 8px; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .detail-item { }
+  .detail-item label { font-size: 11px; color: #999; display: block; }
+  .detail-item span { font-size: 14px; }
+  .msg-item { padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; display: flex; gap: 6px; }
+  .msg-item .tag { background: #e0e0e0; border-radius: 4px; padding: 1px 6px; font-size: 11px; white-space: nowrap; }
+  .msg-item .tag.user { background: #dcf8c6; }
+  .msg-item .tag.bot { background: #e3f2fd; }
+  .error-box { background: #fce4ec; color: #c62828; padding: 10px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; }
+  .datos-box { background: #f5f5f5; padding: 10px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+  .acciones { display: flex; gap: 10px; margin-top: 15px; }
+  .spinner { display: none; width: 16px; height: 16px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; margin: 0 auto; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>&#x2696;&#xFE0F; Tutelas Online</h1>
+  <div><span>{{ tutelas|length }} tutelas</span> &nbsp; <a href="/admin" class="refresh">&#x21BB;</a></div>
+</div>
+
+<div class="container">
+  <div class="stats">
+    <div class="stat-card">
+      <div class="num">{{ stats.total }}</div>
+      <div class="label">Total</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">{{ stats.radicadas }}</div>
+      <div class="label">Radicadas</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">{{ stats.pendientes }}</div>
+      <div class="label">Pendientes</div>
+    </div>
+    <div class="stat-card">
+      <div class="num">{{ stats.fallidas }}</div>
+      <div class="label">Fallidas</div>
+    </div>
+  </div>
+
+  <div class="filtros">
+    <label>Filtrar:</label>
+    <select id="filtro-estado" onchange="filtrar()">
+      <option value="">Todos los estados</option>
+      <option value="borrador">Borrador</option>
+      <option value="datos_listos">Datos listos</option>
+      <option value="confirmada">Confirmada</option>
+      <option value="pdf_generado">PDF generado</option>
+      <option value="radicada">Radicada</option>
+      <option value="fallida">Fallida</option>
+    </select>
+    <input type="text" id="filtro-buscar" placeholder="Buscar tel&#xE9;fono o ID..." oninput="filtrar()">
+  </div>
+
+  {% if tutelas %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Tipo</th>
+        <th>Estado</th>
+        <th>N&deg; Radicado</th>
+        <th>Usuario</th>
+        <th>Creada</th>
+        <th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for t in tutelas %}
+      <tr class="tr-hover" onclick="abrirDetalle({{ t.id }})">
+        <td>{{ t.id }}</td>
+        <td>{{ t.tipo }}</td>
+        <td>
+          {% set cls = {'borrador': 'badge-info', 'datos_listos': 'badge-info', 'confirmada': 'badge-warning',
+                        'pdf_generado': 'badge-warning', 'radicada': 'badge-success', 'fallida': 'badge-error'} %}
+          <span class="badge {{ cls.get(t.estado, 'badge-info') }}">{{ t.estado }}</span>
+        </td>
+        <td>{{ t.num_radicado or '&mdash;' }}</td>
+        <td>{{ t.user_nombre or '&mdash;' }}<br><small>{{ t.user_telefono or '' }}</small></td>
+        <td>{{ t.created_at[:10] if t.created_at else '&mdash;' }}</td>
+        <td>
+          {% if t.pdf_path %}
+            <a href="/admin/tutelas/{{ t.id }}/pdf" class="btn btn-small" target="_blank">PDF</a>
+          {% endif %}
+          {% if t.constancia_path %}
+            <a href="/admin/tutelas/{{ t.id }}/constancia" class="btn btn-small" target="_blank">Constancia</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty">
+      <p style="font-size: 48px; margin-bottom: 10px;">&#x1F4CB;</p>
+      <p>No hay tutelas registradas a&uacute;n.</p>
+      <p style="font-size: 13px; color: #bbb; margin-top: 5px;">Usa el chat o el simulador WhatsApp para crear la primera.</p>
+    </div>
+  {% endif %}
+</div>
+
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="modal-titulo">Detalle de Tutela</h2>
+      <button class="modal-close" onclick="cerrarModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <div style="text-align:center;padding:40px 0;color:#999;">Cargando...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let tutelaActual = null;
+
+async function abrirDetalle(id) {
+  document.getElementById('modal').classList.add('show');
+  document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:40px 0;color:#999;">Cargando...</div>';
+  try {
+    const r = await fetch('/admin/api/tutelas/' + id);
+    tutelaActual = await r.json();
+    renderDetalle();
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = '<div class="error-box">Error al cargar: ' + e.message + '</div>';
+  }
+}
+
+function cerrarModal() {
+  document.getElementById('modal').classList.remove('show');
+  tutelaActual = null;
+}
+
+function renderDetalle() {
+  const t = tutelaActual;
+  if (!t) return;
+  document.getElementById('modal-titulo').textContent = 'Tutela #' + t.id + ' - ' + t.tipo;
+
+  const d = t.datos || {};
+  const r = t.radicacion || {};
+  const errores = r.ultimo_error ? '<div class="error-box">' + escapeHtml(r.ultimo_error) + '</div>' : '';
+  const datosStr = Object.keys(d).length ? escapeHtml(JSON.stringify(d, null, 2)) : '<span style="color:#999;">Sin datos</span>';
+
+  const puedeReintentar = t.estado === 'fallida' || t.estado === 'pdf_generado';
+
+  document.getElementById('modal-body').innerHTML = `
+    <div class="modal-section">
+      <h3>Informaci&oacute;n General</h3>
+      <div class="detail-grid">
+        <div class="detail-item"><label>ID</label><span>${t.id}</span></div>
+        <div class="detail-item"><label>Tipo</label><span>${t.tipo}</span></div>
+        <div class="detail-item"><label>Estado</label><span class="badge badge-${t.estado === 'radicada' ? 'success' : t.estado === 'fallida' ? 'error' : 'warning'}">${t.estado}</span></div>
+        <div class="detail-item"><label>Creada</label><span>${t.created_at || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Actualizada</label><span>${t.updated_at || '&mdash;'}</span></div>
+        <div class="detail-item"><label>PDF</label><span>${t.pdf_path ? '<a href="/admin/tutelas/' + t.id + '/pdf" target="_blank">Descargar</a>' : '&mdash;'}</span></div>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h3>Usuario</h3>
+      <div class="detail-grid">
+        <div class="detail-item"><label>Tel&eacute;fono</label><span>${t.usuario.telefono || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Nombre</label><span>${t.usuario.nombre || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Estado</label><span>${t.usuario.estado || '&mdash;'}</span></div>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h3>Datos Extra&iacute;dos</h3>
+      <div class="datos-box">${datosStr}</div>
+    </div>
+
+    ${r.num_radicado || r.ultimo_error ? `
+    <div class="modal-section">
+      <h3>Radicaci&oacute;n</h3>
+      <div class="detail-grid">
+        <div class="detail-item"><label>Estado</label><span>${r.estado || '&mdash;'}</span></div>
+        <div class="detail-item"><label>N&deg; Radicado</label><span>${r.num_radicado || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Intentos</label><span>${r.intentos || 0}</span></div>
+        <div class="detail-item"><label>Radicado</label><span>${r.created_at || '&mdash;'}</span></div>
+      </div>
+      ${errores}
+    </div>
+    ` : ''}
+
+    ${t.mensajes && t.mensajes.length ? `
+    <div class="modal-section">
+      <h3>Mensajes (${t.mensajes.length})</h3>
+      ${t.mensajes.map(m => `
+        <div class="msg-item">
+          <span class="tag ${m.es_recibido ? 'user' : 'bot'}">${m.es_recibido ? 'USR' : 'BOT'}</span>
+          <span>${escapeHtml(m.body || '(sin texto)')}${m.media_url ? ' [media]' : ''}</span>
+        </div>
+      `).join('')}
+    </div>
+    ` : ''}
+
+    ${puedeReintentar ? `
+    <div class="acciones">
+      <button class="btn btn-danger" onclick="reintentar(${t.id})" id="btn-reintentar">Reintentar Radicaci&oacute;n</button>
+    </div>
+    ` : ''}
+  `;
+}
+
+async function reintentar(id) {
+  const btn = document.getElementById('btn-reintentar');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="display:inline-block;"></div> Reintentando...';
+  try {
+    const r = await fetch('/admin/tutelas/' + id + '/reintentar', { method: 'POST' });
+    const res = await r.json();
+    if (res.ok) {
+      alert('Radicaci\u00f3n exitosa. N\u00famero: ' + (res.num_radicado || 'N/A'));
+      location.reload();
+    } else {
+      alert('Error: ' + (res.error || 'desconocido'));
+      abrirDetalle(id);
+    }
+  } catch(e) {
+    alert('Error de conexi\u00f3n: ' + e.message);
+    abrirDetalle(id);
+  }
+}
+
+function cerrarModal() {
+  document.getElementById('modal').classList.remove('show');
+  tutelaActual = null;
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function filtrar() {
+  const estado = document.getElementById('filtro-estado').value.toLowerCase();
+  const buscar = document.getElementById('filtro-buscar').value.toLowerCase();
+  document.querySelectorAll('tbody tr').forEach(row => {
+    const texto = row.textContent.toLowerCase();
+    const cumpleEstado = !estado || texto.includes(estado);
+    const cumpleBuscar = !buscar || texto.includes(buscar);
+    row.style.display = cumpleEstado && cumpleBuscar ? '' : 'none';
+  });
+}
+
+document.getElementById('modal').onclick = function(e) {
+  if (e.target === this) cerrarModal();
+};
+document.onkeydown = function(e) { if (e.key === 'Escape') cerrarModal(); };
+</script>
+</body>
+</html>

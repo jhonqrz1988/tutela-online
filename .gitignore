@@ -1,0 +1,11 @@
+.env
+storage/
+*.pyc
+__pycache__/
+.venv/
+.pytest_cache/
+tunnel_url.txt
+*.pdf
+*.log
+tutelas_online.egg-info/
+.DS_Store
