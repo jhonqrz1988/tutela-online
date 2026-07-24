@@ -63,18 +63,17 @@ def _enviar_zapi(telefono: str, mensaje: str) -> bool:
 
 
 def _enviar_twilio(telefono: str, mensaje: str) -> bool:
-    from twilio.rest import Client
-
     if not settings.twilio_account_sid:
         return False
     try:
-        client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-        client.messages.create(
-            body=mensaje,
-            from_=_from_whatsapp(),
-            to=_to_whatsapp(telefono),
+        auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+        r = httpx.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
+            data={"Body": mensaje, "From": _from_whatsapp(), "To": _to_whatsapp(telefono)},
+            auth=auth,
+            timeout=15,
         )
-        return True
+        return r.is_success
     except Exception:
         return False
 
@@ -87,6 +86,8 @@ def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf")
         return _enviar_documento_meta(telefono_limpio, ruta_pdf, filename)
     elif provider == "zapi":
         return _enviar_documento_zapi(telefono_limpio, ruta_pdf, filename)
+    elif provider == "twilio":
+        return _enviar_documento_twilio(telefono, ruta_pdf, filename)
     return False
 
 
@@ -169,3 +170,26 @@ def _to_whatsapp(telefono: str) -> str:
     if telefono.startswith("+"):
         return f"whatsapp:{telefono}"
     return f"whatsapp:+57{telefono}"
+
+
+def _enviar_documento_twilio(telefono: str, ruta_pdf: str, filename: str) -> bool:
+    if not settings.twilio_account_sid:
+        return False
+    try:
+        auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+        tutela_id = filename.replace("tutela_", "").replace(".pdf", "")
+        pdf_url = f"{settings.app_url}/admin/tutelas/{tutela_id}/pdf"
+        r = httpx.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
+            data={
+                "Body": "📄 Tutela generada",
+                "From": _from_whatsapp(),
+                "To": _to_whatsapp(telefono),
+                "MediaUrl": pdf_url,
+            },
+            auth=auth,
+            timeout=30,
+        )
+        return r.is_success
+    except Exception:
+        return False
