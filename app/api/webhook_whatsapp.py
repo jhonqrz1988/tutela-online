@@ -299,8 +299,25 @@ async def procesar_mensaje(
         return {"ok": True, "respuestas": respuestas}
 
     # 4. RECIBIR PRUEBAS (fotos/documentos)
-    if num_media > 0 and media_url:
-        if tutela.estado == "confirmada":
+    if tutela.estado == "confirmada":
+        # Si no envía archivos y escribe "continuar", saltar las pruebas
+        if num_media == 0 and body in ("continuar", "no tengo", "no", "saltar", "omitir"):
+            contenido = await generar_tutela(datos) or datos.get("hechos", "")
+            ruta_pdf = generar_pdf(datos, contenido)
+            tutela.pdf_path = ruta_pdf
+            tutela.estado = "pdf_generado"
+            session.commit()
+            _r(respuestas, telefono, "✅ *¡Tutela lista!*")
+            enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
+            _r(respuestas, telefono,
+               "📄 *PDF generado y enviado*\n\n"
+               "¿Deseas radicar la tutela en la Rama Judicial?\n\n"
+               "1️⃣ *Sí, radicar*\n2️⃣ *No, después*")
+            tutela.estado = "esperando_confirmacion"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+
+        if num_media > 0 and media_url:
             # Descargar y guardar el archivo localmente
             ruta_local = await _descargar_prueba(media_url)
             if ruta_local:
@@ -463,9 +480,10 @@ MENSAJE_MENU = (
 )
 
 MENSAJE_PRUEBAS = (
-    "📸 *Envía tus soportes*\n\n"
-    "Por favor envía en este chat:\n"
-    "1️⃣ Foto de tu *cédula* por ambos lados\n"
-    "2️⃣ Fotos de *fórmulas, resultados o soportes*\n\n"
-    "El sistema analizará automáticamente los documentos."
+    "📸 *Envía tus soportes (opcional)*\n\n"
+    "Si tienes fotos de *fórmulas, resultados médicos, respuestas de la EPS, "
+    "comparendos, pantallazos u otros documentos* que apoyen tu caso, "
+    "envíalas ahora.\n\n"
+    "El sistema las analizará y las incluirá como pruebas.\n\n"
+    "Si no tienes soportes, escribe *Continuar* para generar la tutela."
 )
