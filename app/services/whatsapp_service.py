@@ -177,24 +177,27 @@ def _enviar_documento_twilio(telefono: str, ruta_pdf: str, filename: str) -> boo
         return False
     try:
         auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
-        tutela_id = filename.replace("tutela_", "").replace(".pdf", "")
-        pdf_url = f"{settings.app_url}/admin/tutelas/{tutela_id}/pdf"
 
-        # Intentar primero subir a tmpfiles.org (más confiable para Twilio)
-        try:
-            with open(ruta_pdf, "rb") as f:
-                r_up = httpx.post(
-                    "https://tmpfiles.org/api/v1/upload",
-                    files={"file": (filename, f, "application/pdf")},
-                    timeout=20,
-                )
-            if r_up.status_code == 200:
-                data = r_up.json().get("data", {})
-                tmp_url = data.get("url", "")
-                if tmp_url:
-                    pdf_url = tmp_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
-        except Exception:
-            pass
+        # Subir PDF a tmpfiles.org y obtener URL real de descarga
+        import re
+        with open(ruta_pdf, "rb") as f:
+            r_up = httpx.post(
+                "https://tmpfiles.org/api/v1/upload",
+                files={"file": (filename, f, "application/pdf")},
+                timeout=20,
+            )
+        if r_up.status_code != 200:
+            return False
+        tmp_url = r_up.json().get("data", {}).get("url", "")
+        if not tmp_url:
+            return False
+
+        # Extraer link real de descarga del HTML
+        r_dl = httpx.get(tmp_url.replace("tmpfiles.org/", "tmpfiles.org/dl/"), follow_redirects=True, timeout=10)
+        match = re.search(r'href=["\'](https://tmpfiles\.org/dl/[^"\']+\.pdf)["\']', r_dl.text)
+        if not match:
+            return False
+        pdf_url = match.group(1)
 
         r = httpx.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
