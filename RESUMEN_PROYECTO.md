@@ -189,9 +189,21 @@ SIMULATE_BOT=true
 ## Pendientes Priorizados
 
 ### Alta prioridad
-1. Mejorar calidad de tutelas (evitar rechazo judicial)
+1. Mejorar calidad de tutelas (evitar rechazo judicial) ✅
 2. Probar flujo completo con Twilio
 3. Integrar Wompi/Nequi para pagos
+
+### Rama Judicial - Integración Real
+- Portal: procesojudicial.ramajudicial.gov.co/TutelaEnLinea
+- Tiene reCAPTCHA de Google (requiere 2Captcha o similar ~$1/1000)
+- Formulario ASP.NET con validación AJAX
+- Selectores reales ya documentados en `app/bot/navegador.py`
+- Requiere: implementar llenado completo, resolver captcha, descargar constancia
+
+### Media prioridad
+4. Base de datos de entidades (EPS, NITs, correos notificación)
+5. Más tipos de tutela: pensiones, vivienda, educativo, laboral
+6. Notificaciones al admin (nueva tutela, pago recibido, error radicación)
 
 ### Media prioridad
 4. Base de datos de entidades (EPS, NITs, correos notificación)
