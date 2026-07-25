@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     meta_verify_token: str = ""
     meta_app_secret: str = ""
 
-    wati_base_url: str = ""
-    wati_token: str = ""
-
     # === AI Provider: "openai", "groq", o "gemini" ===
     ai_provider: str = "openai"
     ai_api_key: str = ""

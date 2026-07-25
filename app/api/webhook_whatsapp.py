@@ -90,18 +90,6 @@ async def webhook_zapi(request: Request, session=Depends(get_session)):
     return await procesar_mensaje(session, telefono, body, num_media, media_url, es_audio)
 
 
-@router.post("/webhook/wati")
-async def webhook_wati(request: Request, session=Depends(get_session)):
-    data = await request.json()
-    telefono = data.get("from", "")
-    body = (data.get("text", "") or "").strip().lower()
-    msg_type = data.get("type", "text")
-    num_media = 1 if msg_type in ("image", "document", "audio", "video") else 0
-    media_url = data.get("mediaUrl", "")
-    es_audio = msg_type == "audio"
-    return await procesar_mensaje(session, telefono, body, num_media, media_url, es_audio)
-
-
 async def procesar_mensaje(
     session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool
 ) -> dict:

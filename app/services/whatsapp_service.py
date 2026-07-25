@@ -7,7 +7,6 @@ from app.config import settings
 
 META_API_BASE = "https://graph.facebook.com/v25.0/{phone_number_id}/messages"
 ZAPI_BASE = "https://api.z-api.io/instances/{instance}/token/{token}"
-WATI_API_BASE = "https://live.wati.io/{workspace_id}"
 
 
 def _zapi_url(endpoint: str) -> str | None:
@@ -24,19 +23,6 @@ def _meta_headers() -> dict:
     }
 
 
-def _wati_headers() -> dict:
-    return {
-        "Authorization": f"Bearer {settings.wati_token}",
-        "Content-Type": "application/json",
-    }
-
-
-def _wati_url(endpoint: str) -> str | None:
-    if not settings.wati_base_url:
-        return None
-    return f"{settings.wati_base_url}/{endpoint}"
-
-
 def enviar_texto(telefono: str, mensaje: str) -> bool:
     telefono_limpio = telefono.replace("whatsapp:", "").replace("+", "").strip()
 
@@ -47,8 +33,6 @@ def enviar_texto(telefono: str, mensaje: str) -> bool:
         return _enviar_zapi(telefono_limpio, mensaje)
     elif provider == "twilio":
         return _enviar_twilio(telefono, mensaje)
-    elif provider == "wati":
-        return _enviar_wati(telefono_limpio, mensaje)
     return True
 
 
@@ -94,17 +78,6 @@ def _enviar_twilio(telefono: str, mensaje: str) -> bool:
         return False
 
 
-def _enviar_wati(telefono: str, mensaje: str) -> bool:
-    url = _wati_url(f"api/v1/sendSessionMessage/{telefono}")
-    if not url:
-        return False
-    try:
-        r = httpx.post(url, json={"messageText": mensaje}, headers=_wati_headers(), timeout=15)
-        return r.is_success
-    except Exception:
-        return False
-
-
 def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf") -> bool:
     telefono_limpio = telefono.replace("whatsapp:", "").replace("+", "").strip()
 
@@ -115,8 +88,6 @@ def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf")
         return _enviar_documento_zapi(telefono_limpio, ruta_pdf, filename)
     elif provider == "twilio":
         return _enviar_documento_twilio(telefono, ruta_pdf, filename)
-    elif provider == "wati":
-        return _enviar_documento_wati(telefono_limpio, ruta_pdf, filename)
     return False
 
 
@@ -184,24 +155,6 @@ def _enviar_documento_zapi(telefono: str, ruta_pdf: str, filename: str) -> bool:
             "caption": "📄 Tutela generada",
         }
         r = httpx.post(api_url, json=payload, timeout=30)
-        return r.is_success
-    except Exception:
-        return False
-
-
-def _enviar_documento_wati(telefono: str, ruta_pdf: str, filename: str) -> bool:
-    url = _wati_url(f"api/v1/sendSessionFile/{telefono}")
-    if not url:
-        return False
-    try:
-        with open(ruta_pdf, "rb") as f:
-            r = httpx.post(
-                url,
-                files={"file": (filename, f, "application/pdf")},
-                data={"caption": "📄 Tutela generada"},
-                headers={"Authorization": f"Bearer {settings.wati_token}"},
-                timeout=30,
-            )
         return r.is_success
     except Exception:
         return False
