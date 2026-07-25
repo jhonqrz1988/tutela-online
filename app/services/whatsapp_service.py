@@ -179,6 +179,23 @@ def _enviar_documento_twilio(telefono: str, ruta_pdf: str, filename: str) -> boo
         auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
         tutela_id = filename.replace("tutela_", "").replace(".pdf", "")
         pdf_url = f"{settings.app_url}/admin/tutelas/{tutela_id}/pdf"
+
+        # Intentar primero subir a tmpfiles.org (más confiable para Twilio)
+        try:
+            with open(ruta_pdf, "rb") as f:
+                r_up = httpx.post(
+                    "https://tmpfiles.org/api/v1/upload",
+                    files={"file": (filename, f, "application/pdf")},
+                    timeout=20,
+                )
+            if r_up.status_code == 200:
+                data = r_up.json().get("data", {})
+                tmp_url = data.get("url", "")
+                if tmp_url:
+                    pdf_url = tmp_url.replace("tmpfiles.org/", "tmpfiles.org/dl/")
+        except Exception:
+            pass
+
         r = httpx.post(
             f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
             data={

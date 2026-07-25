@@ -121,7 +121,8 @@ async def procesar_mensaje(
         select(Tutela).where(
             Tutela.user_id == user.id,
             Tutela.estado.in_(["borrador", "recogiendo_datos", "datos_listos",
-                               "juramento_pendiente", "confirmada", "pdf_generado"]),
+                               "juramento_pendiente", "confirmada", "pdf_generado",
+                               "esperando_confirmacion"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
@@ -210,7 +211,8 @@ async def procesar_mensaje(
                 tutela.estado = "datos_listos"
                 _r(respuestas, telefono, "⚖️ *JURAMENTO*\n\n"
                    "¿Afirmas bajo la gravedad de juramento que *no has interpuesto otra tutela* "
-                   "por los mismos hechos ante otro juez?\n\nResponde *Sí, juro* o *No*")
+                   "por los mismos hechos ante otro juez?\n\n"
+                   "1️⃣ *Sí, juro*\n2️⃣ *No*")
                 tutela.datos_json = json.dumps(datos)
                 session.commit()
                 return {"ok": True, "respuestas": respuestas}
@@ -224,7 +226,7 @@ async def procesar_mensaje(
 
     # 3. JURAMENTO (ya se mostró el resumen, solo espera "Sí, juro")
     if tutela.estado == "datos_listos":
-        if body in ("sí, juro", "si, juro", "juro", "sí juro", "si juro"):
+        if body in ("1", "sí, juro", "si, juro", "juro", "sí juro", "si juro"):
             _r(respuestas, telefono, MENSAJE_PRUEBAS)
             tutela.estado = "confirmada"
             datos["juramento"] = "prestado"
@@ -233,19 +235,19 @@ async def procesar_mensaje(
             return {"ok": True, "respuestas": respuestas}
         _r(respuestas, telefono, "⚖️ Para continuar, debes confirmar bajo juramento:\n\n"
            "¿Afirmas que *no has presentado otra tutela* por los mismos hechos?\n\n"
-           "Responde *Sí, juro* para continuar.")
+           "1️⃣ *Sí, juro*\n2️⃣ *No*")
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
     if tutela.estado == "juramento_pendiente":
-        if body in ("sí, juro", "si, juro", "juro", "sí", "si"):
+        if body in ("1", "sí, juro", "si, juro", "juro", "sí", "si"):
             _r(respuestas, telefono, MENSAJE_PRUEBAS)
             tutela.estado = "confirmada"
             datos["juramento"] = "prestado"
             tutela.datos_json = json.dumps(datos)
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "Sin el juramento no podemos radicar la tutela. ¿Confirmas que *no has presentado otra tutela* por los mismos hechos? Responde *Sí, juro*")
+        _r(respuestas, telefono, "Sin el juramento no podemos radicar la tutela. ¿Confirmas que *no has presentado otra tutela* por los mismos hechos?\n\n1️⃣ *Sí, juro*\n2️⃣ *No*")
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
@@ -273,8 +275,27 @@ async def procesar_mensaje(
             tutela.estado = "pdf_generado"
             session.commit()
 
-            _r(respuestas, telefono, "✅ *¡Tutela lista!* Radicando ahora...")
+            _r(respuestas, telefono, "✅ *¡Tutela lista!*")
             enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
+
+            _r(respuestas, telefono,
+               "📄 *PDF generado y enviado*\n\n"
+               "¿Deseas radicar la tutela en la Rama Judicial?\n\n"
+               "1️⃣ *Sí, radicar*\n2️⃣ *No, después*")
+            tutela.estado = "esperando_confirmacion"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+
+        if tutela.estado == "confirmada":
+            _r(respuestas, telefono, MENSAJE_PRUEBAS)
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+
+    # 5. ESPERANDO CONFIRMACIÓN PARA RADICAR
+    if tutela.estado == "esperando_confirmacion":
+        if body in ("1", "sí", "si", "radicar"):
+            _r(respuestas, telefono, "⏳ *Radicando tu tutela...*")
+            session.commit()
 
             resultado = await iniciar_radicacion(tutela.id)
 
@@ -285,13 +306,11 @@ async def procesar_mensaje(
                 _r(respuestas, telefono,
                    f"⚠️ Error en radicación: {resultado.get('error', 'desconocido')}")
             return {"ok": True, "respuestas": respuestas}
-
-        if tutela.estado == "confirmada":
-            _r(respuestas, telefono, MENSAJE_PRUEBAS)
-            session.commit()
+        else:
+            _r(respuestas, telefono, "La tutela quedó guardada. Cuando quieras radicarla, responde *Radicar*")
             return {"ok": True, "respuestas": respuestas}
 
-    # 5. MENSAJE POR DEFECTO
+    # 6. MENSAJE POR DEFECTO
     if tutela.estado in ("confirmada", "pdf_generado"):
         _r(respuestas, telefono, MENSAJE_PRUEBAS)
         session.commit()
