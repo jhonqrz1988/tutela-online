@@ -18,6 +18,7 @@ from app.services.ia_service import (
     campos_faltantes,
     extraer_datos,
     generar_tutela,
+    transcribir_audio,
 )
 from app.services.radicacion_service import iniciar_radicacion
 from app.services.whatsapp_service import enviar_documento, enviar_texto
@@ -95,6 +96,14 @@ async def procesar_mensaje(
 ) -> dict:
     respuestas: list[str] = []
 
+    # ─── PROCESAR AUDIO ──────────────────────────────────────────
+    if es_audio and media_url:
+        ruta_audio = await _descargar_prueba(media_url)
+        if ruta_audio:
+            texto = await transcribir_audio(ruta_audio)
+            if texto:
+                body = texto.strip().lower()
+
     msg_orm = MensajeWhatsApp(
         from_number=telefono,
         body=body,
@@ -106,10 +115,48 @@ async def procesar_mensaje(
 
     user = session.execute(select(User).where(User.telefono == telefono)).scalar_one_or_none()
     if not user:
-        user = User(telefono=telefono, estado="nuevo")
+        user = User(telefono=telefono, estado="nuevo", consentimiento=False)
         session.add(user)
         session.commit()
         _r(respuestas, telefono, MENSAJE_BIENVENIDA)
+        return {"ok": True, "respuestas": respuestas}
+
+    # ─── ELIMINAR DATOS ──────────────────────────────────────────
+    if body in ("eliminar", "eliminar mis datos", "borrar", "borrar mis datos"):
+        session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
+        for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
+            session.delete(t)
+        session.delete(user)
+        session.commit()
+        _r(respuestas, telefono, "🗑️ *Tus datos han sido eliminados.*\n\nSi necesitas ayuda en el futuro, escribe *Hola* y empezamos de nuevo.")
+        return {"ok": True, "respuestas": respuestas}
+
+    # ─── FLUJO DE CONSENTIMIENTO ─────────────────────────────────
+    if user.estado == "nuevo":
+        if body in ("acepto", "sí", "si", "ok", "si acepto"):
+            user.consentimiento = True
+            user.estado = "activo"
+            session.commit()
+            _r(respuestas, telefono, MENSAJE_MENU)
+            return {"ok": True, "respuestas": respuestas}
+        elif body in ("no", "no acepto", "cancelar"):
+            user.estado = "rechazado"
+            session.commit()
+            _r(respuestas, telefono, "❌ *Has cancelado.*\n\nTus datos no serán guardados. Si cambias de opinión, escribe *Hola*.")
+            return {"ok": True, "respuestas": respuestas}
+        _r(respuestas, telefono, "✍️ Responde *Acepto* para continuar o *No* para cancelar.")
+        return {"ok": True, "respuestas": respuestas}
+
+    if user.estado == "rechazado" and body in ("hola", "menú", "menu", "inicio", "acepto"):
+        user.consentimiento = True
+        user.estado = "activo"
+        session.commit()
+        _r(respuestas, telefono, "✅ *Gracias por aceptar.*\n\nTus datos serán usados solo para tu tutela.")
+        _r(respuestas, telefono, MENSAJE_MENU)
+        return {"ok": True, "respuestas": respuestas}
+
+    if user.estado == "rechazado":
+        _r(respuestas, telefono, "❌ No puedes usar el servicio sin aceptar el tratamiento de datos.\n\nSi cambias de opinión, escribe *Acepto*.")
         return {"ok": True, "respuestas": respuestas}
 
     if body in ("hola", "menú", "menu", "inicio"):
@@ -370,16 +417,19 @@ def _validar_campo(campo: str, valor: str) -> str | None:
 
 
 async def _descargar_prueba(url: str) -> str | None:
-    """Descarga un archivo de prueba (foto/documento) y lo guarda localmente."""
+    """Descarga un archivo de prueba (foto/documento/audio) y lo guarda localmente."""
     try:
         ext = ".jpg"
-        for e in (".png", ".jpeg", ".pdf", ".jpg", ".gif", ".webp"):
+        for e in (".png", ".jpeg", ".pdf", ".jpg", ".gif", ".webp", ".ogg", ".mp3", ".mp4"):
             if e in url.lower():
                 ext = e
                 break
         ruta = path_prueba(ext)
         async with httpx.AsyncClient(timeout=30) as c:
-            r = await c.get(url)
+            kwargs = {}
+            if "api.twilio.com" in url and settings.twilio_account_sid:
+                kwargs["auth"] = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+            r = await c.get(url, **kwargs)
         if r.status_code == 200:
             with open(ruta, "wb") as f:
                 f.write(r.content)
@@ -393,7 +443,14 @@ MENSAJE_BIENVENIDA = (
     "👋 *¡Hola! Soy tu asistente legal virtual.*\n\n"
     "Te ayudo a radicar una *Acción de Tutela* en Colombia "
     "directamente desde WhatsApp.\n\n"
-    "Escribe *MENÚ* para empezar."
+    "📢 *Aviso de privacidad:*\n"
+    "Para ayudarte necesito tratar tus datos personales "
+    "(nombre, cédula, datos de salud, fotos de documentos). "
+    "Estos datos se usan solo para generar y radicar tu tutela. "
+    "Puedes solicitar su eliminación en cualquier momento "
+    "escribiendo *Eliminar mis datos*.\n\n"
+    "✍️ Responde *Acepto* para continuar o *No* para cancelar.\n\n"
+    "🎤 También puedes enviar *audios* contando tu caso."
 )
 
 MENSAJE_MENU = (
@@ -401,7 +458,8 @@ MENSAJE_MENU = (
     "1️⃣ *Salud* (EPS negó tratamiento/cita/medicamento)\n"
     "2️⃣ *Fotomultas* (comparendos injustos)\n"
     "3️⃣ *Derecho de Petición* (no respondido)\n\n"
-    "Responde con el *número* o el *nombre* del motivo."
+    "🎤 Puedes enviar un *audio* contando tu caso.\n"
+    "🗑️ *Eliminar mis datos* — borra tu info del sistema"
 )
 
 MENSAJE_PRUEBAS = (

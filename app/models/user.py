@@ -13,7 +13,8 @@ class User(Base):
     telefono: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     nombre: Mapped[str] = mapped_column(String(200), nullable=True)
     email: Mapped[str] = mapped_column(String(200), nullable=True)
-    estado: Mapped[str] = mapped_column(String(50), default="activo")
+    estado: Mapped[str] = mapped_column(String(50), default="nuevo")
+    consentimiento: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
