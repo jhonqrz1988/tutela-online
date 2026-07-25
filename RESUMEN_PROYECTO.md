@@ -160,3 +160,46 @@ APP_URL=https://tutela-online-production.up.railway.app
 SECRET_KEY=****
 DATABASE_URL=sqlite:///./storage/tutelas.db
 SIMULATE_BOT=true
+
+---
+
+## Modelo de Negocio
+
+### Estrategia Freemium
+
+| Producto | Precio | Descripción |
+|---|---|---|
+| PDF tutela + guía para radicar manual | GRATIS | El usuario recibe el PDF y un video/imagen explicando cómo radicar él mismo en la Rama Judicial |
+| PDF + Radicación automática completa | $20k COP | El bot radica automáticamente, el usuario recibe número de radicado y constancia |
+
+### Justificación
+- **Gratis genera confianza** — el usuario obtiene su tutela al instante, ve que funciona
+- **Sin fricción** — $20k es el precio de un domicilio en Colombia, fácil de decidir
+- **Sin costo operativo** — si no paga, no radicamos = no gastamos recursos
+
+### Cobro
+- **Nequi** vía Wompi (pasarela que acepta Nequi, tarjeta, PSE)
+- Flujo: bot envía link de pago por WhatsApp → usuario paga → webhook confirma → bot radica
+
+### Meta de ingresos
+- 10 tutelas/día × $20k = $200k/día = $6M/mes
+
+---
+
+## Pendientes Priorizados
+
+### Alta prioridad
+1. Mejorar calidad de tutelas (evitar rechazo judicial)
+2. Probar flujo completo con Twilio
+3. Integrar Wompi/Nequi para pagos
+
+### Media prioridad
+4. Base de datos de entidades (EPS, NITs, correos notificación)
+5. Más tipos de tutela: pensiones, vivienda, educativo, laboral
+6. Notificaciones al admin (nueva tutela, pago recibido, error radicación)
+
+### Baja prioridad / Futuro
+7. Notas de voz (transcripción IA)
+8. Landing page web pública
+9. App móvil
+10. Dashboard con estadísticas e ingresos
