@@ -27,7 +27,7 @@ from app.services.verificacion_service import (
     limpiar_texto_para_pdf,
     verificar_citas,
 )
-from app.services.whatsapp_service import enviar_documento, enviar_texto
+from app.services.whatsapp_service import enviar_botones, enviar_documento, enviar_texto
 from app.utils.file_utils import path_prueba
 
 router = APIRouter()
@@ -89,6 +89,10 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 
                 if msg_type == "text":
                     body = msg.get("text", {}).get("body", "").strip().lower()
+                elif msg_type == "interactive":
+                    interactive = msg.get("interactive", {})
+                    ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
+                    body = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
                 elif msg_type in ("image", "document"):
                     num_media = 1
                     media_url = msg.get(msg_type, {}).get("link", "") or msg.get(msg_type, {}).get("id", "")
@@ -164,7 +168,7 @@ async def procesar_mensaje(
             session.commit()
             _r(respuestas, telefono, "❌ *Has cancelado.*\n\nTus datos no serán guardados. Si cambias de opinión, escribe *Hola*.")
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "✍️ Responde *Acepto* para continuar o *No* para cancelar.")
+        _b(respuestas, telefono, "✍️ ¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado" and body in ("hola", "menú", "menu", "inicio", "acepto"):
@@ -260,7 +264,7 @@ async def procesar_mensaje(
                 session.commit()
                 _r(respuestas, telefono, "✍️ *Escribe tu caso manualmente*\n\nCuéntame qué pasó, incluye todos los detalles.")
                 return {"ok": True, "respuestas": respuestas}
-            _r(respuestas, telefono, "Responde *1* si es correcto o *2* para escribirlo manualmente.")
+            _b(respuestas, telefono, "¿La transcripción de tu audio es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
             session.commit()
             return {"ok": True, "respuestas": respuestas}
 
@@ -346,7 +350,7 @@ async def procesar_mensaje(
     # 3. JURAMENTO (ya se mostró el resumen, solo espera "Sí, juro")
     if tutela.estado == "datos_listos":
         if body in ("1", "sí, juro", "si, juro", "juro", "sí juro", "si juro"):
-            _r(respuestas, telefono, MENSAJE_PRUEBAS)
+            _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
             tutela.estado = "confirmada"
             datos["juramento"] = "prestado"
             tutela.datos_json = json.dumps(datos)
@@ -360,13 +364,13 @@ async def procesar_mensaje(
 
     if tutela.estado == "juramento_pendiente":
         if body in ("1", "sí, juro", "si, juro", "juro", "sí", "si"):
-            _r(respuestas, telefono, MENSAJE_PRUEBAS)
+            _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
             tutela.estado = "confirmada"
             datos["juramento"] = "prestado"
             tutela.datos_json = json.dumps(datos)
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "Sin el juramento no podemos radicar la tutela. ¿Confirmas que *no has presentado otra tutela* por los mismos hechos?\n\n1️⃣ *Sí, juro*\n2️⃣ *No*")
+        _b(respuestas, telefono, "⚖️ ¿Confirmas bajo juramento que *no has presentado otra tutela* por los mismos hechos?", [("1", "✅ Sí, juro"), ("2", "❌ No")])
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
@@ -394,7 +398,7 @@ async def procesar_mensaje(
             return {"ok": True, "respuestas": respuestas}
 
         if tutela.estado == "confirmada":
-            _r(respuestas, telefono, MENSAJE_PRUEBAS)
+            _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
             session.commit()
             return {"ok": True, "respuestas": respuestas}
 
@@ -418,7 +422,7 @@ async def procesar_mensaje(
             tutela.estado = "pdf_generado"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, MENSAJE_POST_PDF)
+        _b(respuestas, telefono, MENSAJE_POST_PDF, [("1", "💳 Pagar $20k"), ("2", "📹 Video gratis")])
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
@@ -459,7 +463,7 @@ async def procesar_mensaje(
 
     # 6. MENSAJE POR DEFECTO
     if tutela.estado in ("confirmada", "pdf_generado"):
-        _r(respuestas, telefono, MENSAJE_PRUEBAS)
+        _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
@@ -473,6 +477,12 @@ async def procesar_mensaje(
 def _r(respuestas: list[str], telefono: str, mensaje: str) -> None:
     enviar_texto(telefono, mensaje)
     respuestas.append(mensaje)
+
+
+def _b(respuestas: list[str], telefono: str, texto: str, botones: list[tuple[str, str]]) -> None:
+    """Envía texto + botones interactivos y registra la respuesta."""
+    enviar_botones(telefono, texto, botones)
+    respuestas.append(f"[BOTONES] {texto} | {botones}")
 
 
 def _siguiente_campo(datos: dict) -> str | None:
@@ -562,7 +572,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 
     _r(respuestas, telefono, "✅ *¡Tutela lista!*")
     enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
-    _r(respuestas, telefono, MENSAJE_POST_PDF)
+    _b(respuestas, telefono, MENSAJE_POST_PDF, [("1", "💳 Pagar $20k"), ("2", "📹 Video gratis")])
     tutela.estado = "esperando_decision_radicacion"
     session.commit()
     return ruta_pdf
@@ -598,8 +608,7 @@ MENSAJE_PRUEBAS = (
     "Si tienes fotos de *fórmulas, resultados médicos, respuestas de la EPS, "
     "comparendos, pantallazos u otros documentos* que apoyen tu caso, "
     "envíalas ahora.\n\n"
-    "El sistema las analizará y las incluirá como pruebas.\n\n"
-    "Si no tienes soportes, escribe *Continuar* para generar la tutela."
+    "El sistema las analizará y las incluirá como pruebas."
 )
 
 MENSAJE_POST_PDF = (
@@ -611,8 +620,7 @@ MENSAJE_POST_PDF = (
     "   Recibes numero de radicado y constancia oficial.\n\n"
     "2️⃣ *Hazlo tu mismo* — GRATIS\n"
     "   Te enviamos un video explicativo.\n"
-    "   Debes ingresar los datos manualmente en el portal.\n\n"
-    "Responde *1* para pagar y radicar, o *2* para el video gratis."
+    "   Debes ingresar los datos manualmente en el portal."
 )
 
 MENSAJE_VIDEO_GUIA = (
