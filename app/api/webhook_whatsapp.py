@@ -1,3 +1,4 @@
+import base64
 import json
 
 from fastapi import APIRouter, Depends, Request
@@ -321,7 +322,12 @@ async def procesar_mensaje(
             ruta_local = await _descargar_prueba(media_url)
             if ruta_local:
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
-                analisis = await analizar_imagen(media_url)
+                try:
+                    with open(ruta_local, "rb") as f:
+                        img_data = base64.b64encode(f.read()).decode()
+                    analisis = await analizar_imagen("data:image/jpeg;base64," + img_data)
+                except Exception:
+                    analisis = ""
                 if analisis:
                     datos.setdefault("pruebas_analizadas", []).append(analisis)
             tutela.datos_json = json.dumps(datos)
@@ -456,10 +462,20 @@ async def _descargar_prueba(url: str) -> str | None:
                 ext = e
                 break
         ruta = path_prueba(ext)
+
+        # Meta media ID (solo números) → obtener URL via Graph API
+        if url.isdigit() and settings.meta_access_token:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.get(f"https://graph.facebook.com/v25.0/{url}", headers={"Authorization": f"Bearer {settings.meta_access_token}"})
+            if r.status_code == 200:
+                url = r.json().get("url", url)
+
         async with httpx.AsyncClient(timeout=30) as c:
             kwargs = {}
             if "api.twilio.com" in url and settings.twilio_account_sid:
                 kwargs["auth"] = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+            elif settings.meta_access_token and "graph.facebook.com" in url:
+                kwargs["headers"] = {"Authorization": f"Bearer {settings.meta_access_token}"}
             r = await c.get(url, **kwargs)
         if r.status_code == 200:
             with open(ruta, "wb") as f:
