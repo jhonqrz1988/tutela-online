@@ -179,7 +179,8 @@ async def procesar_mensaje(
             Tutela.user_id == user.id,
             Tutela.estado.in_(["borrador", "recogiendo_datos", "datos_listos",
                                "juramento_pendiente", "confirmada", "pdf_generado",
-                               "esperando_confirmacion", "verificando_citas"]),
+                               "esperando_confirmacion", "verificando_citas",
+                               "esperando_decision_radicacion", "esperando_pago"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
@@ -381,14 +382,54 @@ async def procesar_mensaje(
             session.commit()
             return {"ok": True, "respuestas": respuestas}
 
-    # 5. ESPERANDO CONFIRMACIÓN PARA RADICAR
+    # 5. DESPUES DEL PDF: DECISION RADICACION
+    if tutela.estado == "esperando_decision_radicacion":
+        if body in ("1", "pagar", "pago", "si radicar"):
+            link_pago = f"{settings.app_url}/pago/{tutela.id}"
+            _r(respuestas, telefono,
+               f"💰 *Radicacion automatica*\n\n"
+               f"Haz clic en el link para pagar *$20.000 COP* via Nequi:\n\n"
+               f"{link_pago}\n\n"
+               f"Una vez confirmado el pago, radicaremos tu tutela "
+               f"en maximo *4 horas habiles* (lun-vie 8am-5pm).\n\n"
+               f"Te notificaremos cuando este radicada con el numero "
+               f"de radicado y la constancia.")
+            tutela.estado = "esperando_pago"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+        elif body in ("2", "video", "gratis", "hacer yo mismo"):
+            _r(respuestas, telefono, MENSAJE_VIDEO_GUIA)
+            tutela.estado = "pdf_generado"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+        _r(respuestas, telefono, MENSAJE_POST_PDF)
+        session.commit()
+        return {"ok": True, "respuestas": respuestas}
+
+    # 5b. ESPERANDO PAGO (simulado)
+    if tutela.estado == "esperando_pago":
+        if body in ("pagado", "pago confirmado", "si", "ok", "1"):
+            _r(respuestas, telefono, "✅ *Pago recibido!*\n\n"
+               "Radicaremos tu tutela en maximo *4 horas habiles* "
+               "(lun-vie 8am-5pm). Te avisaremos cuando este lista.")
+            resultado = await iniciar_radicacion(tutela.id)
+            if resultado.get("ok"):
+                _r(respuestas, telefono,
+                   f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
+            else:
+                _r(respuestas, telefono,
+                   f"⚠️ Error en radicación: {resultado.get('error', 'desconocido')}")
+            return {"ok": True, "respuestas": respuestas}
+        _r(respuestas, telefono, "Espera a que confirmemos tu pago y radicaremos tu tutela.")
+        session.commit()
+        return {"ok": True, "respuestas": respuestas}
+
+    # 6. ESPERANDO CONFIRMACIÓN (legacy - para tutelas viejas)
     if tutela.estado == "esperando_confirmacion":
         if body in ("1", "sí", "si", "radicar"):
             _r(respuestas, telefono, "⏳ *Radicando tu tutela...*")
             session.commit()
-
             resultado = await iniciar_radicacion(tutela.id)
-
             if resultado.get("ok"):
                 _r(respuestas, telefono,
                    f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
@@ -505,11 +546,8 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 
     _r(respuestas, telefono, "✅ *¡Tutela lista!*")
     enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
-    _r(respuestas, telefono,
-       "📄 *PDF generado y enviado*\n\n"
-       "¿Deseas radicar la tutela en la Rama Judicial?\n\n"
-       "1️⃣ *Sí, radicar*\n2️⃣ *No, después*")
-    tutela.estado = "esperando_confirmacion"
+    _r(respuestas, telefono, MENSAJE_POST_PDF)
+    tutela.estado = "esperando_decision_radicacion"
     session.commit()
     return ruta_pdf
 
@@ -546,4 +584,32 @@ MENSAJE_PRUEBAS = (
     "envíalas ahora.\n\n"
     "El sistema las analizará y las incluirá como pruebas.\n\n"
     "Si no tienes soportes, escribe *Continuar* para generar la tutela."
+)
+
+MENSAJE_POST_PDF = (
+    "📄 *PDF generado y enviado*\n\n"
+    "Ahora tienes 2 opciones:\n\n"
+    "1️⃣ *Radicacion automatica* — *$20.000 COP*\n"
+    "   Nosotros radicamos por ti ante la Rama Judicial.\n"
+    "   Entrega en maximo *4 horas habiles* (lun-vie 8am-5pm).\n"
+    "   Recibes numero de radicado y constancia oficial.\n\n"
+    "2️⃣ *Hazlo tu mismo* — GRATIS\n"
+    "   Te enviamos un video explicativo.\n"
+    "   Debes ingresar los datos manualmente en el portal.\n\n"
+    "Responde *1* para pagar y radicar, o *2* para el video gratis."
+)
+
+MENSAJE_VIDEO_GUIA = (
+    "🎥 *Video guia para radicar tu tutela*\n\n"
+    "Mira este video paso a paso:\n"
+    "https://youtu.be/ejemplo-tutela-rama-judicial\n\n"
+    "📌 *Importante:*\n"
+    "Debes tener a mano:\n"
+    "- El PDF de la tutela que te enviamos\n"
+    "- Tus documentos personales\n"
+    "- Correo electronico\n\n"
+    "Si en algun momento te parece complicado, "
+    "recuerda que por solo *$20.000 COP* nosotros lo hacemos por ti "
+    "en maximo 4 horas habiles.\n"
+    "Solo responde *Pagar* para iniciar el proceso."
 )
