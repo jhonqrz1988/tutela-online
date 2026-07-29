@@ -1,4 +1,3 @@
-import base64
 import json
 
 from fastapi import APIRouter, Depends, Request
@@ -323,17 +322,18 @@ async def procesar_mensaje(
             if ruta_local:
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
                 try:
-                    with open(ruta_local, "rb") as f:
-                        img_data = base64.b64encode(f.read()).decode()
-                    analisis = await analizar_imagen("data:image/jpeg;base64," + img_data)
+                    analisis = await analizar_imagen(ruta_local)
                 except Exception:
                     analisis = ""
                 if analisis:
                     datos.setdefault("pruebas_analizadas", []).append(analisis)
-            tutela.datos_json = json.dumps(datos)
-            session.commit()
-            _r(respuestas, telefono, "✅ *Soporte recibido.* Puedes enviar más o continuar.")
-            _b(respuestas, telefono, "¿Más soportes o continuamos?", [("listo", "✅ Listo, seguir")])
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono, "✅ *Soporte recibido.*")
+                _b(respuestas, telefono, "¿Más soportes o continuamos?", [("listo", "✅ Listo, seguir")])
+                return {"ok": True, "respuestas": respuestas}
+
+            _r(respuestas, telefono, "No pude descargar el archivo. Intenta de nuevo o presiona *Listo* para continuar.")
             return {"ok": True, "respuestas": respuestas}
 
         _r(respuestas, telefono, "Envía una foto o documento, o presiona *Listo* para continuar.")

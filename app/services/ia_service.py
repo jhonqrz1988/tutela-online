@@ -152,9 +152,14 @@ async def analizar_imagen(url_imagen: str) -> str:
     if not client:
         return ""
     try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            r = await c.get(url_imagen)
-        img_b64 = base64.b64encode(r.content).decode()
+        import os
+        if os.path.isfile(url_imagen):
+            with open(url_imagen, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+        else:
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.get(url_imagen)
+            img_b64 = base64.b64encode(r.content).decode()
         resp = await client.chat.completions.create(
             model=settings.ai_chat_model,
             messages=[
