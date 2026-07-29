@@ -41,11 +41,13 @@ async def webhook_whatsapp(request: Request, session=Depends(get_session)):
             data = await request.json()
             results = data.get("results", [data])
             primer_msg = results[0] if isinstance(results, list) else results
+            msg_obj = primer_msg.get("message", {})
             telefono = str(primer_msg.get("from", ""))
-            body = (primer_msg.get("message", {}).get("text", "") or "").strip().lower()
-            num_media = 1 if primer_msg.get("message", {}).get("type") in ("IMAGE", "DOCUMENT", "VIDEO", "AUDIO") else 0
-            media_url = primer_msg.get("message", {}).get("url", "")
-            es_audio = primer_msg.get("message", {}).get("type") == "AUDIO"
+            body = (msg_obj.get("text") or primer_msg.get("text") or "").strip().lower()
+            msg_type = (msg_obj.get("type") or primer_msg.get("type") or "").upper()
+            num_media = 1 if msg_type in ("IMAGE", "DOCUMENT", "VIDEO", "AUDIO") else 0
+            media_url = msg_obj.get("url") or primer_msg.get("url") or ""
+            es_audio = msg_type == "AUDIO"
         else:
             form = await request.form()
             telefono = form.get("From", "")
