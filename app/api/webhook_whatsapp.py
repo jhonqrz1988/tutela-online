@@ -175,6 +175,43 @@ async def procesar_mensaje(
         _r(respuestas, telefono, "❌ No puedes usar el servicio sin aceptar el tratamiento de datos.\n\nSi cambias de opinión, escribe *Acepto*.")
         return {"ok": True, "respuestas": respuestas}
 
+    # ─── HOLA DE USUARIO EXISTENTE ─────────────────────────────────────
+    if body in ("hola", "menú", "menu", "inicio", "empezar"):
+        user.estado = "activo"
+        session.commit()
+        # Buscar tutela activa en estados nuevos
+        tutela = session.execute(
+            select(Tutela).where(
+                Tutela.user_id == user.id,
+                Tutela.estado.in_(["narracion", "confirmar_audio", "pruebas_pendiente",
+                                   "recibiendo_pruebas", "datos_listos", "pdf_generado",
+                                   "esperando_decision_radicacion",
+                                   "confirmar_pago", "esperando_pago", "completado"]),
+            ).order_by(Tutela.created_at.desc()).limit(1)
+        ).scalar_one_or_none()
+
+        if tutela and tutela.estado != "completado":
+            # Reanudar tutela existente
+            datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
+            if tutela.estado == "narracion":
+                _r(respuestas, telefono, NARRACION)
+            elif tutela.estado == "pruebas_pendiente":
+                _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+            elif tutela.estado == "datos_listos":
+                _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
+            else:
+                _r(respuestas, telefono, "🤖 *Tutela Online* — Continúa donde lo dejaste.")
+            return {"ok": True, "respuestas": respuestas}
+
+        # No hay tutela activa, empezar nueva
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion")
+        datos = {"tipo": "salud"}
+        tutela.datos_json = json.dumps(datos)
+        session.add(tutela)
+        session.commit()
+        _r(respuestas, telefono, NARRACION)
+        return {"ok": True, "respuestas": respuestas}
+
     # ─── TUTELA ACTIVA ───────────────────────────────────────────────
     tutela = session.execute(
         select(Tutela).where(
