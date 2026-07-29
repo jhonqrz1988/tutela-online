@@ -240,7 +240,6 @@ async def procesar_mensaje(
     #   NARRACIÓN — recibir el relato del usuario
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "narracion":
-        # Si es audio, transcribir y pedir confirmación
         if es_audio and media_url:
             ruta_audio = await _descargar_prueba(media_url)
             texto_audio = await transcribir_audio(ruta_audio) if ruta_audio else None
@@ -252,14 +251,18 @@ async def procesar_mensaje(
                 _r(respuestas, telefono, f'🎤 *Transcripción de tu audio:*\n\n"{texto_audio[:500]}"\n\n¿Es correcto?')
                 _b(respuestas, telefono, "¿La transcripción es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
                 return {"ok": True, "respuestas": respuestas}
-            _r(respuestas, telefono, "No pude procesar el audio. Intenta escribir tu caso.")
+            _r(respuestas, telefono, "No pude procesar el audio. Escribe tu caso.")
             return {"ok": True, "respuestas": respuestas}
 
-        # Texto: procesar directo con IA
-        datos_ia = await extraer_datos(body)
-        for k, v in datos_ia.items():
-            if v and k not in ("tipo",):
-                datos[k] = v
+        try:
+            datos_ia = await extraer_datos(body)
+            for k, v in datos_ia.items():
+                if v and k not in ("tipo",):
+                    datos[k] = v
+        except Exception:
+            _r(respuestas, telefono, "Hubo un error procesando tu caso. Intenta de nuevo.")
+            return {"ok": True, "respuestas": respuestas}
+
         tutela.datos_json = json.dumps(datos)
         tutela.estado = "pruebas_pendiente"
         session.commit()
@@ -332,11 +335,12 @@ async def procesar_mensaje(
                 _r(respuestas, telefono, "✅ *Soporte recibido.*")
                 _b(respuestas, telefono, "¿Más soportes o continuamos?", [("listo", "✅ Listo, seguir")])
                 return {"ok": True, "respuestas": respuestas}
-
-            _r(respuestas, telefono, "No pude descargar el archivo. Intenta de nuevo o presiona *Listo* para continuar.")
+            _r(respuestas, telefono, "No pude descargar el archivo. Presiona *Listo* para continuar.")
+            _b(respuestas, telefono, "¿Qué deseas hacer?", [("listo", "✅ Listo, seguir")])
             return {"ok": True, "respuestas": respuestas}
 
-        _r(respuestas, telefono, "Envía una foto o documento, o presiona *Listo* para continuar.")
+        # Texto sin media: mostrar solo botón para seguir
+        _b(respuestas, telefono, "Presiona *Listo* cuando termines de enviar tus soportes.", [("listo", "✅ Listo, seguir")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -455,6 +459,8 @@ async def _mostrar_resumen_juramento(session, tutela, datos: dict, telefono: str
 
 
 async def _descargar_prueba(url: str) -> str | None:
+    if not url:
+        return None
     try:
         ext = ".jpg"
         for e in (".png", ".jpeg", ".pdf", ".jpg", ".gif", ".webp", ".ogg", ".mp3", ".mp4"):
@@ -463,20 +469,26 @@ async def _descargar_prueba(url: str) -> str | None:
                 break
         ruta = path_prueba(ext)
 
-        # Meta media ID (solo números) → obtener URL via Graph API
+        headers = {}
+        auth = None
+
+        # Meta media ID (solo números) → resolver URL via Graph API
         if url.isdigit() and settings.meta_access_token:
             async with httpx.AsyncClient(timeout=15) as c:
-                r = await c.get(f"https://graph.facebook.com/v25.0/{url}", headers={"Authorization": f"Bearer {settings.meta_access_token}"})
+                r = await c.get(
+                    f"https://graph.facebook.com/v22.0/{url}",
+                    headers={"Authorization": f"Bearer {settings.meta_access_token}"},
+                )
             if r.status_code == 200:
                 url = r.json().get("url", url)
+            # La URL firmada de Meta NO necesita header de auth
+            headers = {}
 
-        async with httpx.AsyncClient(timeout=30) as c:
-            kwargs = {}
-            if "api.twilio.com" in url and settings.twilio_account_sid:
-                kwargs["auth"] = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
-            elif settings.meta_access_token and "graph.facebook.com" in url:
-                kwargs["headers"] = {"Authorization": f"Bearer {settings.meta_access_token}"}
-            r = await c.get(url, **kwargs)
+        if "api.twilio.com" in url and settings.twilio_account_sid:
+            auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+            r = await c.get(url, headers=headers, auth=auth)
         if r.status_code == 200:
             with open(ruta, "wb") as f:
                 f.write(r.content)
