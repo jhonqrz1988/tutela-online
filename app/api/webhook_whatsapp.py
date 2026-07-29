@@ -108,39 +108,39 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 @router.post("/webhook/zapi")
 async def webhook_zapi(request: Request, session=Depends(get_session)):
     data = await request.json()
-    telefono = data.get("phone", "")
-    msg = data.get("message", {}) or {}
-    body = (msg.get("text", "") or msg.get("caption", "") or "").strip().lower()
-    num_media = 1 if msg.get("type") in ("image", "document", "audio", "video") else 0
-    media_url = msg.get("media", "") or msg.get("link", "") or ""
-    es_audio = msg.get("type") == "audio"
+    telefono = data.get("from", "").replace("55", "", 1) if data.get("from", "").startswith("55") else data.get("from", "")
+    body = (data.get("text", data.get("message", {}).get("text", "")) or "").strip().lower()
+    num_media = 1 if data.get("mediaUrl") or data.get("message", {}).get("mediaUrl") else 0
+    media_url = data.get("mediaUrl", data.get("message", {}).get("mediaUrl", ""))
+    es_audio = bool(data.get("isAudio", data.get("message", {}).get("isAudio", False)))
     return await procesar_mensaje(session, telefono, body, num_media, media_url, es_audio)
 
+
+# ═══════════════════════════════════════════════════════════════════
+# FLUJO PRINCIPAL
+# ═══════════════════════════════════════════════════════════════════
 
 async def procesar_mensaje(
     session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool
 ) -> dict:
     respuestas: list[str] = []
 
-    msg_orm = MensajeWhatsApp(
-        from_number=telefono,
-        body=body,
-        tipo_mensaje="audio" if es_audio else "texto",
-        media_url=media_url,
-    )
+    msg_orm = MensajeWhatsApp(from_number=telefono, body=body, tipo_mensaje="audio" if es_audio else "texto", media_url=media_url)
     session.add(msg_orm)
     session.commit()
 
     user = session.execute(select(User).where(User.telefono == telefono)).scalar_one_or_none()
+
+    # ─── NUEVO USUARIO ──────────────────────────────────────────────
     if not user:
         user = User(telefono=telefono, estado="nuevo", consentimiento=False)
         session.add(user)
         session.commit()
-        _r(respuestas, telefono, MENSAJE_BIENVENIDA)
-        _b(respuestas, telefono, "✍️ ¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
+        _r(respuestas, telefono, BIENVENIDA)
+        _b(respuestas, telefono, "¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
         return {"ok": True, "respuestas": respuestas}
 
-    # ─── ELIMINAR DATOS ──────────────────────────────────────────
+    # ─── ELIMINAR DATOS ──────────────────────────────────────────────
     if body in ("eliminar", "eliminar mis datos", "borrar", "borrar mis datos"):
         session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
         for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
@@ -150,64 +150,45 @@ async def procesar_mensaje(
         _r(respuestas, telefono, "🗑️ *Tus datos han sido eliminados.*\n\nSi necesitas ayuda en el futuro, escribe *Hola* y empezamos de nuevo.")
         return {"ok": True, "respuestas": respuestas}
 
-    # ─── FLUJO DE CONSENTIMIENTO ─────────────────────────────────
+    # ─── CONSENTIMIENTO ──────────────────────────────────────────────
     if user.estado == "nuevo":
         if body in ("acepto", "sí", "si", "ok", "si acepto"):
             user.consentimiento = True
             user.estado = "activo"
             session.commit()
-            # Crear tutela directo con tipo="salud"
-            tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
-            datos = {"tipo": "salud", "_step": "narracion"}
+            tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion")
+            datos = {"tipo": "salud"}
             tutela.datos_json = json.dumps(datos)
             session.add(tutela)
             session.commit()
-            _r(respuestas, telefono, MENSAJE_NARRACION)
+            _r(respuestas, telefono, NARRACION)
             return {"ok": True, "respuestas": respuestas}
         elif body in ("no", "no acepto", "cancelar"):
             user.estado = "rechazado"
             session.commit()
-            _r(respuestas, telefono, "❌ *Has cancelado.*\n\nTus datos no serán guardados. Si cambias de opinión, escribe *Hola*.")
+            _r(respuestas, telefono, "❌ *Has cancelado.*\n\nSi cambias de opinión, escribe *Hola*.")
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, "✍️ ¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
-        return {"ok": True, "respuestas": respuestas}
-
-    if user.estado == "rechazado" and body in ("hola", "menú", "menu", "inicio", "acepto"):
-        user.consentimiento = True
-        user.estado = "activo"
-        session.commit()
-        _r(respuestas, telefono, "✅ *Gracias por aceptar.*\n\nTus datos serán usados solo para tu tutela.")
-        tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
-        datos = {"tipo": "salud", "_step": "narracion"}
-        tutela.datos_json = json.dumps(datos)
-        session.add(tutela)
-        session.commit()
-        _r(respuestas, telefono, MENSAJE_NARRACION)
+        _b(respuestas, telefono, "¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
         _r(respuestas, telefono, "❌ No puedes usar el servicio sin aceptar el tratamiento de datos.\n\nSi cambias de opinión, escribe *Acepto*.")
         return {"ok": True, "respuestas": respuestas}
 
-    if body in ("hola", "menú", "menu", "inicio"):
-        # Si ya tiene una tutela activa, regresar a ella
-        _r(respuestas, telefono, MENSAJE_NARRACION)
-        session.commit()
-        return {"ok": True, "respuestas": respuestas}
-
+    # ─── TUTELA ACTIVA ───────────────────────────────────────────────
     tutela = session.execute(
         select(Tutela).where(
             Tutela.user_id == user.id,
-            Tutela.estado.in_(["borrador", "recogiendo_datos", "datos_listos",
-                               "juramento_pendiente", "confirmada", "pdf_generado",
-                               "esperando_confirmacion", "verificando_citas",
-                               "esperando_decision_radicacion", "esperando_pago"]),
+            Tutela.estado.in_(["narracion", "confirmar_audio", "pruebas_pendiente",
+                               "recibiendo_pruebas", "datos_listos", "pdf_generado",
+                               "esperando_decision_radicacion",
+                               "confirmar_pago", "esperando_pago", "completado"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
     if not tutela:
-        tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
-        datos = {"tipo": "salud", "_step": "narracion"}
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion")
+        datos = {"tipo": "salud"}
         tutela.datos_json = json.dumps(datos)
         session.add(tutela)
         session.commit()
@@ -218,260 +199,189 @@ async def procesar_mensaje(
 
     datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
 
-    # ─── FLUJO PRINCIPAL ─────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════
+    #   NARRACIÓN — recibir el relato del usuario
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "narracion":
+        # Si es audio, transcribir y pedir confirmación
+        if es_audio and media_url:
+            ruta_audio = await _descargar_prueba(media_url)
+            texto_audio = await transcribir_audio(ruta_audio) if ruta_audio else None
+            if texto_audio:
+                datos["_audio_temp"] = texto_audio
+                tutela.estado = "confirmar_audio"
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono, f'🎤 *Transcripción de tu audio:*\n\n"{texto_audio[:500]}"\n\n¿Es correcto?')
+                _b(respuestas, telefono, "¿La transcripción es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
+                return {"ok": True, "respuestas": respuestas}
+            _r(respuestas, telefono, "No pude procesar el audio. Intenta escribir tu caso.")
+            return {"ok": True, "respuestas": respuestas}
 
-    # 1. SELECCIONAR TIPO (eliminado — solo salud)
-    if tutela.estado == "borrador":
-        tutela.tipo = "salud"
-        datos["tipo"] = "salud"
-        tutela.estado = "recogiendo_datos"
-        datos["_step"] = "narracion"
+        # Texto: procesar directo con IA
+        datos_ia = await extraer_datos(body)
+        for k, v in datos_ia.items():
+            if v and k not in ("tipo",):
+                datos[k] = v
         tutela.datos_json = json.dumps(datos)
+        tutela.estado = "pruebas_pendiente"
         session.commit()
-        _r(respuestas, telefono, MENSAJE_NARRACION)
+        _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
         return {"ok": True, "respuestas": respuestas}
 
-    # 2. RECOGER DATOS PASO A PASO
-    if tutela.estado == "recogiendo_datos":
-        paso = datos.get("_step", 0)
-        pendientes = datos.get("_pendientes")
-
-        # Confirmar transcripción de audio
-        if paso == "audio_confirmar":
-            texto_audio = datos.get("_audio_temp", "")
-            if body in ("1", "sí", "si", "correcto", "si correcto"):
-                del datos["_audio_temp"]
-                # Procesar la transcripción confirmada
-                datos_ia = await extraer_datos(texto_audio)
-                for k, v in datos_ia.items():
-                    if v and k not in ("tipo",):
-                        datos[k] = v
-                faltan = campos_faltantes(datos)
-                if faltan:
-                    datos["_step"] = "recogiendo"
-                    datos["_pendientes"] = faltan
-                    sig = faltan[0]
-                    _r(respuestas, telefono, MENSAJES_CAMPOS.get(sig, f"Por favor, indica tu *{sig.replace('_', ' ')}*:"))
-                else:
-                    datos["_step"] = "completo"
-                    _mostrar_resumen(respuestas, telefono, datos)
-                tutela.datos_json = json.dumps(datos)
-                session.commit()
-                return {"ok": True, "respuestas": respuestas}
-            elif body in ("2", "no"):
-                del datos["_audio_temp"]
-                datos["_step"] = "narracion"
-                tutela.datos_json = json.dumps(datos)
-                session.commit()
-                _r(respuestas, telefono, "✍️ *Escribe tu caso manualmente*\n\nCuéntame qué pasó, incluye todos los detalles.")
-                return {"ok": True, "respuestas": respuestas}
-            _b(respuestas, telefono, "¿La transcripción de tu audio es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
-            session.commit()
-            return {"ok": True, "respuestas": respuestas}
-
-        # Si hay campos pendientes, preguntarlos uno por uno
-        if pendientes:
-            campo = pendientes[0]
-            error_validacion = _validar_campo(campo, body)
-            if error_validacion:
-                _r(respuestas, telefono, f"⚠️ {error_validacion}\n\n{MENSAJES_CAMPOS.get(campo, 'Intenta de nuevo:')}")
-                session.commit()
-                return {"ok": True, "respuestas": respuestas}
-            datos[campo] = body
-            pendientes.pop(0)
-            if pendientes:
-                sig = pendientes[0]
-                _r(respuestas, telefono, MENSAJES_CAMPOS.get(sig, f"Indica tu *{sig.replace('_', ' ')}*:"))
-            else:
-                del datos["_pendientes"]
-                datos["_step"] = "completo"
-                _mostrar_resumen(respuestas, telefono, datos)
-            tutela.datos_json = json.dumps(datos)
-            session.commit()
-            return {"ok": True, "respuestas": respuestas}
-
-# Procesar narración con IA
-        if paso == "narracion":
-            # Si es audio, transcribir y pedir confirmación
-            if es_audio and media_url:
-                ruta_audio = await _descargar_prueba(media_url)
-                if ruta_audio:
-                    texto_audio = await transcribir_audio(ruta_audio)
-                else:
-                    texto_audio = None
-                if texto_audio:
-                    datos["_audio_temp"] = texto_audio
-                    datos["_step"] = "audio_confirmar"
-                    tutela.datos_json = json.dumps(datos)
-                    session.commit()
-                    _r(respuestas, telefono,
-                       "🎤 *Transcripción de tu audio:*\n\n"
-                       f"\"{texto_audio[:500]}\"\n\n"
-                       "¿Esto es correcto?\n\n"
-                       "1️⃣ *Sí, correcto*\n2️⃣ *No, lo escribiré*")
-                    return {"ok": True, "respuestas": respuestas}
-            # Texto normal: procesar directo
-            datos_ia = await extraer_datos(body)
+    # ══════════════════════════════════════════════════════════════════
+    #   CONFIRMAR AUDIO
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "confirmar_audio":
+        texto_audio = datos.get("_audio_temp", "")
+        if body in ("1", "sí", "si", "correcto"):
+            datos.pop("_audio_temp", None)
+            datos_ia = await extraer_datos(texto_audio)
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
                     datos[k] = v
-            faltan = campos_faltantes(datos)
-            if faltan:
-                datos["_step"] = "recogiendo"
-                datos["_pendientes"] = faltan
-                sig = faltan[0]
-                _r(respuestas, telefono, MENSAJES_CAMPOS.get(sig, f"Por favor, indica tu *{sig.replace('_', ' ')}*:"))
-            else:
-                datos["_step"] = "completo"
-                _mostrar_resumen(respuestas, telefono, datos)
+            tutela.datos_json = json.dumps(datos)
+            tutela.estado = "pruebas_pendiente"
+            session.commit()
+            _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+            return {"ok": True, "respuestas": respuestas}
+        elif body in ("2", "no"):
+            datos.pop("_audio_temp", None)
             tutela.datos_json = json.dumps(datos)
             session.commit()
-            return {"ok": True, "respuestas": respuestas}
-
-        # Si ya está completo: confirmar o mostrar resumen
-        if datos.get("_step") == "completo" or not campos_faltantes(datos):
-            datos["_step"] = "completo"
-            if body in ("sí", "si", "yes", "ok", "correcto"):
-                tutela.estado = "datos_listos"
-                _r(respuestas, telefono, "⚖️ *JURAMENTO*\n\n"
-                   "¿Afirmas bajo la gravedad de juramento que *no has interpuesto otra tutela* "
-                   "por los mismos hechos ante otro juez?\n\n"
-                   "1️⃣ *Sí, juro*\n2️⃣ *No*")
-                tutela.datos_json = json.dumps(datos)
-                session.commit()
-                return {"ok": True, "respuestas": respuestas}
-            _mostrar_resumen(respuestas, telefono, datos)
+            _r(respuestas, telefono, "✍️ *Escribe tu caso manualmente*\n\nCuéntame qué pasó con todos los detalles.")
+            tutela.estado = "narracion"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-
-        _r(respuestas, telefono, MENSAJE_MENU)
-        session.commit()
+        _b(respuestas, telefono, "¿La transcripción es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
         return {"ok": True, "respuestas": respuestas}
 
-    # 3. JURAMENTO (ya se mostró el resumen, solo espera "Sí, juro")
-    if tutela.estado == "datos_listos":
-        if body in ("1", "sí, juro", "si, juro", "juro", "sí juro", "si juro"):
-            _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
-            tutela.estado = "confirmada"
-            datos["juramento"] = "prestado"
-            tutela.datos_json = json.dumps(datos)
+    # ══════════════════════════════════════════════════════════════════
+    #   PRUEBAS — preguntar si quiere adjuntar
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "pruebas_pendiente":
+        if body in ("adjuntar", "adjuntar pruebas", "si adjuntar"):
+            tutela.estado = "recibiendo_pruebas"
             session.commit()
+            _r(respuestas, telefono, PRUEBAS_INSTRUCCION)
+            _b(respuestas, telefono, "Cuando termines de enviar tus soportes, presiona el botón.", [("listo", "✅ Listo, seguir")])
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, "⚖️ Para continuar, debes confirmar bajo juramento:\n\n¿Afirmas que *no has presentado otra tutela* por los mismos hechos?", [("1", "✅ Sí, juro"), ("2", "❌ No")])
-        session.commit()
+        elif body in ("saltar", "no", "continuar", "sin soportes", "no tengo"):
+            await _mostrar_resumen_juramento(session, tutela, datos, telefono, respuestas)
+            return {"ok": True, "respuestas": respuestas}
+        _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
         return {"ok": True, "respuestas": respuestas}
 
-    if tutela.estado == "juramento_pendiente":
-        if body in ("1", "sí, juro", "si, juro", "juro", "sí", "si"):
-            _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
-            tutela.estado = "confirmada"
-            datos["juramento"] = "prestado"
-            tutela.datos_json = json.dumps(datos)
-            session.commit()
-            return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, "⚖️ ¿Confirmas bajo juramento que *no has presentado otra tutela* por los mismos hechos?", [("1", "✅ Sí, juro"), ("2", "❌ No")])
-        session.commit()
-        return {"ok": True, "respuestas": respuestas}
-
-    # 4. RECIBIR PRUEBAS (fotos/documentos)
-    if tutela.estado == "confirmada":
-        # Si no envía archivos y escribe "continuar", saltar las pruebas
-        if num_media == 0 and body in ("continuar", "no tengo", "no", "saltar", "omitir"):
-            await _generar_con_verificacion(session, tutela, datos, telefono, respuestas)
+    # ══════════════════════════════════════════════════════════════════
+    #   RECIBIENDO PRUEBAS — archivos adjuntos
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "recibiendo_pruebas":
+        if body in ("listo", "seguir", "continuar", "terminé", "termine"):
+            await _mostrar_resumen_juramento(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
 
         if num_media > 0 and media_url:
             ruta_local = await _descargar_prueba(media_url)
             if ruta_local:
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
-            else:
-                datos.setdefault("pruebas_urls", []).append(media_url)
-
-            analisis = await analizar_imagen(media_url)
-            if analisis:
-                datos.setdefault("pruebas_analizadas", []).append(analisis)
-
+                analisis = await analizar_imagen(media_url)
+                if analisis:
+                    datos.setdefault("pruebas_analizadas", []).append(analisis)
             tutela.datos_json = json.dumps(datos)
+            session.commit()
+            _r(respuestas, telefono, "✅ *Soporte recibido.* Puedes enviar más o continuar.")
+            _b(respuestas, telefono, "¿Más soportes o continuamos?", [("listo", "✅ Listo, seguir")])
+            return {"ok": True, "respuestas": respuestas}
 
+        _r(respuestas, telefono, "Envía una foto o documento, o presiona *Listo* para continuar.")
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   DATOS LISTOS — resumen + juramento
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "datos_listos":
+        if body in ("1", "sí juro", "si juro", "juro"):
             await _generar_con_verificacion(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
-
-        if tutela.estado == "confirmada":
-            _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
-            session.commit()
+        elif body in ("2", "no"):
+            _r(respuestas, telefono, "Sin el juramento no podemos generar la tutela. Si cambias de opinión, responde *Juro*.")
             return {"ok": True, "respuestas": respuestas}
+        _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
+        return {"ok": True, "respuestas": respuestas}
 
-    # 5. DESPUES DEL PDF: DECISION RADICACION
+    # ══════════════════════════════════════════════════════════════════
+    #   POST-PDF — decisión: pagar o video gratis
+    # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_decision_radicacion":
-        if body in ("1", "pagar", "pago", "si radicar"):
-            link_pago = f"{settings.app_url}/pago/{tutela.id}"
-            _r(respuestas, telefono,
-               f"💰 *Radicacion automatica*\n\n"
-               f"Haz clic en el link para pagar *$20.000 COP* via Nequi:\n\n"
-               f"{link_pago}\n\n"
-               f"Una vez confirmado el pago, radicaremos tu tutela "
-               f"en maximo *4 horas habiles* (lun-vie 8am-5pm).\n\n"
-               f"Te notificaremos cuando este radicada con el numero "
-               f"de radicado y la constancia.")
-            tutela.estado = "esperando_pago"
+        if body in ("1", "pagar", "radicar", "si radicar"):
+            _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
+            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$20.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, mejor ver video")])
+            tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "video", "gratis", "hacer yo mismo"):
-            _r(respuestas, telefono, MENSAJE_VIDEO_GUIA)
-            tutela.estado = "pdf_generado"
+            _r(respuestas, telefono, VIDEO_GUIA)
+            tutela.estado = "completado"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, MENSAJE_POST_PDF, [("1", "💳 Pagar $20k"), ("2", "📹 Video gratis")])
-        session.commit()
+        _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "📹 Video gratis")])
         return {"ok": True, "respuestas": respuestas}
 
-    # 5b. ESPERANDO PAGO (simulado)
+    # ══════════════════════════════════════════════════════════════════
+    #   CONFIRMAR PAGO — fricción adicional
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "confirmar_pago":
+        if body in ("confirmar_pago", "si pagar", "sí pagar", "pagar", "1"):
+            link_pago = f"{settings.app_url}/pago/{tutela.id}"
+            _r(respuestas, telefono,
+               f"💰 *Radicación automática*\n\n"
+               f"Para completar el pago de *$20.000 COP*:\n\n"
+               f"🔗 {link_pago}\n\n"
+               f"Después de pagar, escribe *Pagado* para confirmar.\n\n"
+               f"⚠️ *Importante:* La radicación toma máximo *4 horas hábiles* (lun-vie 8am-5pm).\n"
+               f"Te enviaremos el número de radicado y la constancia oficial.")
+            tutela.estado = "esperando_pago"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+        elif body in ("2", "no", "video", "mejor video"):
+            _r(respuestas, telefono, VIDEO_GUIA)
+            tutela.estado = "completado"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+        _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO, [("confirmar_pago", "✅ Sí, pagar $20k"), ("2", "🎥 Mejor ver video")])
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   ESPERANDO PAGO
+    # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_pago":
         if body in ("pagado", "pago confirmado", "si", "ok", "1"):
-            _r(respuestas, telefono, "✅ *Pago recibido!*\n\n"
-               "Radicaremos tu tutela en maximo *4 horas habiles* "
-               "(lun-vie 8am-5pm). Te avisaremos cuando este lista.")
+            _r(respuestas, telefono, "✅ *¡Pago recibido!* Radicaremos tu tutela en máximo *4 horas hábiles*. Te notificaremos cuando esté lista.")
             resultado = await iniciar_radicacion(tutela.id)
             if resultado.get("ok"):
-                _r(respuestas, telefono,
-                   f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
+                _r(respuestas, telefono, f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
             else:
-                _r(respuestas, telefono,
-                   f"⚠️ Error en radicación: {resultado.get('error', 'desconocido')}")
-            return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "Espera a que confirmemos tu pago y radicaremos tu tutela.")
-        session.commit()
-        return {"ok": True, "respuestas": respuestas}
-
-    # 6. ESPERANDO CONFIRMACIÓN (legacy - para tutelas viejas)
-    if tutela.estado == "esperando_confirmacion":
-        if body in ("1", "sí", "si", "radicar"):
-            _r(respuestas, telefono, "⏳ *Radicando tu tutela...*")
+                _r(respuestas, telefono, f"⚠️ Error en radicación: {resultado.get('error', 'desconocido')}")
+            tutela.estado = "completado"
             session.commit()
-            resultado = await iniciar_radicacion(tutela.id)
-            if resultado.get("ok"):
-                _r(respuestas, telefono,
-                   f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
-            else:
-                _r(respuestas, telefono,
-                   f"⚠️ Error en radicación: {resultado.get('error', 'desconocido')}")
             return {"ok": True, "respuestas": respuestas}
-        else:
-            _r(respuestas, telefono, "La tutela quedó guardada. Cuando quieras radicarla, responde *Radicar*")
-            return {"ok": True, "respuestas": respuestas}
-
-    # 6. MENSAJE POR DEFECTO
-    if tutela.estado in ("confirmada", "pdf_generado"):
-        _b(respuestas, telefono, MENSAJE_PRUEBAS, [("continuar", "⏭️ Continuar")])
-        session.commit()
+        _r(respuestas, telefono, "Estamos esperando la confirmación de tu pago. Si ya pagaste, escribe *Pagado*.")
         return {"ok": True, "respuestas": respuestas}
 
-    _r(respuestas, telefono, MENSAJE_MENU)
-    session.commit()
+    # ══════════════════════════════════════════════════════════════════
+    #   COMPLETADO / POR DEFECTO
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "completado":
+        _r(respuestas, telefono, "✅ *Tutela completada.*\n\nSi necesitas ayuda con otra tutela, escribe *Hola*.")
+        return {"ok": True, "respuestas": respuestas}
+
+    _r(respuestas, telefono, MENU_DEFAULT)
     return {"ok": True, "respuestas": respuestas}
 
 
-# ─── HELPERS ──────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# HELPERS
+# ═══════════════════════════════════════════════════════════════════
 
 def _r(respuestas: list[str], telefono: str, mensaje: str) -> None:
     enviar_texto(telefono, mensaje)
@@ -479,54 +389,29 @@ def _r(respuestas: list[str], telefono: str, mensaje: str) -> None:
 
 
 def _b(respuestas: list[str], telefono: str, texto: str, botones: list[tuple[str, str]]) -> None:
-    """Envía texto + botones interactivos y registra la respuesta."""
     enviar_botones(telefono, texto, botones)
     respuestas.append(f"[BOTONES] {texto} | {botones}")
 
 
-def _siguiente_campo(datos: dict) -> str | None:
-    """Retorna el siguiente campo obligatorio que falta."""
-    for c in CAMPOS_TUTELA:
-        if c in ("tipo", "_step", "_pendientes", "derechos_vulnerados", "peticion"):
-            continue
-        if not datos.get(c):
-            return c
-    return None
-
-
-def _mostrar_resumen(respuestas: list[str], telefono: str, datos: dict) -> None:
-    if datos.get("_step") == "completo" or not campos_faltantes(datos):
-        datos["_step"] = "completo"
-        resumen = (
-            "📋 *Resumen de tu tutela*\n\n"
-            f"👤 *Accionante:* {datos.get('accionante_nombre', '_____')}\n"
-            f"🆔 *Documento:* {datos.get('accionante_tipo_doc', 'CC')} {datos.get('accionante_cedula', '_____')}\n"
-            f"📧 *Email:* {datos.get('accionante_email', '_____')}\n"
-            f"🏙️ *Ciudad:* {datos.get('ciudad', '_____')}\n"
-            f"🏛️ *Accionado:* {datos.get('accionado', '_____')}\n\n"
-            f"📝 *Hechos:* {datos.get('hechos', '_____')[:200]}...\n\n"
-            f"¿Es correcto? Responde *SÍ* para continuar o corrige escribiendo el dato incorrecto."
-        )
-        _r(respuestas, telefono, resumen)
-
-
-def _validar_campo(campo: str, valor: str) -> str | None:
-    """Valida un campo. Retorna mensaje de error si es inválido, None si es válido."""
-    if campo == "accionante_cedula":
-        if not valor.isdigit():
-            return "La cédula debe contener solo números (sin puntos ni letras)."
-    if campo == "accionante_telefono":
-        limpio = valor.replace("+", "").replace(" ", "").replace("-", "")
-        if not limpio.isdigit() or len(limpio) < 10:
-            return "El celular debe tener al menos 10 dígitos numéricos (ej: 3123456789)."
-    if campo == "accionante_email":
-        if "@" not in valor or "." not in valor:
-            return "El correo debe tener un formato válido (ej: nombre@correo.com)."
-    return None
+async def _mostrar_resumen_juramento(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> None:
+    campos_con_valor = {k: v for k, v in datos.items() if v and k not in ("tipo", "pruebas_paths", "pruebas_analizadas", "_step", "_pendientes")}
+    hechos = datos.get("hechos", "")
+    resumen = (
+        "📋 *Resumen de tu tutela*\n\n"
+        f"👤 *Nombre:* {datos.get('accionante_nombre', '_____')}\n"
+        f"🆔 *Documento:* {datos.get('accionante_tipo_doc', 'CC')} {datos.get('accionante_cedula', '_____')}\n"
+        f"📧 *Email:* {datos.get('accionante_email', '_____')}\n"
+        f"🏙️ *Ciudad:* {datos.get('ciudad', '_____')}\n"
+        f"🏛️ *Accionado:* {datos.get('accionado', '_____')}\n"
+        f"📝 *Hechos:* {hechos[:300]}...\n"
+    )
+    _r(respuestas, telefono, resumen)
+    tutela.estado = "datos_listos"
+    session.commit()
+    _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
 
 
 async def _descargar_prueba(url: str) -> str | None:
-    """Descarga un archivo de prueba (foto/documento/audio) y lo guarda localmente."""
     try:
         ext = ".jpg"
         for e in (".png", ".jpeg", ".pdf", ".jpg", ".gif", ".webp", ".ogg", ".mp3", ".mp4"):
@@ -549,10 +434,8 @@ async def _descargar_prueba(url: str) -> str | None:
 
 
 async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> str | None:
-    """Genera tutela con verificacion de citas legales, luego crea PDF."""
     contenido = await generar_tutela(datos) or datos.get("hechos", "")
 
-    # Extraer y verificar citas
     citas = await extraer_citas(contenido)
     if citas:
         resultado = verificar_citas(citas, session)
@@ -565,74 +448,103 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 
     ruta_pdf = generar_pdf(datos, contenido)
     tutela.pdf_path = ruta_pdf
-    tutela.estado = "pdf_generado"
     tutela.datos_json = json.dumps(datos)
+    tutela.estado = "pdf_generado"
     session.commit()
 
-    _r(respuestas, telefono, "✅ *¡Tutela lista!*")
-    enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
-    _b(respuestas, telefono, MENSAJE_POST_PDF, [("1", "💳 Pagar $20k"), ("2", "📹 Video gratis")])
+    _r(respuestas, telefono, "✅ *¡Tutela generada!*")
+    ok = enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
+    if not ok:
+        _r(respuestas, telefono, "⚠️ No pude enviar el PDF. Intenta de nuevo.")
+    _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "📹 Video gratis")])
     tutela.estado = "esperando_decision_radicacion"
     session.commit()
     return ruta_pdf
 
 
-MENSAJE_BIENVENIDA = (
+# ═══════════════════════════════════════════════════════════════════
+# TEXTOS
+# ═══════════════════════════════════════════════════════════════════
+
+BIENVENIDA = (
     "👋 *Hola, soy el asistente de Tutelas Online AI!*\n\n"
-    "Por ahora te ayudo especificamente con casos de *salud*:\n"
-    "negacion de tratamientos, citas medicas o medicamentos por tu EPS.\n\n"
+    "Por ahora te ayudo específicamente con casos de *salud*:\n"
+    "negación de tratamientos, citas médicas o medicamentos por tu EPS.\n\n"
     "📢 *Aviso de privacidad:*\n"
     "Para ayudarte necesito tratar tus datos personales y de salud "
-    "(nombre, cedula, historia clinica, diagnosticos). "
+    "(nombre, cédula, historia clínica, diagnósticos). "
     "Estos datos se usan solo para generar y radicar tu tutela. "
-    "Puedes solicitar su eliminacion en cualquier momento "
+    "Puedes solicitar su eliminación en cualquier momento "
     "escribiendo *Eliminar mis datos*.\n\n"
-    "✍️ Responde *Acepto* para continuar o *No* para cancelar.\n\n"
-    "🎤 Tambien puedes enviar *audios* contando tu caso."
+    "🎤 También puedes enviar un *audio* contando tu caso."
 )
 
-MENSAJE_NARRACION = (
-    "✍️ *Cuentame tu caso de salud en detalle*\n\n"
+NARRACION = (
+    "✍️ *Cuéntame tu caso de salud en detalle*\n\n"
     "Incluye:\n"
-    "- Que EPS te nego el servicio\n"
-    "- Que tratamiento, cita o medicamento te negaron\n"
-    "- Fechas de las negaciones\n"
-    "- Tus datos personales (nombre, cedula, ciudad)\n\n"
-    "🎤 Puedes enviar un *audio* contando tu caso.\n"
-    "🗑️ *Eliminar mis datos* — borra tu info del sistema"
+    "• Qué EPS te negó el servicio\n"
+    "• Qué tratamiento, cita o medicamento te negaron\n"
+    "• Fechas de las negaciones\n"
+    "• Tus datos (nombre, cédula, ciudad, teléfono, email)\n\n"
+    "🎤 Puedes enviar un *audio* contando tu caso."
 )
 
-MENSAJE_PRUEBAS = (
-    "📸 *Envía tus soportes (opcional)*\n\n"
-    "Si tienes fotos de *fórmulas, resultados médicos, respuestas de la EPS, "
-    "comparendos, pantallazos u otros documentos* que apoyen tu caso, "
-    "envíalas ahora.\n\n"
-    "El sistema las analizará y las incluirá como pruebas."
+PRUEBAS_PREGUNTA = (
+    "📎 ¿Tienes soportes o pruebas para adjuntar?\n\n"
+    "Ej: fórmulas médicas, resultados, respuestas de la EPS, pantallazos."
 )
 
-MENSAJE_POST_PDF = (
+PRUEBAS_INSTRUCCION = (
+    "📸 *Envía tus soportes*\n\n"
+    "Puedes enviar fotos o documentos. "
+    "Las analizaré y las incluiré como pruebas en tu tutela."
+)
+
+JURAMENTO_TEXTO = (
+    "⚖️ *Juramento*\n\n"
+    "¿Afirmas bajo la gravedad de juramento que *no has interpuesto otra acción de tutela* "
+    "por los mismos hechos y derechos ante ningún otro juez?"
+)
+
+POST_PDF_OPCIONES = (
     "📄 *PDF generado y enviado*\n\n"
     "Ahora tienes 2 opciones:\n\n"
-    "1️⃣ *Radicacion automatica* — *$20.000 COP*\n"
-    "   Nosotros radicamos por ti ante la Rama Judicial.\n"
-    "   Entrega en maximo *4 horas habiles* (lun-vie 8am-5pm).\n"
-    "   Recibes numero de radicado y constancia oficial.\n\n"
-    "2️⃣ *Hazlo tu mismo* — GRATIS\n"
-    "   Te enviamos un video explicativo.\n"
-    "   Debes ingresar los datos manualmente en el portal."
+    "1️⃣ *Radicación automática* — *$20.000 COP*\n"
+    "   Radicamos por ti ante la Rama Judicial.\n"
+    "   Entrega en máximo *4 horas hábiles*.\n"
+    "   Recibes número de radicado y constancia oficial.\n\n"
+    "2️⃣ *Hazlo tú mismo* — GRATIS\n"
+    "   Te enviamos un video explicativo."
 )
 
-MENSAJE_VIDEO_GUIA = (
-    "🎥 *Video guia para radicar tu tutela*\n\n"
+CONFIRMAR_PAGO_TEXTO = (
+    "💳 *Radicación automática*\n\n"
+    "Por *$20.000 COP* radicamos tu tutela ante la Rama Judicial.\n"
+    "Incluye:\n"
+    "✅ Radicación en el portal oficial\n"
+    "✅ Seguimiento del proceso\n"
+    "✅ Número de radicado y constancia\n"
+    "✅ Entrega en máximo 4 horas hábiles\n\n"
+    "¿Quieres continuar con el pago?"
+)
+
+VIDEO_GUIA = (
+    "🎥 *Video guía para radicar tu tutela*\n\n"
     "Mira este video paso a paso:\n"
     "https://youtu.be/ejemplo-tutela-rama-judicial\n\n"
     "📌 *Importante:*\n"
-    "Debes tener a mano:\n"
-    "- El PDF de la tutela que te enviamos\n"
-    "- Tus documentos personales\n"
-    "- Correo electronico\n\n"
-    "Si en algun momento te parece complicado, "
+    "• Ten a mano el PDF de la tutela\n"
+    "• Tus documentos personales\n"
+    "• Correo electrónico\n\n"
+    "Si en cualquier momento te parece complicado, "
     "recuerda que por solo *$20.000 COP* nosotros lo hacemos por ti "
-    "en maximo 4 horas habiles.\n"
+    "en máximo 4 horas hábiles.\n"
     "Solo responde *Pagar* para iniciar el proceso."
+)
+
+MENU_DEFAULT = (
+    "🤖 *Asistente Tutelas Online*\n\n"
+    "Comandos:\n"
+    "• *Hola* — iniciar o continuar\n"
+    "• *Eliminar mis datos* — borrar tu información"
 )
