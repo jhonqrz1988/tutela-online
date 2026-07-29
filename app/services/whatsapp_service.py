@@ -23,6 +23,18 @@ def _meta_headers() -> dict:
     }
 
 
+def _infobip_headers() -> dict:
+    return {
+        "Authorization": f"App {settings.infobip_api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def _infobip_url(endpoint: str) -> str:
+    return f"https://{settings.infobip_base_url}/whatsapp/1/message/{endpoint}"
+
+
 def enviar_texto(telefono: str, mensaje: str) -> bool:
     telefono_limpio = telefono.replace("whatsapp:", "").replace("+", "").strip()
 
@@ -33,6 +45,8 @@ def enviar_texto(telefono: str, mensaje: str) -> bool:
         return _enviar_zapi(telefono_limpio, mensaje)
     elif provider == "twilio":
         return _enviar_twilio(telefono, mensaje)
+    elif provider == "infobip":
+        return _enviar_infobip_texto(telefono_limpio, mensaje)
     return True
 
 
@@ -78,6 +92,71 @@ def _enviar_twilio(telefono: str, mensaje: str) -> bool:
         return False
 
 
+def _enviar_infobip_texto(telefono: str, mensaje: str) -> bool:
+    if not settings.infobip_api_key:
+        return False
+    try:
+        payload = {
+            "messages": [{
+                "from": settings.infobip_sender,
+                "to": telefono,
+                "content": {
+                    "text": mensaje,
+                },
+            }]
+        }
+        r = httpx.post(
+            _infobip_url("text"),
+            json=payload,
+            headers=_infobip_headers(),
+            timeout=15,
+        )
+        return r.is_success
+    except Exception:
+        return False
+
+
+def _enviar_infobip_documento(telefono: str, ruta_pdf: str, filename: str) -> bool:
+    if not settings.infobip_api_key:
+        return False
+    try:
+        import re
+        with open(ruta_pdf, "rb") as f:
+            r_up = httpx.post("https://tmpfiles.org/api/v1/upload", files={"file": (filename, f, "application/pdf")}, timeout=20)
+        if r_up.status_code != 200:
+            return False
+        tmp_url = r_up.json().get("data", {}).get("url", "")
+        if not tmp_url:
+            return False
+        r_dl = httpx.get(tmp_url.replace("tmpfiles.org/", "tmpfiles.org/dl/"), follow_redirects=True, timeout=10)
+        match = re.search(r'href=["\'](https://tmpfiles\.org/dl/[^"\']+\.pdf)["\']', r_dl.text)
+        if not match:
+            return False
+        pdf_url = match.group(1)
+
+        payload = {
+            "messages": [{
+                "from": settings.infobip_sender,
+                "to": telefono,
+                "content": {
+                    "document": {
+                        "url": pdf_url,
+                        "filename": filename,
+                    }
+                },
+            }]
+        }
+        r = httpx.post(
+            _infobip_url("document"),
+            json=payload,
+            headers=_infobip_headers(),
+            timeout=30,
+        )
+        return r.is_success
+    except Exception:
+        return False
+
+
 def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf") -> bool:
     telefono_limpio = telefono.replace("whatsapp:", "").replace("+", "").strip()
 
@@ -88,6 +167,8 @@ def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf")
         return _enviar_documento_zapi(telefono_limpio, ruta_pdf, filename)
     elif provider == "twilio":
         return _enviar_documento_twilio(telefono, ruta_pdf, filename)
+    elif provider == "infobip":
+        return _enviar_infobip_documento(telefono_limpio, ruta_pdf, filename)
     return False
 
 

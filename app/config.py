@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     whatsapp_provider: str = "simular"
     zapi_instance: str = ""
     zapi_token: str = ""
+    infobip_api_key: str = ""
+    infobip_base_url: str = ""
+    infobip_sender: str = "447860088970"
 
     meta_access_token: str = ""
     meta_phone_number_id: str = ""
