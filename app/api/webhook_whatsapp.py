@@ -35,12 +35,30 @@ router = APIRouter()
 
 @router.post("/webhook/whatsapp")
 async def webhook_whatsapp(request: Request, session=Depends(get_session)):
-    form = await request.form()
-    telefono = form.get("From", "")
-    body = (form.get("Body", "") or "").strip().lower()
-    num_media = int(form.get("NumMedia", "0"))
-    media_url = form.get("MediaUrl0")
-    es_audio = "audio" in str(form.get("MediaContentType0", ""))
+    # Detectar si es Twilio (form-urlencoded) o Infobip (JSON)
+    content_type = request.headers.get("content-type", "")
+
+    if "json" in content_type or "application/json" in content_type:
+        # Formato Infobip
+        data = await request.json()
+        results = data.get("results", [])
+        if not results:
+            return {"ok": False, "error": "sin resultados"}
+        msg = results[0]
+        telefono = msg.get("from", "")
+        body = (msg.get("message", {}).get("text", "") or "").strip().lower()
+        num_media = 1 if msg.get("message", {}).get("type") in ("IMAGE", "DOCUMENT", "VIDEO", "AUDIO") else 0
+        media_url = msg.get("message", {}).get("url", "")
+        es_audio = msg.get("message", {}).get("type") == "AUDIO"
+    else:
+        # Formato Twilio (form-urlencoded)
+        form = await request.form()
+        telefono = form.get("From", "")
+        body = (form.get("Body", "") or "").strip().lower()
+        num_media = int(form.get("NumMedia", "0"))
+        media_url = form.get("MediaUrl0")
+        es_audio = "audio" in str(form.get("MediaContentType0", ""))
+
     return await procesar_mensaje(session, telefono, body, num_media, media_url, es_audio)
 
 
