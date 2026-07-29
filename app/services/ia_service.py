@@ -222,3 +222,43 @@ async def generar_tutela(datos: dict) -> str | None:
         ],
     )
     return resp.choices[0].message.content
+
+
+SISTEMA_EXTRACCION_CITAS = """Eres un extractor de referencias legales. Tu unica tarea es identificar
+TODAS las citas a normas, articulos, decretos, leyes o sentencias que
+aparecen en el texto de abajo.
+
+No evaluues si son correctas. No agregues citas que no esten en el texto.
+No parafrasees el texto legal, solo extrae la referencia tal como aparece.
+
+Responde UNICAMENTE en JSON, con este formato exacto:
+
+{
+  "citas": [
+    {
+      "referencia_textual": "texto exacto como aparece en el documento",
+      "tipo": "constitucion" | "decreto" | "ley" | "sentencia" | "otro",
+      "contexto": "la frase completa donde aparece la cita"
+    }
+  ]
+}
+
+Si no hay citas, responde {"citas": []}.
+"""
+
+
+async def extraer_citas(texto_tutela: str) -> list[dict]:
+    client = _get_client()
+    if not client:
+        return []
+    resp = await client.chat.completions.create(
+        model=settings.ai_chat_model,
+        messages=[
+            {"role": "system", "content": SISTEMA_EXTRACCION_CITAS},
+            {"role": "user", "content": texto_tutela},
+        ],
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    data = json.loads(resp.choices[0].message.content)
+    return data.get("citas", [])

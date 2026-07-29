@@ -16,11 +16,17 @@ from app.services.ia_service import (
     MENSAJES_CAMPOS,
     analizar_imagen,
     campos_faltantes,
+    extraer_citas,
     extraer_datos,
     generar_tutela,
     transcribir_audio,
 )
 from app.services.radicacion_service import iniciar_radicacion
+from app.services.verificacion_service import (
+    guardar_pendientes,
+    limpiar_texto_para_pdf,
+    verificar_citas,
+)
 from app.services.whatsapp_service import enviar_documento, enviar_texto
 from app.utils.file_utils import path_prueba
 
@@ -96,14 +102,6 @@ async def procesar_mensaje(
 ) -> dict:
     respuestas: list[str] = []
 
-    # ─── PROCESAR AUDIO ──────────────────────────────────────────
-    if es_audio and media_url:
-        ruta_audio = await _descargar_prueba(media_url)
-        if ruta_audio:
-            texto = await transcribir_audio(ruta_audio)
-            if texto:
-                body = texto.strip().lower()
-
     msg_orm = MensajeWhatsApp(
         from_number=telefono,
         body=body,
@@ -137,7 +135,13 @@ async def procesar_mensaje(
             user.consentimiento = True
             user.estado = "activo"
             session.commit()
-            _r(respuestas, telefono, MENSAJE_MENU)
+            # Crear tutela directo con tipo="salud"
+            tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+            datos = {"tipo": "salud", "_step": "narracion"}
+            tutela.datos_json = json.dumps(datos)
+            session.add(tutela)
+            session.commit()
+            _r(respuestas, telefono, MENSAJE_NARRACION)
             return {"ok": True, "respuestas": respuestas}
         elif body in ("no", "no acepto", "cancelar"):
             user.estado = "rechazado"
@@ -152,7 +156,12 @@ async def procesar_mensaje(
         user.estado = "activo"
         session.commit()
         _r(respuestas, telefono, "✅ *Gracias por aceptar.*\n\nTus datos serán usados solo para tu tutela.")
-        _r(respuestas, telefono, MENSAJE_MENU)
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+        datos = {"tipo": "salud", "_step": "narracion"}
+        tutela.datos_json = json.dumps(datos)
+        session.add(tutela)
+        session.commit()
+        _r(respuestas, telefono, MENSAJE_NARRACION)
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
@@ -160,7 +169,8 @@ async def procesar_mensaje(
         return {"ok": True, "respuestas": respuestas}
 
     if body in ("hola", "menú", "menu", "inicio"):
-        _r(respuestas, telefono, MENSAJE_MENU)
+        # Si ya tiene una tutela activa, regresar a ella
+        _r(respuestas, telefono, MENSAJE_NARRACION)
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
@@ -169,12 +179,14 @@ async def procesar_mensaje(
             Tutela.user_id == user.id,
             Tutela.estado.in_(["borrador", "recogiendo_datos", "datos_listos",
                                "juramento_pendiente", "confirmada", "pdf_generado",
-                               "esperando_confirmacion"]),
+                               "esperando_confirmacion", "verificando_citas"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
     if not tutela:
-        tutela = Tutela(user_id=user.id, tipo="salud", estado="borrador")
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+        datos = {"tipo": "salud", "_step": "narracion"}
+        tutela.datos_json = json.dumps(datos)
         session.add(tutela)
         session.commit()
 
@@ -186,30 +198,54 @@ async def procesar_mensaje(
 
     # ─── FLUJO PRINCIPAL ─────────────────────────────────────────
 
-    # 1. SELECCIONAR TIPO
+    # 1. SELECCIONAR TIPO (eliminado — solo salud)
     if tutela.estado == "borrador":
-        if body in ("1", "salud", "2", "fotomultas", "3", "derecho de petición", "derecho_peticion"):
-            tipo_map = {"1": "salud", "2": "fotomultas", "3": "derecho_peticion",
-                        "salud": "salud", "fotomultas": "fotomultas",
-                        "derecho de petición": "derecho_peticion", "derecho_peticion": "derecho_peticion"}
-            tutela.tipo = tipo_map.get(body, "salud")
-            datos["tipo"] = tutela.tipo
-            tutela.datos_json = json.dumps(datos)
-            tutela.estado = "recogiendo_datos"
-            datos["_step"] = "narracion"
-            tutela.datos_json = json.dumps(datos)
-            session.commit()
-            _r(respuestas, telefono, "✍️ *Cuéntame tu caso en detalle*\n\n"
-               "Incluye: qué pasó, fechas, contra qué entidad, tus datos personales si quieres.")
-            return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, MENSAJE_MENU)
+        tutela.tipo = "salud"
+        datos["tipo"] = "salud"
+        tutela.estado = "recogiendo_datos"
+        datos["_step"] = "narracion"
+        tutela.datos_json = json.dumps(datos)
         session.commit()
+        _r(respuestas, telefono, MENSAJE_NARRACION)
         return {"ok": True, "respuestas": respuestas}
 
     # 2. RECOGER DATOS PASO A PASO
     if tutela.estado == "recogiendo_datos":
         paso = datos.get("_step", 0)
         pendientes = datos.get("_pendientes")
+
+        # Confirmar transcripción de audio
+        if paso == "audio_confirmar":
+            texto_audio = datos.get("_audio_temp", "")
+            if body in ("1", "sí", "si", "correcto", "si correcto"):
+                del datos["_audio_temp"]
+                # Procesar la transcripción confirmada
+                datos_ia = await extraer_datos(texto_audio)
+                for k, v in datos_ia.items():
+                    if v and k not in ("tipo",):
+                        datos[k] = v
+                faltan = campos_faltantes(datos)
+                if faltan:
+                    datos["_step"] = "recogiendo"
+                    datos["_pendientes"] = faltan
+                    sig = faltan[0]
+                    _r(respuestas, telefono, MENSAJES_CAMPOS.get(sig, f"Por favor, indica tu *{sig.replace('_', ' ')}*:"))
+                else:
+                    datos["_step"] = "completo"
+                    _mostrar_resumen(respuestas, telefono, datos)
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                return {"ok": True, "respuestas": respuestas}
+            elif body in ("2", "no"):
+                del datos["_audio_temp"]
+                datos["_step"] = "narracion"
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono, "✍️ *Escribe tu caso manualmente*\n\nCuéntame qué pasó, incluye todos los detalles.")
+                return {"ok": True, "respuestas": respuestas}
+            _r(respuestas, telefono, "Responde *1* si es correcto o *2* para escribirlo manualmente.")
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
 
         # Si hay campos pendientes, preguntarlos uno por uno
         if pendientes:
@@ -232,8 +268,27 @@ async def procesar_mensaje(
             session.commit()
             return {"ok": True, "respuestas": respuestas}
 
-        # Procesar narración con IA
+# Procesar narración con IA
         if paso == "narracion":
+            # Si es audio, transcribir y pedir confirmación
+            if es_audio and media_url:
+                ruta_audio = await _descargar_prueba(media_url)
+                if ruta_audio:
+                    texto_audio = await transcribir_audio(ruta_audio)
+                else:
+                    texto_audio = None
+                if texto_audio:
+                    datos["_audio_temp"] = texto_audio
+                    datos["_step"] = "audio_confirmar"
+                    tutela.datos_json = json.dumps(datos)
+                    session.commit()
+                    _r(respuestas, telefono,
+                       "🎤 *Transcripción de tu audio:*\n\n"
+                       f"\"{texto_audio[:500]}\"\n\n"
+                       "¿Esto es correcto?\n\n"
+                       "1️⃣ *Sí, correcto*\n2️⃣ *No, lo escribiré*")
+                    return {"ok": True, "respuestas": respuestas}
+            # Texto normal: procesar directo
             datos_ia = await extraer_datos(body)
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
@@ -302,52 +357,23 @@ async def procesar_mensaje(
     if tutela.estado == "confirmada":
         # Si no envía archivos y escribe "continuar", saltar las pruebas
         if num_media == 0 and body in ("continuar", "no tengo", "no", "saltar", "omitir"):
-            contenido = await generar_tutela(datos) or datos.get("hechos", "")
-            ruta_pdf = generar_pdf(datos, contenido)
-            tutela.pdf_path = ruta_pdf
-            tutela.estado = "pdf_generado"
-            session.commit()
-            _r(respuestas, telefono, "✅ *¡Tutela lista!*")
-            enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
-            _r(respuestas, telefono,
-               "📄 *PDF generado y enviado*\n\n"
-               "¿Deseas radicar la tutela en la Rama Judicial?\n\n"
-               "1️⃣ *Sí, radicar*\n2️⃣ *No, después*")
-            tutela.estado = "esperando_confirmacion"
-            session.commit()
+            await _generar_con_verificacion(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
 
         if num_media > 0 and media_url:
-            # Descargar y guardar el archivo localmente
             ruta_local = await _descargar_prueba(media_url)
             if ruta_local:
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
             else:
                 datos.setdefault("pruebas_urls", []).append(media_url)
 
-            # Analizar imagen con IA (visión)
             analisis = await analizar_imagen(media_url)
             if analisis:
                 datos.setdefault("pruebas_analizadas", []).append(analisis)
 
             tutela.datos_json = json.dumps(datos)
 
-            # Generar tutela y PDF
-            contenido = await generar_tutela(datos) or datos.get("hechos", "")
-            ruta_pdf = generar_pdf(datos, contenido)
-            tutela.pdf_path = ruta_pdf
-            tutela.estado = "pdf_generado"
-            session.commit()
-
-            _r(respuestas, telefono, "✅ *¡Tutela lista!*")
-            enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
-
-            _r(respuestas, telefono,
-               "📄 *PDF generado y enviado*\n\n"
-               "¿Deseas radicar la tutela en la Rama Judicial?\n\n"
-               "1️⃣ *Sí, radicar*\n2️⃣ *No, después*")
-            tutela.estado = "esperando_confirmacion"
-            session.commit()
+            await _generar_con_verificacion(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
 
         if tutela.estado == "confirmada":
@@ -456,25 +482,56 @@ async def _descargar_prueba(url: str) -> str | None:
     return None
 
 
-MENSAJE_BIENVENIDA = (
-    "👋 *¡Hola! Soy tu asistente legal virtual.*\n\n"
-    "Te ayudo a radicar una *Acción de Tutela* en Colombia "
-    "directamente desde WhatsApp.\n\n"
+async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> str | None:
+    """Genera tutela con verificacion de citas legales, luego crea PDF."""
+    contenido = await generar_tutela(datos) or datos.get("hechos", "")
+
+    # Extraer y verificar citas
+    citas = await extraer_citas(contenido)
+    if citas:
+        resultado = verificar_citas(citas, session)
+        if resultado["pendientes_revision"]:
+            tutela.estado_verificacion = "verificada_con_pendientes"
+            guardar_pendientes(tutela.id, resultado["pendientes_revision"], session)
+            contenido = limpiar_texto_para_pdf(contenido, resultado["pendientes_revision"])
+        else:
+            tutela.estado_verificacion = "verificada"
+
+    ruta_pdf = generar_pdf(datos, contenido)
+    tutela.pdf_path = ruta_pdf
+    tutela.estado = "pdf_generado"
+    tutela.datos_json = json.dumps(datos)
+    session.commit()
+
+    _r(respuestas, telefono, "✅ *¡Tutela lista!*")
+    enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
+    _r(respuestas, telefono,
+       "📄 *PDF generado y enviado*\n\n"
+       "¿Deseas radicar la tutela en la Rama Judicial?\n\n"
+       "1️⃣ *Sí, radicar*\n2️⃣ *No, después*")
+    tutela.estado = "esperando_confirmacion"
+    session.commit()
+    return ruta_pdf
+    "👋 *Hola, soy el asistente de Tutelas Online AI!*\n\n"
+    "Por ahora te ayudo especificamente con casos de *salud*:\n"
+    "negacion de tratamientos, citas medicas o medicamentos por tu EPS.\n\n"
     "📢 *Aviso de privacidad:*\n"
-    "Para ayudarte necesito tratar tus datos personales "
-    "(nombre, cédula, datos de salud, fotos de documentos). "
+    "Para ayudarte necesito tratar tus datos personales y de salud "
+    "(nombre, cedula, historia clinica, diagnosticos). "
     "Estos datos se usan solo para generar y radicar tu tutela. "
-    "Puedes solicitar su eliminación en cualquier momento "
+    "Puedes solicitar su eliminacion en cualquier momento "
     "escribiendo *Eliminar mis datos*.\n\n"
     "✍️ Responde *Acepto* para continuar o *No* para cancelar.\n\n"
-    "🎤 También puedes enviar *audios* contando tu caso."
+    "🎤 Tambien puedes enviar *audios* contando tu caso."
 )
 
-MENSAJE_MENU = (
-    "📋 *¿Cuál es el motivo de tu tutela?*\n\n"
-    "1️⃣ *Salud* (EPS negó tratamiento/cita/medicamento)\n"
-    "2️⃣ *Fotomultas* (comparendos injustos)\n"
-    "3️⃣ *Derecho de Petición* (no respondido)\n\n"
+MENSAJE_NARRACION = (
+    "✍️ *Cuentame tu caso de salud en detalle*\n\n"
+    "Incluye:\n"
+    "- Que EPS te nego el servicio\n"
+    "- Que tratamiento, cita o medicamento te negaron\n"
+    "- Fechas de las negaciones\n"
+    "- Tus datos personales (nombre, cedula, ciudad)\n\n"
     "🎤 Puedes enviar un *audio* contando tu caso.\n"
     "🗑️ *Eliminar mis datos* — borra tu info del sistema"
 )
