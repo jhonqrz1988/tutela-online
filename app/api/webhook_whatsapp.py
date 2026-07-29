@@ -512,6 +512,9 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
     tutela.estado = "esperando_confirmacion"
     session.commit()
     return ruta_pdf
+
+
+MENSAJE_BIENVENIDA = (
     "👋 *Hola, soy el asistente de Tutelas Online AI!*\n\n"
     "Por ahora te ayudo especificamente con casos de *salud*:\n"
     "negacion de tratamientos, citas medicas o medicamentos por tu EPS.\n\n"
