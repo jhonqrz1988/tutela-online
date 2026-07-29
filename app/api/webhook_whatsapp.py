@@ -1,3 +1,4 @@
+import datetime
 import json
 
 from fastapi import APIRouter, Depends, Request
@@ -18,6 +19,7 @@ from app.services.ia_service import (
     campos_faltantes,
     extraer_citas,
     extraer_datos,
+    extraer_datos_caso,
     generar_tutela,
     transcribir_audio,
 )
@@ -137,7 +139,7 @@ async def procesar_mensaje(
         session.add(user)
         session.commit()
         _r(respuestas, telefono, BIENVENIDA)
-        _b(respuestas, telefono, "¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
+        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Acepto"), ("no", "❌ No")])
         return {"ok": True, "respuestas": respuestas}
 
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
@@ -153,37 +155,41 @@ async def procesar_mensaje(
     # ─── CONSENTIMIENTO ──────────────────────────────────────────────
     if user.estado == "nuevo":
         if body in ("acepto", "sí", "si", "ok", "si acepto"):
+            now = datetime.datetime.now(datetime.timezone.utc)
             user.consentimiento = True
+            user.consentimiento_version = CONSENTIMIENTO_VERSION
+            user.consentimiento_timestamp = now
             user.estado = "activo"
             session.commit()
-            tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion")
-            datos = {"tipo": "salud"}
+            tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+            datos = {"tipo": "salud", "_step": 0}
             tutela.datos_json = json.dumps(datos)
             session.add(tutela)
             session.commit()
-            _r(respuestas, telefono, NARRACION)
+            campo, msg = DATOS_PERSONALES_STEPS[0]
+            _r(respuestas, telefono, "✅ *Consentimiento registrado.*\n\nAhora necesito tus datos personales.")
+            _r(respuestas, telefono, msg)
             return {"ok": True, "respuestas": respuestas}
         elif body in ("no", "no acepto", "cancelar"):
             user.estado = "rechazado"
             session.commit()
-            _r(respuestas, telefono, "❌ *Has cancelado.*\n\nSi cambias de opinión, escribe *Hola*.")
+            _r(respuestas, telefono, "❌ *Has cancelado.*\n\nSin tu autorización no podemos procesar la tutela. Si cambias de opinión, escribe *Hola*.")
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, "¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
+        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Acepto"), ("no", "❌ No")])
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
-        _r(respuestas, telefono, "❌ No puedes usar el servicio sin aceptar el tratamiento de datos.\n\nSi cambias de opinión, escribe *Acepto*.")
+        _r(respuestas, telefono, "❌ No puedes usar el servicio sin aceptar el tratamiento de datos.\n\nSi cambias de opinión, escribe *Hola*.")
         return {"ok": True, "respuestas": respuestas}
 
     # ─── HOLA DE USUARIO EXISTENTE ─────────────────────────────────────
     if body in ("hola", "menú", "menu", "inicio", "empezar"):
         user.estado = "activo"
         session.commit()
-        # Buscar tutela activa en estados nuevos
         tutela = session.execute(
             select(Tutela).where(
                 Tutela.user_id == user.id,
-                Tutela.estado.in_(["narracion", "confirmar_audio", "pruebas_pendiente",
+                Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "pruebas_pendiente",
                                    "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                    "esperando_decision_radicacion",
                                    "confirmar_pago", "esperando_pago", "completado"]),
@@ -191,9 +197,15 @@ async def procesar_mensaje(
         ).scalar_one_or_none()
 
         if tutela and tutela.estado != "completado":
-            # Reanudar tutela existente
             datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
-            if tutela.estado == "narracion":
+            if tutela.estado == "recogiendo_datos":
+                step = datos.get("_step", 0)
+                if step < len(DATOS_PERSONALES_STEPS):
+                    _, msg = DATOS_PERSONALES_STEPS[step]
+                    _r(respuestas, telefono, msg)
+                else:
+                    _r(respuestas, telefono, NARRACION)
+            elif tutela.estado == "narracion":
                 _r(respuestas, telefono, NARRACION)
             elif tutela.estado == "pruebas_pendiente":
                 _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
@@ -203,20 +215,21 @@ async def procesar_mensaje(
                 _r(respuestas, telefono, "🤖 *Tutela Online* — Continúa donde lo dejaste.")
             return {"ok": True, "respuestas": respuestas}
 
-        # No hay tutela activa, empezar nueva
-        tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion")
-        datos = {"tipo": "salud"}
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+        datos = {"tipo": "salud", "_step": 0}
         tutela.datos_json = json.dumps(datos)
         session.add(tutela)
         session.commit()
-        _r(respuestas, telefono, NARRACION)
+        campo, msg = DATOS_PERSONALES_STEPS[0]
+        _r(respuestas, telefono, "✍️ *Nueva tutela.*\n\nPrimero tus datos personales.")
+        _r(respuestas, telefono, msg)
         return {"ok": True, "respuestas": respuestas}
 
     # ─── TUTELA ACTIVA ───────────────────────────────────────────────
     tutela = session.execute(
         select(Tutela).where(
             Tutela.user_id == user.id,
-            Tutela.estado.in_(["narracion", "confirmar_audio", "pruebas_pendiente",
+            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "pruebas_pendiente",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
                                "confirmar_pago", "esperando_pago", "completado"]),
@@ -224,17 +237,53 @@ async def procesar_mensaje(
     ).scalar_one_or_none()
 
     if not tutela:
-        tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion")
-        datos = {"tipo": "salud"}
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+        datos = {"tipo": "salud", "_step": 0}
         tutela.datos_json = json.dumps(datos)
         session.add(tutela)
         session.commit()
+        campo, msg = DATOS_PERSONALES_STEPS[0]
+        _r(respuestas, telefono, "✍️ Empecemos con tus datos personales.")
+        _r(respuestas, telefono, msg)
+        return {"ok": True, "respuestas": respuestas}
 
     if not msg_orm.tutela_id:
         msg_orm.tutela_id = tutela.id
         session.commit()
 
     datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   RECOGIENDO DATOS PERSONALES — paso a paso
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "recogiendo_datos":
+        step = datos.get("_step", 0)
+
+        # Si el usuario envía media en este estado, ignorar y pedir el campo
+        if num_media > 0:
+            _, msg = DATOS_PERSONALES_STEPS[min(step, len(DATOS_PERSONALES_STEPS) - 1)]
+            _r(respuestas, telefono, f"Por favor responde con texto: {msg}")
+            return {"ok": True, "respuestas": respuestas}
+
+        if step < len(DATOS_PERSONALES_STEPS):
+            campo, _ = DATOS_PERSONALES_STEPS[step]
+            # Si salta al siguiente (escribe adelante), detectar por comas
+            datos[campo] = body or ""
+            step += 1
+            datos["_step"] = step
+            tutela.datos_json = json.dumps(datos)
+            session.commit()
+
+        if step < len(DATOS_PERSONALES_STEPS):
+            _, msg = DATOS_PERSONALES_STEPS[step]
+            _r(respuestas, telefono, msg)
+        else:
+            tutela.estado = "narracion"
+            session.commit()
+            _r(respuestas, telefono, "✅ *Datos personales registrados.*")
+            _r(respuestas, telefono, NARRACION)
+
+        return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
     #   NARRACIÓN — recibir el relato del usuario
@@ -255,7 +304,7 @@ async def procesar_mensaje(
             return {"ok": True, "respuestas": respuestas}
 
         try:
-            datos_ia = await extraer_datos(body)
+            datos_ia = await extraer_datos_caso(body)
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
                     datos[k] = v
@@ -276,7 +325,7 @@ async def procesar_mensaje(
         texto_audio = datos.get("_audio_temp", "")
         if body in ("1", "sí", "si", "correcto"):
             datos.pop("_audio_temp", None)
-            datos_ia = await extraer_datos(texto_audio)
+            datos_ia = await extraer_datos_caso(texto_audio)
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
                     datos[k] = v
@@ -531,17 +580,31 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 # TEXTOS
 # ═══════════════════════════════════════════════════════════════════
 
+CONSENTIMIENTO_VERSION = "v1.0"
+
 BIENVENIDA = (
-    "👋 *Hola, soy el asistente de Tutelas Online AI!*\n\n"
-    "Por ahora te ayudo específicamente con casos de *salud*:\n"
-    "negación de tratamientos, citas médicas o medicamentos por tu EPS.\n\n"
-    "📢 *Aviso de privacidad:*\n"
-    "Para ayudarte necesito tratar tus datos personales y de salud "
-    "(nombre, cédula, historia clínica, diagnósticos). "
-    "Estos datos se usan solo para generar y radicar tu tutela. "
-    "Puedes solicitar su eliminación en cualquier momento "
-    "escribiendo *Eliminar mis datos*.\n\n"
-    "🎤 También puedes enviar un *audio* contando tu caso."
+    "👋 *Hola! Soy el asistente de Tutelas Online AI.*\n\n"
+    "Te ayudo a crear y radicar acciones de tutela en Colombia "
+    "de forma rápida y sencilla.\n\n"
+    "Comencemos con la autorización de datos."
+)
+
+AVISO_PRIVACIDAD = (
+    "📄 *Aviso de Tratamiento de Datos Personales*\n\n"
+    "De acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013, "
+    "te informamos que:\n\n"
+    "🔹 *Responsable:* Tutelas Online AI\n"
+    "🔹 *Finalidad:* Gestionar, crear y radicar tu acción de tutela "
+    "ante la Rama Judicial\n"
+    "🔹 *Datos recolectados:* Nombre, documento, teléfono, correo, "
+    "ciudad, historia clínica y demás información relevante para tu tutela\n"
+    "🔹 *Derechos del titular:* Acceder, actualizar, rectificar y "
+    "solicitar la eliminación de tus datos en cualquier momento "
+    "escribiendo *Eliminar mis datos*\n"
+    "🔹 *Política completa:* "
+    "https://tutela-online-production.up.railway.app/privacidad\n\n"
+    "Al aceptar, autorizas el tratamiento de tus datos personales "
+    "para los fines descritos."
 )
 
 NARRACION = (
@@ -550,7 +613,7 @@ NARRACION = (
     "• Qué EPS te negó el servicio\n"
     "• Qué tratamiento, cita o medicamento te negaron\n"
     "• Fechas de las negaciones\n"
-    "• Tus datos (nombre, cédula, ciudad, teléfono, email)\n\n"
+    "• Qué le pides al juez que ordene\n\n"
     "🎤 Puedes enviar un *audio* contando tu caso."
 )
 
@@ -613,3 +676,13 @@ MENU_DEFAULT = (
     "• *Hola* — iniciar o continuar\n"
     "• *Eliminar mis datos* — borrar tu información"
 )
+
+# Orden de recolección de datos personales: (campo, mensaje)
+DATOS_PERSONALES_STEPS = [
+    ("accionante_nombre", "👤 Escribe tu *nombre completo*:"),
+    ("accionante_tipo_doc", "🪪 Tipo de documento (CC, CE, Pasaporte):"),
+    ("accionante_cedula", "🆔 Número de documento (sin puntos):"),
+    ("accionante_telefono", "📱 Teléfono celular:"),
+    ("accionante_email", "📧 Correo electrónico (para notificaciones del juzgado):"),
+    ("ciudad", "🏙️ ¿En qué ciudad vives?:"),
+]

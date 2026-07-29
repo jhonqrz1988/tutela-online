@@ -52,6 +52,23 @@ Campos a extraer:
 Si algún campo no está en el texto, déjalo como string vacío "".
 Responde SOLO el JSON, sin explicaciones."""
 
+SISTEMA_EXTRACCION_CASO = """Eres un asistente legal colombiano experto en acciones de tutela.
+Extrae los siguientes datos del relato del usuario en formato JSON.
+
+Campos a extraer:
+- accionado: nombre de la entidad o persona contra quien se tutela
+- accionado_tipo: "natural" o "juridica"
+- accionado_nit: NIT de la entidad (si se conoce, si no: "")
+- accionado_email: correo de notificación de la entidad (si se conoce, si no: "")
+- hechos: relato completo y detallado de los hechos
+- derechos_vulnerados: lista de derechos fundamentales vulnerados
+- peticion: qué solicita exactamente al juez
+- genero: "masculino" o "femenino" según el nombre del accionante
+
+Los datos personales (nombre, documento, teléfono, email, ciudad) ya fueron recolectados.
+NO los extraigas. Déjalos como string vacío "".
+Responde SOLO el JSON, sin explicaciones."""
+
 SISTEMA_TUTELA = """Eres un abogado constitucionalista colombiano con 20 años de experiencia.
 
 Debes redactar una ACCIÓN DE TUTELA formal, profesional y jurídicamente sólida que cumpla con todos los requisitos de la Rama Judicial para evitar su rechazo.
@@ -113,6 +130,21 @@ async def extraer_datos(texto: str) -> dict:
         model=settings.ai_chat_model,
         messages=[
             {"role": "system", "content": SISTEMA_EXTRACCION},
+            {"role": "user", "content": texto},
+        ],
+        response_format={"type": "json_object"},
+    )
+    return json.loads(resp.choices[0].message.content)
+
+
+async def extraer_datos_caso(texto: str) -> dict:
+    client = _get_client()
+    if not client:
+        return {}
+    resp = await client.chat.completions.create(
+        model=settings.ai_chat_model,
+        messages=[
+            {"role": "system", "content": SISTEMA_EXTRACCION_CASO},
             {"role": "user", "content": texto},
         ],
         response_format={"type": "json_object"},
