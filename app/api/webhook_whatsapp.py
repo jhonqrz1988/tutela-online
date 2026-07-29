@@ -137,6 +137,7 @@ async def procesar_mensaje(
         session.add(user)
         session.commit()
         _r(respuestas, telefono, MENSAJE_BIENVENIDA)
+        _b(respuestas, telefono, "✍️ ¿Aceptas el tratamiento de tus datos personales?", [("acepto", "✅ Acepto"), ("no", "❌ No")])
         return {"ok": True, "respuestas": respuestas}
 
     # ─── ELIMINAR DATOS ──────────────────────────────────────────
@@ -356,9 +357,7 @@ async def procesar_mensaje(
             tutela.datos_json = json.dumps(datos)
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "⚖️ Para continuar, debes confirmar bajo juramento:\n\n"
-           "¿Afirmas que *no has presentado otra tutela* por los mismos hechos?\n\n"
-           "1️⃣ *Sí, juro*\n2️⃣ *No*")
+        _b(respuestas, telefono, "⚖️ Para continuar, debes confirmar bajo juramento:\n\n¿Afirmas que *no has presentado otra tutela* por los mismos hechos?", [("1", "✅ Sí, juro"), ("2", "❌ No")])
         session.commit()
         return {"ok": True, "respuestas": respuestas}
 
