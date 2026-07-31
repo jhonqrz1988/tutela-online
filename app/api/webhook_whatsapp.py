@@ -147,6 +147,7 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
                     media_url = msg.get("audio", {}).get("id", "")
 
                 try:
+                    logger.info(f"Webhook Meta: tipo={msg_type} de={telefono} media_url={media_url[:40]} es_audio={es_audio}")
                     respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
                     if respuesta.get("respuestas"):
                         respuestas.extend(respuesta["respuestas"])
@@ -345,8 +346,11 @@ async def procesar_mensaje(
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "narracion":
         if es_audio and media_url:
+            logger.info(f"Audio recibido de {telefono}: media_url={media_url[:40]} estado=narracion")
             ruta_audio = await _descargar_prueba(media_url)
+            logger.info(f"Audio descargado: ruta={ruta_audio}")
             texto_audio = await transcribir_audio(ruta_audio) if ruta_audio else None
+            logger.info(f"Transcripcion audio: {repr(texto_audio)[:200]}")
             if texto_audio:
                 datos["_audio_temp"] = texto_audio
                 tutela.estado = "confirmar_audio"
@@ -616,17 +620,21 @@ async def _descargar_prueba(url: str) -> str | None:
                 data = r.json()
                 url = data.get("url", url)
                 mime_type = data.get("mime_type", "").lower()
+            else:
+                logger.error(f"Meta get media {url} falló: {r.status_code} {r.text[:150]}")
             # La URL firmada de Meta NO necesita header de auth
             headers = {}
 
         ext = _ext_desde_mime(mime_type, url)
         ruta = path_prueba(ext)
+        logger.info(f"_descargar_prueba: mime={mime_type} ext={ext} ruta={ruta}")
 
         if "api.twilio.com" in url and settings.twilio_account_sid:
             auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
 
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
             r = await c.get(url, headers=headers, auth=auth)
+        logger.info(f"_descargar_prueba: download status={r.status_code} bytes={len(r.content)}")
         if r.status_code == 200:
             with open(ruta, "wb") as f:
                 f.write(r.content)
