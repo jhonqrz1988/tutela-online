@@ -1,6 +1,7 @@
 import os
 from datetime import UTC, datetime
 
+import fitz
 from fpdf import FPDF
 from PIL import Image
 
@@ -113,22 +114,15 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
         "37 del Decreto 2591 de 1991."
     )
 
-    # VII. Pruebas
+    # VII. Pruebas — fotos y PDFs adjuntos
     pruebas_paths = datos.get("pruebas_paths", [])
-    pruebas_urls = datos.get("pruebas_urls", [])
     pruebas_analizadas = datos.get("pruebas_analizadas", [])
-    num_pruebas = max(len(pruebas_paths), len(pruebas_urls), len(pruebas_analizadas))
-    if num_pruebas:
+    pruebas_fotos = _filtrar_pruebas(pruebas_paths, pruebas_analizadas)
+    if pruebas_fotos:
         pdf.section_title("VII. PRUEBAS")
-        pdf.body_text("Se adjuntan los siguientes documentos:")
-        for i in range(num_pruebas):
-            analisis = pruebas_analizadas[i] if i < len(pruebas_analizadas) else ""
-            nombre = ""
-            if i < len(pruebas_paths):
-                nombre = os.path.basename(pruebas_paths[i])
-            elif i < len(pruebas_urls):
-                nombre = pruebas_urls[i].split("/")[-1][:30]
-            texto = f"- {nombre or f'Documento {i+1}'}: {analisis[:150] if analisis else 'Documento adjunto'}"
+        pdf.body_text("Se adjuntan las siguientes pruebas:")
+        for ruta_prueba, nombre, analisis in pruebas_fotos:
+            texto = f"- {nombre}: {analisis[:150] if analisis else 'Documento adjunto'}"
             pdf.body_text(texto)
 
     # VIII. Notificaciones
@@ -148,48 +142,80 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     pdf.body_text(f"Email: {email}")
 
     # X. Anexos — imágenes de las pruebas incrustadas en el PDF
-    imagenes_anexos = _anexar_pruebas(pdf, pruebas_paths, pruebas_analizadas)
+    _anexar_pruebas(pdf, pruebas_fotos)
 
     pdf.output(ruta)
     return ruta
 
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+PDF_EXT = {".pdf"}
 
 
-def _anexar_pruebas(pdf, pruebas_paths: list[str], pruebas_analizadas: list[str]) -> int:
-    """Incrusta las imágenes de las pruebas como anexos al final del PDF."""
-    count = 0
+def _filtrar_pruebas(pruebas_paths: list[str], pruebas_analizadas: list[str]) -> list[tuple[str, str, str]]:
+    """Devuelve las pruebas válidas (imágenes y PDFs): (ruta, nombre, analisis)."""
+    pruebas = []
     for i, ruta in enumerate(pruebas_paths or []):
         if not ruta or not os.path.exists(ruta):
             continue
         ext = os.path.splitext(ruta)[1].lower()
-        if ext not in IMG_EXT:
+        if ext in IMG_EXT:
+            try:
+                with Image.open(ruta) as img:
+                    img.verify()
+            except (OSError, Image.UnidentifiedImageError):
+                continue
+        elif ext in PDF_EXT:
+            try:
+                with fitz.open(ruta) as doc:
+                    if doc.page_count == 0:
+                        continue
+            except (fitz.FileDataError, OSError, ValueError):
+                continue
+        else:
             continue
-        try:
-            with Image.open(ruta) as img:
-                img.verify()
-        except (OSError, Image.UnidentifiedImageError):
-            continue
+        analisis = pruebas_analizadas[i] if i < len(pruebas_analizadas) else ""
+        pruebas.append((ruta, os.path.basename(ruta), analisis))
+    return pruebas
+
+
+def _anexar_pruebas(pdf, pruebas: list[tuple[str, str, str]]) -> int:
+    """Incrusta las fotos y las páginas de los PDFs como anexos al final del PDF."""
+    count = 0
+    for i, (ruta, nombre, analisis) in enumerate(pruebas):
+        ext = os.path.splitext(ruta)[1].lower()
         count += 1
         pdf.add_page()
         pdf.section_title(f"ANEXO {count} - PRUEBA {i + 1}")
-        analisis = pruebas_analizadas[i] if i < len(pruebas_analizadas) else ""
         if analisis:
             pdf.body_text(analisis[:200])
         pdf.ln(3)
-        # Ajustar imagen para que quepa en la página (A4: 210x297mm, margen 15mm)
-        margen = 15
-        ancho_max = pdf.w - 2 * margen
-        alto_max = pdf.h - 2 * margen - 25
-        with Image.open(ruta) as img:
-            w, h = img.size
-        ratio = min(ancho_max / w, alto_max / h, 1.0)
-        ancho = w * ratio
-        alto = h * ratio
-        x = (pdf.w - ancho) / 2
-        try:
-            pdf.image(ruta, x=x, y=pdf.get_y(), w=ancho, h=alto)
-        except OSError:
-            count -= 1
+        if ext in PDF_EXT:
+            try:
+                with fitz.open(ruta) as doc:
+                    for pagina in doc:
+                        pix = pagina.get_pixmap(matrix=fitz.Matrix(2, 2))
+                        temp = os.path.join(os.path.dirname(ruta), f"_pagina_{count}_{pagina.number}.png")
+                        pix.save(temp)
+                        _insertar_imagen(pdf, temp)
+                        os.remove(temp)
+            except (fitz.FileDataError, OSError, ValueError):
+                count -= 1
+                continue
+        else:
+            _insertar_imagen(pdf, ruta)
     return count
+
+
+def _insertar_imagen(pdf, ruta: str) -> None:
+    """Inserta una imagen centrada, escalada para caber en la página (A4: 210x297mm, margen 15mm)."""
+    margen = 15
+    ancho_max = pdf.w - 2 * margen
+    alto_max = pdf.h - 2 * margen - 25
+    with Image.open(ruta) as img:
+        w, h = img.size
+    ratio = min(ancho_max / w, alto_max / h, 1.0)
+    ancho = w * ratio
+    alto = h * ratio
+    x = (pdf.w - ancho) / 2
+    pdf.image(ruta, x=x, y=pdf.get_y(), w=ancho, h=alto)

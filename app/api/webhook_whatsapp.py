@@ -526,8 +526,9 @@ async def procesar_mensaje(
                f"Para completar el pago de *$20.000 COP*:\n\n"
                f"🔗 {link_pago}\n\n"
                f"Después de pagar, escribe *Pagado* para confirmar.\n\n"
-               f"⚠️ *Importante:* La radicación toma máximo *4 horas hábiles* (lun-vie 8am-5pm).\n"
-               f"Te enviaremos el número de radicado y la constancia oficial.")
+               f"⚠️ *Importante:* Solo radicamos tu tutela y te entregamos el "
+               f"*número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm). "
+               f"No hacemos seguimiento del proceso.")
             tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
@@ -544,7 +545,7 @@ async def procesar_mensaje(
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_pago":
         if body in ("pagado", "pago confirmado", "si", "ok", "1"):
-            _r(respuestas, telefono, "✅ *¡Pago recibido!* Radicaremos tu tutela en máximo *4 horas hábiles*. Te notificaremos cuando esté lista.")
+            _r(respuestas, telefono, "✅ *¡Pago recibido!* Radicaremos tu tutela y te entregaremos el *número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm). No hacemos seguimiento del proceso.")
             resultado = await iniciar_radicacion(tutela.id)
             if resultado.get("ok"):
                 _r(respuestas, telefono, f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
@@ -776,7 +777,7 @@ POST_PDF_OPCIONES = (
     "1️⃣ *Radicación automática* — *$20.000 COP*\n"
     "   Radicamos por ti ante la Rama Judicial.\n"
     "   Entrega en máximo *4 horas hábiles*.\n"
-    "   Recibes número de radicado y constancia oficial.\n\n"
+    "   Te damos el número de radicado (no hacemos seguimiento).\n\n"
     "2️⃣ *Hazlo tú mismo* — GRATIS\n"
     "   Te enviamos un video explicativo."
 )
@@ -786,9 +787,9 @@ CONFIRMAR_PAGO_TEXTO = (
     "Por *$20.000 COP* radicamos tu tutela ante la Rama Judicial.\n"
     "Incluye:\n"
     "✅ Radicación en el portal oficial\n"
-    "✅ Seguimiento del proceso\n"
     "✅ Número de radicado y constancia\n"
     "✅ Entrega en máximo 4 horas hábiles\n\n"
+    "*No hacemos seguimiento del proceso:* solo radicamos y te damos el número de radicado.\n\n"
     "¿Quieres continuar con el pago?"
 )
 
