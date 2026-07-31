@@ -146,9 +146,12 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
                     es_audio = True
                     media_url = msg.get("audio", {}).get("id", "")
 
-                respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
-                if respuesta.get("respuestas"):
-                    respuestas.extend(respuesta["respuestas"])
+                try:
+                    respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
+                    if respuesta.get("respuestas"):
+                        respuestas.extend(respuesta["respuestas"])
+                except Exception as e:
+                    logger.error(f"Error procesando mensaje {msg_type} de {telefono}: {e}")
     return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
 
 

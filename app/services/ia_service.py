@@ -111,13 +111,17 @@ async def transcribir_audio(ruta_audio: str) -> str | None:
     client = _get_client()
     if not client:
         return None
-    with open(ruta_audio, "rb") as f:
-        transcript = await client.audio.transcriptions.create(
-            model=settings.ai_whisper_model,
-            file=f,
-            language="es",
-        )
-    return transcript.text
+    try:
+        with open(ruta_audio, "rb") as f:
+            transcript = await client.audio.transcriptions.create(
+                model=settings.ai_whisper_model,
+                file=f,
+                language="es",
+            )
+        return transcript.text
+    except Exception as e:
+        logger.error(f"Error transcribiendo audio: {e}")
+        return None
 
 
 async def extraer_datos_caso(texto: str) -> dict:
