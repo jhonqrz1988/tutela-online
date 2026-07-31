@@ -24,7 +24,6 @@ from app.services.ia_service import (
     generar_tutela,
     transcribir_audio,
 )
-from app.services.radicacion_service import iniciar_radicacion
 from app.services.verificacion_service import (
     guardar_pendientes,
     limpiar_texto_para_pdf,
@@ -241,11 +240,12 @@ async def procesar_mensaje(
         tutela = session.execute(
             select(Tutela).where(
                 Tutela.user_id == user.id,
-                Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
-                                   "pruebas_pendiente",
-                                   "recibiendo_pruebas", "datos_listos", "pdf_generado",
-                                   "esperando_decision_radicacion",
-                                   "confirmar_pago", "esperando_pago", "completado"]),
+            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+                               "pruebas_pendiente",
+                               "recibiendo_pruebas", "datos_listos", "pdf_generado",
+                               "esperando_decision_radicacion",
+                               "confirmar_pago", "esperando_pago", "pago_por_confirmar",
+                               "pago_confirmado", "completado"]),
             ).order_by(Tutela.created_at.desc()).limit(1)
         ).scalar_one_or_none()
 
@@ -288,7 +288,8 @@ async def procesar_mensaje(
                                "pruebas_pendiente",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
-                               "confirmar_pago", "esperando_pago", "completado"]),
+                               "confirmar_pago", "esperando_pago", "pago_por_confirmar",
+                               "pago_confirmado", "completado"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
@@ -541,20 +542,32 @@ async def procesar_mensaje(
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
-    #   ESPERANDO PAGO
+    #   ESPERANDO PAGO — el equipo humano confirma el pago desde el admin
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_pago":
         if body in ("pagado", "pago confirmado", "si", "ok", "1"):
-            _r(respuestas, telefono, "✅ *¡Pago recibido!* Radicaremos tu tutela y te entregaremos el *número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm). No hacemos seguimiento del proceso.")
-            resultado = await iniciar_radicacion(tutela.id)
-            if resultado.get("ok"):
-                _r(respuestas, telefono, f"✅ *¡Tutela radicada!*\nN° radicado: {resultado.get('num_radicado', 'N/A')}")
-            else:
-                _r(respuestas, telefono, f"⚠️ Error en radicación: {resultado.get('error', 'desconocido')}")
-            tutela.estado = "completado"
+            _r(respuestas, telefono,
+               "✅ *¡Recibimos tu confirmación de pago!*\n\n"
+               "Nuestro equipo está verificando el pago. En máximo *4 horas hábiles* "
+               "(lun-vie 8am-5pm) confirmaremos y te enviaremos el *número de radicado* "
+               "por este chat.\n\n"
+               "⚠️ Solo radicamos y te entregamos el número de radicado. "
+               "No hacemos seguimiento del proceso.")
+            tutela.estado = "pago_por_confirmar"
             session.commit()
+            logger.info(f"Tutela {tutela.id}: usuario reporta pago, queda pago_por_confirmar")
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "Estamos esperando la confirmación de tu pago. Si ya pagaste, escribe *Pagado*.")
+        _r(respuestas, telefono, "Estamos esperando tu pago. Cuando hayas pagado, escribe *Pagado*.")
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   PAGO POR CONFIRMAR / PAGO CONFIRMADO — esperando radicación manual
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado in ("pago_por_confirmar", "pago_confirmado"):
+        _r(respuestas, telefono,
+           "✅ *Tu pago está en proceso.*\n\n"
+           "Nuestro equipo radicará tu tutela y te enviaremos el *número de radicado* "
+           "por este chat en máximo *4 horas hábiles* (lun-vie 8am-5pm).")
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════

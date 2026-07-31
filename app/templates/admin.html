@@ -94,6 +94,8 @@
       <option value="datos_listos">Datos listos</option>
       <option value="confirmada">Confirmada</option>
       <option value="pdf_generado">PDF generado</option>
+      <option value="pago_por_confirmar">Pago por confirmar</option>
+      <option value="pago_confirmado">Pago confirmado</option>
       <option value="radicada">Radicada</option>
       <option value="fallida">Fallida</option>
     </select>
@@ -190,6 +192,8 @@ function renderDetalle() {
   const datosStr = Object.keys(d).length ? escapeHtml(JSON.stringify(d, null, 2)) : '<span style="color:#999;">Sin datos</span>';
 
   const puedeReintentar = t.estado === 'fallida' || t.estado === 'pdf_generado';
+  const puedeConfirmarPago = t.estado === 'esperando_pago' || t.estado === 'pago_por_confirmar' || t.estado === 'confirmar_pago';
+  const puedeRegistrarRadicado = t.estado === 'pago_confirmado' || t.estado === 'pago_por_confirmar';
 
   document.getElementById('modal-body').innerHTML = `
     <div class="modal-section">
@@ -248,6 +252,32 @@ function renderDetalle() {
       <button class="btn btn-danger" onclick="reintentar(${t.id})" id="btn-reintentar">Reintentar Radicaci&oacute;n</button>
     </div>
     ` : ''}
+
+    ${puedeConfirmarPago ? `
+    <div class="modal-section">
+      <h3>Pago</h3>
+      <p style="font-size:13px;margin-bottom:10px;">El usuario report&oacute; el pago. Verifica y confirma para continuar con la radicaci&oacute;n.</p>
+      <div class="acciones">
+        <button class="btn btn-danger" onclick="confirmarPago(${t.id})" id="btn-confirmar-pago">Confirmar Pago</button>
+      </div>
+    </div>
+    ` : ''}
+
+    ${puedeRegistrarRadicado ? `
+    <div class="modal-section">
+      <h3>Radicaci&oacute;n Manual</h3>
+      <p style="font-size:13px;margin-bottom:10px;">Radica la tutela en el portal de la Rama Judicial y registra el n&uacute;mero. El sistema informar&aacute; al usuario por WhatsApp.</p>
+      <div class="detail-grid">
+        <div class="detail-item" style="grid-column: 1 / -1;">
+          <label>N&deg; de radicado</label>
+          <input type="text" id="input-num-radicado" placeholder="Ej: 11001-2026-00000" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+        </div>
+      </div>
+      <div class="acciones">
+        <button class="btn btn-danger" onclick="registrarRadicado(${t.id})" id="btn-registrar-radicado">Registrar y Notificar</button>
+      </div>
+    </div>
+    ` : ''}
   `;
 }
 
@@ -260,6 +290,52 @@ async function reintentar(id) {
     const res = await r.json();
     if (res.ok) {
       alert('Radicaci\u00f3n exitosa. N\u00famero: ' + (res.num_radicado || 'N/A'));
+      location.reload();
+    } else {
+      alert('Error: ' + (res.error || 'desconocido'));
+      abrirDetalle(id);
+    }
+  } catch(e) {
+    alert('Error de conexi\u00f3n: ' + e.message);
+    abrirDetalle(id);
+  }
+}
+
+async function confirmarPago(id) {
+  if (!confirm('Confirma el pago de esta tutela? Se notificar\u00e1 al usuario por WhatsApp.')) return;
+  const btn = document.getElementById('btn-confirmar-pago');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="display:inline-block;"></div> Confirmando...';
+  try {
+    const r = await fetch('/admin/tutelas/' + id + '/confirmar-pago', { method: 'POST' });
+    const res = await r.json();
+    if (res.ok) {
+      alert('Pago confirmado. Usuario notificado.');
+      location.reload();
+    } else {
+      alert('Error: ' + (res.error || 'desconocido'));
+      abrirDetalle(id);
+    }
+  } catch(e) {
+    alert('Error de conexi\u00f3n: ' + e.message);
+    abrirDetalle(id);
+  }
+}
+
+async function registrarRadicado(id) {
+  const num = document.getElementById('input-num-radicado').value.trim();
+  if (!num) { alert('Ingresa el n\u00famero de radicado'); return; }
+  if (!confirm('Registrar el radicado y notificar al usuario por WhatsApp?')) return;
+  const btn = document.getElementById('btn-registrar-radicado');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="display:inline-block;"></div> Registrando...';
+  try {
+    const form = new FormData();
+    form.append('num_radicado', num);
+    const r = await fetch('/admin/tutelas/' + id + '/registrar-radicado', { method: 'POST', body: form });
+    const res = await r.json();
+    if (res.ok) {
+      alert('Radicado registrado. Usuario notificado con el n\u00famero.');
       location.reload();
     } else {
       alert('Error: ' + (res.error || 'desconocido'));

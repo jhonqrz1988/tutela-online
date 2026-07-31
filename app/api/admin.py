@@ -130,6 +130,70 @@ def reintentar_radicacion(tutela_id: int, session=Depends(get_session)):
         return {"ok": False, "error": str(e)}
 
 
+@router.post("/tutelas/{tutela_id}/confirmar-pago")
+def confirmar_pago(tutela_id: int, session=Depends(get_session)):
+    """Confirma manualmente el pago de una tutela y avisa al usuario por WhatsApp."""
+    t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
+    if not t:
+        return {"ok": False, "error": "No encontrada"}
+    if t.estado not in ("esperando_pago", "pago_por_confirmar", "confirmar_pago"):
+        return {"ok": False, "error": f"No se puede confirmar pago (estado: {t.estado})"}
+
+    from app.services.whatsapp_service import enviar_texto
+
+    t.estado = "pago_confirmado"
+    session.commit()
+    if t.user and t.user.telefono:
+        enviar_texto(
+            t.user.telefono,
+            "✅ *¡Pago confirmado!*\n\n"
+            "Nuestro equipo radicará tu tutela y te enviaremos el "
+            "*número de radicado* por este chat en máximo *4 horas hábiles* "
+            "(lun-vie 8am-5pm).",
+        )
+    return {"ok": True, "estado": t.estado}
+
+
+@router.post("/tutelas/{tutela_id}/registrar-radicado")
+async def registrar_radicado_manual(
+    tutela_id: int,
+    request: Request,
+    session=Depends(get_session),
+):
+    """Registra el número de radicado hecho manualmente por el equipo y avisa al usuario."""
+    t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
+    if not t:
+        return {"ok": False, "error": "No encontrada"}
+
+    data = await request.form()
+    num_radicado = (data.get("num_radicado") or "").strip()
+    if not num_radicado:
+        return {"ok": False, "error": "Número de radicado requerido"}
+
+    rad = None
+    if t.radicacion:
+        rad = t.radicacion[0]
+    if not rad:
+        rad = Radicacion(tutela_id=t.id)
+        session.add(rad)
+
+    rad.num_radicado = num_radicado
+    rad.estado = "radicada"
+    t.estado = "radicada"
+    session.commit()
+
+    from app.services.whatsapp_service import enviar_texto
+
+    if t.user and t.user.telefono:
+        enviar_texto(
+            t.user.telefono,
+            f"✅ *¡Tutela radicada!*\n\n"
+            f"N° radicado: *{num_radicado}*\n\n"
+            f"Gracias por usar nuestro servicio.",
+        )
+    return {"ok": True, "estado": t.estado, "num_radicado": num_radicado}
+
+
 @router.get("/chat", response_class=HTMLResponse)
 def chat_page(request: Request):
     template = env.get_template("chat.html")

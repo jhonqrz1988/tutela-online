@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     port: int = 8000
     app_url: str = "http://localhost:8000"
 
+    # === Wompi (pasarela de pagos Colombia) ===
+    wompi_public_key: str = ""
+    wompi_private_key: str = ""
+    wompi_integrity_secret: str = ""
+    wompi_events_secret: str = ""
+    wompi_env: str = "sandbox"  # "sandbox" | "production"
+    wompi_amount_cents: int = 2000000  # $20.000 COP = 2.000.000 centavos
+    wompi_currency: str = "COP"
+
     rama_judicial_url: str = "https://procesojudicial.ramajudicial.gov.co/TutelaEnLinea"
     browser_headless: bool = True
 

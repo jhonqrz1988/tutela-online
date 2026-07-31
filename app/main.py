@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
 from app.api.health import router as health_router
+from app.api.pagos import router as pagos_router
 from app.api.tutelas import router as tutelas_router
 from app.api.webhook_whatsapp import router as whatsapp_router
 from app.bot.browser import BrowserManager
@@ -45,3 +46,4 @@ app.include_router(admin_router)
 app.include_router(health_router)
 app.include_router(whatsapp_router)
 app.include_router(tutelas_router)
+app.include_router(pagos_router)
