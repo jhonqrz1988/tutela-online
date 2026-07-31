@@ -622,8 +622,8 @@ async def _descargar_prueba(url: str) -> str | None:
                 mime_type = data.get("mime_type", "").lower()
             else:
                 logger.error(f"Meta get media {url} falló: {r.status_code} {r.text[:150]}")
-            # La URL firmada de Meta NO necesita header de auth
-            headers = {}
+            # La URL firmada de Meta SÍ requiere el token de acceso
+            headers = {"Authorization": f"Bearer {settings.meta_access_token}"}
 
         ext = _ext_desde_mime(mime_type, url)
         ruta = path_prueba(ext)
@@ -631,6 +631,7 @@ async def _descargar_prueba(url: str) -> str | None:
 
         if "api.twilio.com" in url and settings.twilio_account_sid:
             auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+            headers = {}
 
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
             r = await c.get(url, headers=headers, auth=auth)
