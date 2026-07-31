@@ -210,32 +210,38 @@ def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf")
 
 def _enviar_documento_meta(telefono: str, ruta_pdf: str, filename: str) -> bool:
     try:
-        url = META_API_BASE.replace("{phone_number_id}", settings.meta_phone_number_id)
-
-        # Subir PDF a tmpfiles para tener URL pública
+        # 1. Subir el PDF como media en Meta → devuelve un media ID
+        upload_url = f"https://graph.facebook.com/v22.0/{settings.meta_phone_number_id}/media"
         with open(ruta_pdf, "rb") as f:
             r_up = httpx.post(
-                "https://tmpfiles.org/api/v1/upload",
+                upload_url,
+                data={"messaging_product": "whatsapp", "type": "application/pdf"},
                 files={"file": (filename, f, "application/pdf")},
-                timeout=20,
+                headers={"Authorization": f"Bearer {settings.meta_access_token}"},
+                timeout=30,
             )
         if r_up.status_code != 200:
+            logger.error(f"Meta upload PDF falló: {r_up.status_code} {r_up.text[:200]}")
             return False
-        doc_url = r_up.json().get("data", {}).get("url", "")
-        if not doc_url:
+        media_id = r_up.json().get("id")
+        if not media_id:
             return False
 
+        # 2. Enviar el documento usando el media ID
+        url = META_API_BASE.replace("{phone_number_id}", settings.meta_phone_number_id)
         payload = {
             "messaging_product": "whatsapp",
             "to": telefono,
             "type": "document",
             "document": {
-                "link": doc_url,
+                "id": media_id,
                 "filename": filename,
                 "caption": "📄 Tutela generada",
             },
         }
         r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=30)
+        if not r.is_success:
+            logger.error(f"Meta send PDF falló: {r.status_code} {r.text[:200]}")
         return r.is_success
     except Exception as e:
         logger.error(f"Error _enviar_documento_meta: {e}")

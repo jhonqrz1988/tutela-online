@@ -601,17 +601,11 @@ async def _descargar_prueba(url: str) -> str | None:
     if not url:
         return None
     try:
-        ext = ".jpg"
-        for e in (".png", ".jpeg", ".pdf", ".jpg", ".gif", ".webp", ".ogg", ".mp3", ".mp4"):
-            if e in url.lower():
-                ext = e
-                break
-        ruta = path_prueba(ext)
-
+        mime_type = ""
         headers = {}
         auth = None
 
-        # Meta media ID (solo números) → resolver URL via Graph API
+        # Meta media ID (solo números) → resolver URL y mime_type via Graph API
         if url.isdigit() and settings.meta_access_token:
             async with httpx.AsyncClient(timeout=15) as c:
                 r = await c.get(
@@ -619,9 +613,14 @@ async def _descargar_prueba(url: str) -> str | None:
                     headers={"Authorization": f"Bearer {settings.meta_access_token}"},
                 )
             if r.status_code == 200:
-                url = r.json().get("url", url)
+                data = r.json()
+                url = data.get("url", url)
+                mime_type = data.get("mime_type", "").lower()
             # La URL firmada de Meta NO necesita header de auth
             headers = {}
+
+        ext = _ext_desde_mime(mime_type, url)
+        ruta = path_prueba(ext)
 
         if "api.twilio.com" in url and settings.twilio_account_sid:
             auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
@@ -635,6 +634,39 @@ async def _descargar_prueba(url: str) -> str | None:
     except Exception as e:
         logger.error(f"Error descargando prueba: {e}")
     return None
+
+
+def _ext_desde_mime(mime_type: str, url: str = "") -> str:
+    """Elige la extensión correcta según el mime_type de Meta (o la URL)."""
+    if not mime_type:
+        for e in (".png", ".jpeg", ".pdf", ".jpg", ".gif", ".webp", ".ogg", ".mp3", ".m4a", ".mp4"):
+            if e in url.lower():
+                return e
+        return ".jpg"
+    mapping = {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "application/pdf": ".pdf",
+        "audio/ogg": ".ogg",
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/amr": ".amr",
+        "audio/x-m4a": ".m4a",
+        "video/mp4": ".mp4",
+        "video/3gpp": ".3gp",
+    }
+    for m, e in mapping.items():
+        if mime_type.startswith(m):
+            return e
+    if mime_type.startswith("audio/"):
+        return ".ogg"
+    if mime_type.startswith("image/"):
+        return ".jpg"
+    if mime_type.startswith("video/"):
+        return ".mp4"
+    return ".jpg"
 
 
 async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> str | None:
