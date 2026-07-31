@@ -6,15 +6,16 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_session
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
 from app.services.whatsapp_service import enviar_texto
 from app.services.wompi_service import (
-    consultar_transaccion,
-    crear_transaccion,
-    verificar_evento,
     WOMPI_EVENT_APPROVED,
+    consultar_transaccion,
+    url_checkout,
+    verificar_evento,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,10 @@ async def iniciar_pago(
         raise HTTPException(404, "Tutela no encontrada")
 
     reference = f"TUT-{tutela_id}"
-    datos = json.loads(tutela.datos_json or "{}")
-    email = datos.get("accionante_email") or (tutela.user.email if tutela.user else None)
 
-    res = await crear_transaccion(tutela_id, reference, email)
-    if res.get("ok") and res.get("checkout_url"):
-        return RedirectResponse(res["checkout_url"], status_code=302)
+    if settings.wompi_public_key and settings.wompi_integrity_secret:
+        checkout_url = url_checkout(tutela_id, reference)
+        return RedirectResponse(checkout_url, status_code=302)
 
     # Sin Wompi configurado: página informativa + opción de confirmar manualmente
     html = f"""

@@ -40,53 +40,6 @@ def url_checkout(tutela_id: int, reference: str) -> str:
     )
 
 
-async def crear_transaccion(
-    tutela_id: int, reference: str, email: str | None = None
-) -> dict:
-    """Crea una transacción Wompi (para el botón de pago) y devuelve la URL del checkout."""
-    if not settings.wompi_private_key:
-        return {
-            "ok": False,
-            "error": "Wompi no configurado (falta wompi_private_key)",
-            "checkout_url": None,
-        }
-    amount = settings.wompi_amount_cents
-    currency = settings.wompi_currency
-    signature = firma_integridad(reference, amount, currency)
-    payload = {
-        "amount_in_cents": amount,
-        "currency": currency,
-        "reference": reference,
-        "customer_email": email or "cliente@tutela.co",
-        "payment_method": {"type": "CARD"},
-        "signature": {
-            "integrity": signature,
-            "properties": ["amount_in_cents", "reference", "currency"],
-        },
-        "redirect_url": f"{settings.app_url}/pago/resultado?reference={reference}",
-    }
-    headers = {"Authorization": f"Bearer {settings.wompi_private_key}"}
-    try:
-        async with httpx.AsyncClient(timeout=15) as c:
-            r = await c.post(f"{wompi_base_url()}/transactions", json=payload, headers=headers)
-        if r.status_code not in (200, 201):
-            logger.error(f"Wompi crear_transaccion falló: {r.status_code} {r.text[:300]}")
-            return {"ok": False, "error": f"HTTP {r.status_code}", "checkout_url": None}
-        data = r.json()
-        checkout_url = (
-            data.get("data", {}).get("payment_method", {}).get("extra", {}).get("checkout_url")
-            or f"https://checkout.wompi.co/p/{data.get('data', {}).get('id', '')}"
-        )
-        return {
-            "ok": True,
-            "transaction_id": data.get("data", {}).get("id"),
-            "checkout_url": checkout_url,
-        }
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"Wompi crear_transaccion error: {e}")
-        return {"ok": False, "error": str(e), "checkout_url": None}
-
-
 async def consultar_transaccion(transaction_id: str) -> dict | None:
     """Consulta el estado de una transacción en Wompi (respaldo si el webhook falla)."""
     if not settings.wompi_private_key or not transaction_id:
