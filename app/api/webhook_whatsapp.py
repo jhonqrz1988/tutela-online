@@ -527,9 +527,8 @@ async def procesar_mensaje(
                f"Para completar el pago de *$20.000 COP*:\n\n"
                f"🔗 {link_pago}\n\n"
                f"Después de pagar, escribe *Pagado* para confirmar.\n\n"
-               f"⚠️ *Importante:* Solo radicamos tu tutela y te entregamos el "
-               f"*número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm). "
-               f"No hacemos seguimiento del proceso.")
+               f"⚠️ *Importante:* Radicamos tu tutela y te entregamos el "
+               f"*número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm).")
             tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
@@ -551,8 +550,7 @@ async def procesar_mensaje(
                "Nuestro equipo está verificando el pago. En máximo *4 horas hábiles* "
                "(lun-vie 8am-5pm) confirmaremos y te enviaremos el *número de radicado* "
                "por este chat.\n\n"
-               "⚠️ Solo radicamos y te entregamos el número de radicado. "
-               "No hacemos seguimiento del proceso.")
+               "Gracias por confiar en nosotros.")
             tutela.estado = "pago_por_confirmar"
             session.commit()
             logger.info(f"Tutela {tutela.id}: usuario reporta pago, queda pago_por_confirmar")
@@ -790,7 +788,7 @@ POST_PDF_OPCIONES = (
     "1️⃣ *Radicación automática* — *$20.000 COP*\n"
     "   Radicamos por ti ante la Rama Judicial.\n"
     "   Entrega en máximo *4 horas hábiles*.\n"
-    "   Te damos el número de radicado (no hacemos seguimiento).\n\n"
+    "   Te entregamos el número de radicado.\n\n"
     "2️⃣ *Hazlo tú mismo* — GRATIS\n"
     "   Te enviamos un video explicativo."
 )
@@ -802,7 +800,6 @@ CONFIRMAR_PAGO_TEXTO = (
     "✅ Radicación en el portal oficial\n"
     "✅ Número de radicado y constancia\n"
     "✅ Entrega en máximo 4 horas hábiles\n\n"
-    "*No hacemos seguimiento del proceso:* solo radicamos y te damos el número de radicado.\n\n"
     "¿Quieres continuar con el pago?"
 )
 

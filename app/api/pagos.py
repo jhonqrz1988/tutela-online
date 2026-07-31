@@ -57,8 +57,7 @@ async def iniciar_pago(
       <div class="card">
         <h1>Radicación de tutela</h1>
         <p>Radicamos tu tutela ante la Rama Judicial por <b>$20.000 COP</b>.</p>
-        <p><b>Importante:</b> solo radicamos y te entregamos el número de radicado.
-           No hacemos seguimiento del proceso.</p>
+        <p><b>Importante:</b> Radicamos tu tutela y te entregamos el número de radicado.</p>
         <p class="small">Para pagar por Nequi o transferencia, escríbenos por WhatsApp
            con la palabra <b>Pagado</b> y el número de referencia
            <code>{reference}</code>, y nuestro equipo confirmará el pago.</p>

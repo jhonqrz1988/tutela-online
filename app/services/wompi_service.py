@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import logging
+from urllib.parse import urlencode
 
 import httpx
 
@@ -28,16 +29,15 @@ def url_checkout(tutela_id: int, reference: str) -> str:
     amount = settings.wompi_amount_cents
     currency = settings.wompi_currency
     signature = firma_integridad(reference, amount, currency)
-    redirect = f"{settings.app_url}/pago/resultado?reference={reference}"
-    return (
-        "https://checkout.wompi.co/p/"
-        f"?public-key={settings.wompi_public_key}"
-        f"&currency={currency}"
-        f"&amount-in-cents={amount}"
-        f"&reference={reference}"
-        f"&redirect-url={redirect}"
-        f"&signature:integrity={signature}"
-    )
+    params = {
+        "public-key": settings.wompi_public_key,
+        "currency": currency,
+        "amount-in-cents": str(amount),
+        "reference": reference,
+        "redirect-url": f"{settings.app_url}/pago/resultado?reference={reference}",
+        "signature:integrity": signature,
+    }
+    return "https://checkout.wompi.co/p/?" + urlencode(params)
 
 
 async def consultar_transaccion(transaction_id: str) -> dict | None:
