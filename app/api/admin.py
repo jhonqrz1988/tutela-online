@@ -9,8 +9,6 @@ from sqlalchemy import select
 from app.database import get_session
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
-from app.models.user import User
-from app.models.whatsapp import MensajeWhatsApp
 
 router = APIRouter(prefix="/admin")
 env = Environment(loader=FileSystemLoader("app/templates"), cache_size=0)
@@ -120,6 +118,7 @@ def reintentar_radicacion(tutela_id: int, session=Depends(get_session)):
         return {"error": f"No se puede reintentar (estado: {t.estado})"}
 
     import asyncio
+
     from app.services.radicacion_service import iniciar_radicacion
 
     t.estado = "pendiente_radicacion"

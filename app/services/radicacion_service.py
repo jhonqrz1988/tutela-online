@@ -1,4 +1,5 @@
 import json
+import logging
 
 from sqlalchemy import select
 
@@ -6,6 +7,8 @@ from app.bot.navegador import RadicadorBot
 from app.database import SessionLocal
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
+
+logger = logging.getLogger(__name__)
 
 
 async def iniciar_radicacion(
@@ -75,6 +78,7 @@ async def iniciar_radicacion(
             return {"ok": True, "num_radicado": rad.num_radicado}
 
         except Exception as e:
+            logger.error(f"Error en radicacion tutela {tutela.id}: {e}")
             rad.estado = "fallida"
             rad.ultimo_error = str(e)
             rad.intentos = (rad.intentos or 0) + 1

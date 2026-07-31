@@ -1,9 +1,10 @@
-import base64
-import mimetypes
+import logging
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 META_API_BASE = "https://graph.facebook.com/v25.0/{phone_number_id}/messages"
 ZAPI_BASE = "https://api.z-api.io/instances/{instance}/token/{token}"
@@ -75,7 +76,8 @@ def enviar_botones(telefono: str, texto: str, botones: list[tuple[str, str]]) ->
         }
         r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=15)
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error enviar_botones: {e}")
         return False
 
 
@@ -90,7 +92,8 @@ def _enviar_meta_texto(telefono: str, mensaje: str) -> bool:
         }
         r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=15)
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_meta_texto: {e}")
         return False
 
 
@@ -101,7 +104,8 @@ def _enviar_zapi(telefono: str, mensaje: str) -> bool:
             return False
         httpx.post(url, json={"phone": telefono, "message": mensaje}, timeout=15)
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_zapi: {e}")
         return False
 
 
@@ -117,7 +121,8 @@ def _enviar_twilio(telefono: str, mensaje: str) -> bool:
             timeout=15,
         )
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_twilio: {e}")
         return False
 
 
@@ -141,7 +146,8 @@ def _enviar_infobip_texto(telefono: str, mensaje: str) -> bool:
             timeout=15,
         )
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_infobip_texto: {e}")
         return False
 
 
@@ -171,7 +177,7 @@ def _enviar_infobip_documento(telefono: str, ruta_pdf: str, filename: str) -> bo
                     "document": {
                         "url": pdf_url,
                         "filename": filename,
-                    }
+                    },
                 },
             }]
         }
@@ -182,7 +188,8 @@ def _enviar_infobip_documento(telefono: str, ruta_pdf: str, filename: str) -> bo
             timeout=30,
         )
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_infobip_documento: {e}")
         return False
 
 
@@ -230,7 +237,8 @@ def _enviar_documento_meta(telefono: str, ruta_pdf: str, filename: str) -> bool:
         }
         r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=30)
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_documento_meta: {e}")
         return False
 
 
@@ -266,7 +274,8 @@ def _enviar_documento_zapi(telefono: str, ruta_pdf: str, filename: str) -> bool:
         }
         r = httpx.post(api_url, json=payload, timeout=30)
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_documento_zapi: {e}")
         return False
 
 
@@ -321,5 +330,6 @@ def _enviar_documento_twilio(telefono: str, ruta_pdf: str, filename: str) -> boo
             timeout=30,
         )
         return r.is_success
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error _enviar_documento_twilio: {e}")
         return False

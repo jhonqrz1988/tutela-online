@@ -1,11 +1,11 @@
 """Poblar la tabla citas_legales con las referencias base para tutelas de salud."""
-import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.database import SessionLocal, init_db
 from app.models.cita_legal import CitaLegal
-
 
 CITAS_BASE_SALUD = [
     {

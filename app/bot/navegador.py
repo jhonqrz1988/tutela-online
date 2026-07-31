@@ -1,8 +1,11 @@
+import logging
 import uuid
 
 from app.bot.browser import BrowserManager
 from app.config import settings
 from app.utils.file_utils import path_constancia
+
+logger = logging.getLogger(__name__)
 
 
 class RadicadorBot:
@@ -85,7 +88,6 @@ class RadicadorBot:
     async def llenar_formulario(self, datos: dict) -> dict:
         if settings.simulate_bot:
             return {"ok": True, "requiere_token": False}
-        page = self.page
         # TODO: Implementar con selectores reales del portal
         # 1. Aceptar modal terminos (#enableCheckbox + boton Continuar)
         # 2. Seleccionar DdlDepartamento y DDlCiudad
@@ -112,8 +114,8 @@ class RadicadorBot:
         try:
             await self.page.set_input_files("#ArchivoFile0", ruta_pdf)
             await self.page.wait_for_timeout(1000)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error subiendo archivo: {e}")
 
     async def enviar_y_descargar(self) -> dict:
         if settings.simulate_bot:
@@ -137,12 +139,13 @@ class RadicadorBot:
                 elemento = await self.page.query_selector("#numRadicado")
                 if elemento:
                     num_radicado = await elemento.text_content() or ""
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error obteniendo num_radicado: {e}")
 
             return {"path": ruta_constancia, "num_radicado": num_radicado.strip()}
 
         except Exception as e:
+            logger.error(f"Error en enviar_y_descargar: {e}")
             return {"path": None, "num_radicado": None, "error": str(e)}
 
     async def cerrar(self):

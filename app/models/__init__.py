@@ -4,4 +4,4 @@ from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.whatsapp import MensajeWhatsApp
 
-__all__ = ["User", "Tutela", "Radicacion", "MensajeWhatsApp", "CitaLegal", "CitaPendiente"]
+__all__ = ["CitaLegal", "CitaPendiente", "MensajeWhatsApp", "Radicacion", "Tutela", "User"]

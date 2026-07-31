@@ -1,10 +1,14 @@
 import base64
 import json
+import logging
+import os
 
 import httpx
 from openai import AsyncOpenAI
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def _get_client() -> AsyncOpenAI | None:
@@ -28,85 +32,79 @@ CAMPOS_TUTELA = [
     "hechos", "derechos_vulnerados", "peticion",
 ]
 
-SISTEMA_EXTRACCION = """Eres un asistente legal colombiano experto en acciones de tutela.
-Extrae los siguientes datos del relato del usuario en formato JSON.
+SISTEMA_EXTRACCION_CASO = """Eres un asistente legal colombiano especializado en acciones de tutela de salud.
 
-Campos a extraer:
-- tipo: tipo de tutela ("salud", "fotomultas", "derecho_peticion", "otro")
-- accionante_nombre: nombre completo del accionante
-- accionante_tipo_doc: tipo de documento ("CC", "CE", "NIT", "desconocido")
-- accionante_cedula: número de documento (sin puntos ni dígito de verificación)
-- accionante_telefono: teléfono celular
-- accionante_email: correo electrónico
-- ciudad: ciudad del accionante
-- departamento: departamento del accionante
-- accionado: nombre de la entidad o persona contra quien se tutela
-- accionado_tipo: "natural" o "juridica"
-- accionado_nit: NIT de la entidad (si se conoce, si no: "desconocido")
-- accionado_email: correo de notificación de la entidad
-- hechos: relato completo y detallado de los hechos
-- derechos_vulnerados: lista de derechos fundamentales vulnerados
-- peticion: qué solicita exactamente al juez
+Tarea: Extrae información estructurada del relato del usuario para generar una tutela completa.
+
+Campos a extraer (JSON):
+- accionado: nombre de la EPS, institución o persona (obligatorio)
+- accionado_tipo: "natural" o "juridica" (obligatorio)
+- accionado_nit: NIT de la entidad (si no se conoce: "")
+- accionado_email: correo de notificación (si no se conoce: "")
+- hechos: cronología detallada con FECHAS EXACTAS, gestiones previas (derechos de petición, quejas), y el problema concreto. Usa formato: "1. [fecha] - [acción]; 2. [fecha] - [acción]"
+- derechos_vulnerados: lista de artículos específicos: Art. 11 CP, Art. 48 CP, Art. 49 CP, Art. 86 CP, Art. 2 CP
+- peticion: solicitud concreta y específica al juez (ej: "ordenar a EPS X que autorice cita con medicina general en 48 horas")
 - genero: "masculino" o "femenino" según el nombre del accionante
 
-Si algún campo no está en el texto, déjalo como string vacío "".
-Responde SOLO el JSON, sin explicaciones."""
+Reglas:
+- Los datos personales ya fueron recolectados: NO los extraigas
+- Usa fechas exactas cuando las menciones (ej: "15 de enero de 2026" → "15/01/2026")
+- Si el usuario menciona "hace 3 días", NO inventes fechas: usa texto descriptivo
+- Lista las gestiones previas: si pidió cita, si presentó queja, reclamó por correo, etc.
+- Para derechos: menciona Art. 11 (vida), Art. 49 (salud), Art. 48 (seguro social), Art. 86 (tutela), Art. 2 (fines del Estado)
+- Si el usuario no menciona la EPS específica, usa "la entidad"
 
-SISTEMA_EXTRACCION_CASO = """Eres un asistente legal colombiano experto en acciones de tutela.
-Extrae los siguientes datos del relato del usuario en formato JSON.
+Respuesta SOLO JSON, sin explicaciones."""
 
-Campos a extraer:
-- accionado: nombre de la entidad o persona contra quien se tutela
-- accionado_tipo: "natural" o "juridica"
-- accionado_nit: NIT de la entidad (si se conoce, si no: "")
-- accionado_email: correo de notificación de la entidad (si se conoce, si no: "")
-- hechos: relato completo y detallado de los hechos
-- derechos_vulnerados: lista de derechos fundamentales vulnerados
-- peticion: qué solicita exactamente al juez
-- genero: "masculino" o "femenino" según el nombre del accionante
+SISTEMA_TUTELA = """Eres un abogado constitucionalista colombiano con 20 años de experiencia en acciones de tutela de salud.
 
-Los datos personales (nombre, documento, teléfono, email, ciudad) ya fueron recolectados.
-NO los extraigas. Déjalos como string vacío "".
-Responde SOLO el JSON, sin explicaciones."""
+Genera una TUTELA LEGAL COMPLETA, PROFESSIONAL y JURISDICCIONAL siguiendo EXACTAMENTE la estructura de la Corte Constitucional y la Rama Judicial Colombiana.
 
-SISTEMA_TUTELA = """Eres un abogado constitucionalista colombiano con 20 años de experiencia.
+ESTRUCTURA REQUERIDA:
 
-Debes redactar una ACCIÓN DE TUTELA formal, profesional y jurídicamente sólida que cumpla con todos los requisitos de la Rama Judicial para evitar su rechazo.
+1. ENCABEZADO: "Señor JUEZ CONSTITUCIONAL DE [CIUDAD] (REPARTO) - E.S.D." con fecha exacta (día de mes de año)
 
-La tutela debe incluir EXACTAMENTE esta estructura:
+2. ACCIONANTE: Nombre completo, tipo y número de documento, teléfono, correo, ciudad
 
-1. ENCABEZADO: "Señor JUEZ CONSTITUCIONAL DE [CIUDAD] (REPARTO) - E.S.D." con ciudad y fecha
+3. ACCIONADO: Nombre de la entidad (EPS, alcaldía, etc.), tipo (jurídica/natural), NIT si aplica
 
-2. ACCIONANTE: nombre completo, tipo y número de documento, teléfono, correo electrónico, ciudad
+4. HECHOS: Numerados (1., 2., 3.), cronológicos, con FECHAS EXACTAS. Menciona gestiones previas (quejas, reclamos, derechos de petición). Género concordante según accionante.
 
-3. ACCIONADO: nombre de la entidad contra quien se dirige, tipo (natural/jurídica), NIT si se conoce
+5. DERECHOS VULNERADOS: Citar artículos específicos:
+   - Art. 11 C.P. (derecho a la vida)
+   - Art. 48 C.P. (seguridad social)
+   - Art. 49 C.P. (derecho a la salud)
+   - Art. 86 C.P. (acción de tutela)
+   - Art. 2 C.P. (fines del Estado)
+   - Sentencia T-760/2008 (salud)
 
-4. HECHOS: numerados (1., 2., 3., etc.), cronológicos, detallados con fechas exactas. Incluir gestiones previas realizadas (derechos de petición, quejas, reclamos). ADAPTA género de pronombres: masculino = "él/le/lo/afiliado/diagnosticado/paciente", femenino = "ella/le/la/afiliada/diagnosticada/paciente"
+6. PETICIÓN: Solicitud clara, precisa, concreta. Ej: "Que se autorice cita con medicina general en 48 horas". Si es urgente, menciona "medida provisional" y "irremediable".
 
-5. DERECHOS VULNERADOS: citar artículos ESPECÍFICOS de la Constitución. Según el tipo de tutela:
-   - Salud: Arts. 11 (vida), 48 (seguridad social), 49 (salud). Citar Sentencia T-760/2008
-   - Derecho de petición: Art. 23 (petición). Citar Sentencia T-230/2020
-   - Trabajo: Arts. 25 (trabajo), 53 (estabilidad). Citar jurisprudencia relevante
-   - Mínimo vital: citar jurisprudencia de la Corte Constitucional
-   Incluir siempre Art. 86 (acción de tutela) y Art. 2 (fines del Estado)
+7. JURAMENTO: "Bajo la gravedad de juramento, afirmo que no he promovido ni promuevo otra acción de tutela por los mismos hechos y derechos, conforme al artículo 37 del Decreto 2591 de 1991."
 
-6. PETICIÓN (PRETENSIONES): solicitud clara, precisa y concreta al juez. Incluir:
-   - Solicitud principal (ordenar a la entidad hacer algo específico)
-   - Tiempo para cumplir (48 horas cuando sea urgente)
-   - Si aplica: solicitud de medida provisional para evitar perjuicio irremediable
-   - Afirmar que no existe otro medio de defensa judicial, o que si existe, se usa como mecanismo transitorio para evitar perjuicio irremediable (Art. 6 Decreto 2591)
+8. PRUEBAS: Listar documentos adjuntos (cédula, historia clínica, resultados, etc.)
 
-7. JURAMENTO: "Bajo la gravedad de juramento, afirmo que no he promovido ni promuevo otra acción de tutela por los mismos hechos y derechos, conforme al artículo 37 del Decreto 2591 de 1991"
+9. NOTIFICACIONES: Correo y teléfono del accionante y del accionado
 
-8. PRUEBAS: listar documentos que se adjuntan (cédula, historia clínica, respuestas de la entidad, fotos, etc.)
+10. FIRMA: Nombre completo, tipo y número de documento
 
-9. NOTIFICACIONES:
-   - Accionante: correo y teléfono
-   - Accionado: correo de la entidad (si se conoce)
+REQUISITO CRÍTICO: Usa citas legales REALES y verificadas. El texto debe sonar como lo escribiría un abogado litigante colombiano. NO uses lenguaje genérico. Sé específico en cada hecho y petición."""
 
-10. FIRMA: nombre completo, tipo y número de documento
+SISTEMA_PREVIEW_TUTELA = """Eres un asistente legal que genera resúmenes claros de acciones de tutela.
 
-REQUISITO CRÍTICO: Usa citas legales colombianas REALES (Constitución Política, Decreto 2591 de 1991, Ley 1755 de 2015 para peticiones, jurisprudencia de la Corte Constitucional específica). El texto debe sonar como si lo hubiera escrito un abogado litigante."""
+Basado en los datos proporcionados, genera un RESUMEN CLIENTE-FRIENDLY que incluya:
+
+1. RESUMEN DE DATOS: Lista los datos recolectados
+2. HECHOS EXTRAÍDOS: Cronología clara con fechas
+3. DERECHOS IDENTIFICADOS: Artículos de aplicación
+4. PETICIÓN PROPUESTA: Qué se solicita al juez en lenguaje claro
+5. PRÓXIMOS PASOS: Qué hará el cliente después
+
+Si faltan datos importantes, indica qué falta. Si los hechos son muy breves, sugiere más detalles.
+
+Formato: Texto claro, sin formato legal complejo. Usa viñetas y numeración para legibilidad.
+
+Datos: {datos_json}"""
 
 
 async def transcribir_audio(ruta_audio: str) -> str | None:
@@ -120,21 +118,6 @@ async def transcribir_audio(ruta_audio: str) -> str | None:
             language="es",
         )
     return transcript.text
-
-
-async def extraer_datos(texto: str) -> dict:
-    client = _get_client()
-    if not client:
-        return {"hechos": texto}
-    resp = await client.chat.completions.create(
-        model=settings.ai_chat_model,
-        messages=[
-            {"role": "system", "content": SISTEMA_EXTRACCION},
-            {"role": "user", "content": texto},
-        ],
-        response_format={"type": "json_object"},
-    )
-    return json.loads(resp.choices[0].message.content)
 
 
 async def extraer_datos_caso(texto: str) -> dict:
@@ -152,39 +135,12 @@ async def extraer_datos_caso(texto: str) -> dict:
     return json.loads(resp.choices[0].message.content)
 
 
-def campos_faltantes(datos: dict) -> list[str]:
-    """Retorna lista de campos obligatorios que faltan en datos."""
-    obligatorios = [
-        "accionante_nombre", "accionante_cedula",
-        "accionante_telefono", "accionante_email",
-        "ciudad", "accionado", "hechos",
-    ]
-    return [c for c in obligatorios if not datos.get(c)]
-
-
-MENSAJES_CAMPOS = {
-    "accionante_nombre": "👤 Escribe tu *nombre completo*:",
-    "accionante_cedula": "🆔 Escribe tu *número de cédula* (sin puntos):",
-    "accionante_telefono": "📱 Escribe tu *teléfono celular*:",
-    "accionante_email": "📧 Escribe tu *correo electrónico* (allí recibirás notificaciones del juzgado):",
-    "ciudad": "🏙️ ¿En qué *ciudad* ocurrieron los hechos?",
-    "departamento": "🗺️ ¿En qué *departamento*?",
-    "accionado": "🏛️ ¿Contra qué *entidad o persona* va dirigida la tutela? (Ej: EPS Sanitas, Alcaldía de Medellín)",
-    "accionado_tipo": "¿La entidad es *persona natural* o *jurídica*? (Responde: natural / jurídica)",
-    "accionado_nit": "🔢 ¿Conoces el *NIT* de la entidad? Si no, escribe *no sé*:",
-    "accionado_email": "📧 ¿Cuál es el *correo electrónico* de la entidad para notificaciones? (Si no sabes, escribe *no sé*):",
-    "hechos": "✍️ Cuéntame en detalle qué pasó, desde el inicio, con fechas y lugares:",
-    "peticion": "¿Qué le pides exactamente al juez que ordene?",
-}
-
-
 async def analizar_imagen(url_imagen: str) -> str:
     """Analiza una imagen (prueba/documento) usando visión por IA."""
     client = _get_client()
     if not client:
         return ""
     try:
-        import os
         if os.path.isfile(url_imagen):
             with open(url_imagen, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode()
@@ -217,8 +173,35 @@ async def analizar_imagen(url_imagen: str) -> str:
             ],
         )
         return resp.choices[0].message.content or ""
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error en analizar_imagen: {e}")
         return ""
+
+
+def campos_faltantes(datos: dict) -> list[str]:
+    """Retorna lista de campos obligatorios que faltan en datos."""
+    obligatorios = [
+        "accionante_nombre", "accionante_cedula",
+        "accionante_telefono", "accionante_email",
+        "ciudad", "accionado", "hechos",
+    ]
+    return [c for c in obligatorios if not datos.get(c)]
+
+
+MENSAJES_CAMPOS = {
+    "accionante_nombre": "👤 Escribe tu *nombre completo*:",
+    "accionante_cedula": "🆔 Escribe tu *número de cédula* (sin puntos):",
+    "accionante_telefono": "📱 Escribe tu *teléfono celular*:",
+    "accionante_email": "📧 Escribe tu *correo electrónico* (allí recibirás notificaciones del juzgado):",
+    "ciudad": "🏙️ ¿En qué *ciudad* ocurrieron los hechos?",
+    "departamento": "🗺️ ¿En qué *departamento*?",
+    "accionado": "🏛️ ¿Contra qué *entidad o persona* va dirigida la tutela? (Ej: EPS Sanitas, Alcaldía de Medellín)",
+    "accionado_tipo": "¿La entidad es *persona natural* o *jurídica*? (Responde: natural / jurídica)",
+    "accionado_nit": "🔢 ¿Conoces el *NIT* de la entidad? Si no, escribe *no sé*:",
+    "accionado_email": "📧 ¿Cuál es el *correo electrónico* de la entidad para notificaciones? (Si no sabes, escribe *no sé*):",
+    "hechos": "✍️ Cuéntame en detalle qué pasó, desde el inicio, con fechas y lugares:",
+    "peticion": "¿Qué le pides exactamente al juez que ordene?",
+}
 
 
 async def generar_tutela(datos: dict) -> str | None:
@@ -230,10 +213,11 @@ async def generar_tutela(datos: dict) -> str | None:
     accionante = datos.get("accionante_nombre", "el accionante")
     ciudad = datos.get("ciudad", "la ciudad")
     genero = datos.get("genero", "masculino")
+    pronombres = "él/le/lo/afiliado/diagnosticado/paciente" if genero == "masculino" else "ella/le/la/afiliada/diagnosticada/paciente"
 
     prompt = (
         f"Redacta una accion de tutela formal en formato legal colombiano.\n\n"
-        f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes: {'él/le/lo/afiliado/diagnosticado/paciente' if genero == 'masculino' else 'ella/le/la/afiliada/diagnosticada/paciente'})\n\n"
+        f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes: {pronombres})\n\n"
         f"DATOS DEL ACCIONANTE:\n"
         f"Nombre: {accionante}\n"
         f"Documento: {datos.get('accionante_tipo_doc', 'CC')} {datos.get('accionante_cedula', '')}\n"
@@ -256,6 +240,22 @@ async def generar_tutela(datos: dict) -> str | None:
         messages=[
             {"role": "system", "content": SISTEMA_TUTELA},
             {"role": "user", "content": prompt},
+        ],
+    )
+    return resp.choices[0].message.content
+
+
+async def generar_preview(datos: dict) -> str:
+    """Genera un resumen amigable para que el cliente revise antes de PDF final."""
+    client = _get_client()
+    if not client:
+        return "No se puede generar preview sin conexión a IA"
+    
+    resp = await client.chat.completions.create(
+        model=settings.ai_chat_model,
+        messages=[
+            {"role": "system", "content": SISTEMA_PREVIEW_TUTELA.format(datos_json=json.dumps(datos, ensure_ascii=False, indent=2))},
+            {"role": "user", "content": "Genera el preview"},
         ],
     )
     return resp.choices[0].message.content

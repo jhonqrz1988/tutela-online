@@ -1,32 +1,67 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
+import unittest
+from starlette.testclient import TestClient
 
+from app.database import Base, engine
 from app.main import app
 
 
-@pytest.fixture
-def client():
-    transport = ASGITransport(app=app)
-    return AsyncClient(transport=transport, base_url="http://test")
+class TestWhatsAppEndpoints(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        Base.metadata.create_all(bind=engine)
+        cls.client = TestClient(app)
+        cls.client.__enter__()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.__exit__(None, None, None)
+        cls.client.close()
+
+    def test_health(self):
+        resp = self.client.get("/health")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json().get("status"), "ok")
+
+    def test_webhook_meta_verification(self):
+        resp = self.client.get(
+            "/webhook/meta?hub.mode=subscribe&hub.verify_token=mi_verify_token_123&hub.challenge=123"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.text, "123")
+
+    def test_webhook_meta_post(self):
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "id": "0",
+                    "changes": [
+                        {
+                            "value": {
+                                "messaging_product": "whatsapp",
+                                "metadata": {
+                                    "phone_number_id": "1157524497451238",
+                                    "display_phone_number": "15551540154",
+                                },
+                                "messages": [
+                                    {
+                                        "from": "573009998877",
+                                        "id": "wamid.test",
+                                        "timestamp": "1700000000",
+                                        "type": "text",
+                                        "text": {"body": "Hola"},
+                                    }
+                                ],
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+        resp = self.client.post("/webhook/meta", json=payload)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json().get("ok"))
 
 
-@pytest.mark.asyncio
-async def test_health(client):
-    resp = await client.get("/health")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "ok"
-
-
-@pytest.mark.asyncio
-async def test_webhook_whatsapp_get(client):
-    resp = await client.get("/webhook/whatsapp")
-    assert resp.status_code == 200
-
-
-@pytest.mark.asyncio
-async def test_webhook_whatsapp_post(client):
-    resp = await client.post(
-        "/webhook/whatsapp",
-        data={"From": "whatsapp:+573001234567", "Body": "Hola", "NumMedia": "0"},
-    )
-    assert resp.status_code == 200
+if __name__ == "__main__":
+    unittest.main()

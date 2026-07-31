@@ -1,8 +1,6 @@
 import os
 import uuid
 
-from app.config import settings
-
 
 def unique_filename(extension: str) -> str:
     return f"{uuid.uuid4().hex}{extension}"

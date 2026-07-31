@@ -1,7 +1,12 @@
 import datetime
+import hashlib
+import hmac
 import json
+import logging
 
+import httpx
 from fastapi import APIRouter, Depends, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 
 from app.config import settings
@@ -9,17 +14,13 @@ from app.database import get_session
 from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.whatsapp import MensajeWhatsApp
-import httpx
-
 from app.services.documento_service import generar_pdf
 from app.services.ia_service import (
-    CAMPOS_TUTELA,
-    MENSAJES_CAMPOS,
     analizar_imagen,
     campos_faltantes,
     extraer_citas,
-    extraer_datos,
     extraer_datos_caso,
+    generar_preview,
     generar_tutela,
     transcribir_audio,
 )
@@ -34,6 +35,8 @@ from app.utils.file_utils import path_prueba
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
+
 
 @router.post("/webhook/whatsapp")
 async def webhook_whatsapp(request: Request, session=Depends(get_session)):
@@ -42,24 +45,57 @@ async def webhook_whatsapp(request: Request, session=Depends(get_session)):
         if "json" in content_type or "application/json" in content_type:
             data = await request.json()
             results = data.get("results", [data])
-            primer_msg = results[0] if isinstance(results, list) else results
-            msg_obj = primer_msg.get("message", {})
-            telefono = str(primer_msg.get("from", ""))
-            body = (msg_obj.get("text") or primer_msg.get("text") or "").strip().lower()
-            msg_type = (msg_obj.get("type") or primer_msg.get("type") or "").upper()
-            num_media = 1 if msg_type in ("IMAGE", "DOCUMENT", "VIDEO", "AUDIO") else 0
-            media_url = msg_obj.get("url") or primer_msg.get("url") or ""
-            es_audio = msg_type == "AUDIO"
+            respuestas = []
+            for msg in results:
+                telefono = msg.get("from", "").replace("whatsapp:", "")
+                msg_type = msg.get("type", "")
+                body_text = ""
+                num_media = 0
+                media_url = ""
+                es_audio = False
+
+                if msg_type == "text":
+                    body_text = msg.get("text", {}).get("body", "").strip().lower()
+                elif msg_type == "interactive":
+                    interactive = msg.get("interactive", {})
+                    ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
+                    body_text = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
+                elif msg_type in ("image", "document"):
+                    num_media = 1
+                    media_data = msg.get(msg_type, {})
+                    media_url = media_data.get("link", "") or media_data.get("id", "")
+                elif msg_type == "audio":
+                    es_audio = True
+                    media_url = msg.get("audio", {}).get("id", "")
+
+                respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
+                if respuesta.get("respuestas"):
+                    respuestas.extend(respuesta["respuestas"])
+            return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
         else:
             form = await request.form()
-            telefono = form.get("From", "")
-            body = (form.get("Body", "") or "").strip().lower()
+            telefono = form.get("From", "").replace("whatsapp:", "")
+            body_text = (form.get("Body", "") or "").strip().lower()
             num_media = int(form.get("NumMedia", "0"))
             media_url = form.get("MediaUrl0")
             es_audio = "audio" in str(form.get("MediaContentType0", ""))
-        return await procesar_mensaje(session, telefono, body, num_media, media_url, es_audio)
+            return await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
     except Exception as e:
+        logger.error(f"Error en webhook_whatsapp: {e}")
         return {"ok": False, "error": str(e)}
+
+
+def _verify_meta_signature(payload: bytes, signature_header: str) -> bool:
+    """Verifica la firma HMAC-SHA256 del webhook de Meta."""
+    if not settings.meta_app_secret:
+        return True  # Si no hay secret configurado, saltar verificación
+    expected = hmac.new(
+        settings.meta_app_secret.encode(),
+        payload,
+        hashlib.sha256
+    ).hexdigest()
+    provided = signature_header.replace("sha256=", "")
+    return hmac.compare_digest(expected, provided)
 
 
 @router.get("/webhook/meta")
@@ -68,43 +104,53 @@ async def verificar_webhook_meta(request: Request):
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
     if modo == "subscribe" and token == settings.meta_verify_token:
-        return int(challenge)
+        return PlainTextResponse(challenge)
     return {"error": "Verification failed"}
 
 
 @router.post("/webhook/meta")
 async def webhook_meta(request: Request, session=Depends(get_session)):
+    # Verificar firma de Meta
+    body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not _verify_meta_signature(body, signature):
+        return {"ok": False, "error": "Invalid signature"}
+    
     data = await request.json()
     entry = data.get("entry", [])
+    respuestas = []
     for e in entry:
         changes = e.get("changes", [])
         for c in changes:
             value = c.get("value", {})
             messages = value.get("messages", [])
             for msg in messages:
-                telefono = msg.get("from", "")
+                telefono = msg.get("from", "").replace("whatsapp:", "")
                 msg_type = msg.get("type", "")
-                body = ""
+                body_text = ""
                 num_media = 0
                 media_url = ""
                 es_audio = False
 
                 if msg_type == "text":
-                    body = msg.get("text", {}).get("body", "").strip().lower()
+                    body_text = msg.get("text", {}).get("body", "").strip().lower()
                 elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
-                    body = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
+                    body_text = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
                 elif msg_type in ("image", "document"):
                     num_media = 1
-                    media_url = msg.get(msg_type, {}).get("link", "") or msg.get(msg_type, {}).get("id", "")
+                    media_data = msg.get(msg_type, {})
+                    media_url = media_data.get("link", "") or media_data.get("id", "")
                     es_audio = False
                 elif msg_type == "audio":
                     es_audio = True
                     media_url = msg.get("audio", {}).get("id", "")
 
-                return await procesar_mensaje(session, telefono, body, num_media, media_url, es_audio)
-    return {"ok": True}
+                respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
+                if respuesta.get("respuestas"):
+                    respuestas.extend(respuesta["respuestas"])
+    return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
 
 
 @router.post("/webhook/zapi")
@@ -155,7 +201,7 @@ async def procesar_mensaje(
     # ─── CONSENTIMIENTO ──────────────────────────────────────────────
     if user.estado == "nuevo":
         if body in ("acepto", "sí", "si", "ok", "si acepto"):
-            now = datetime.datetime.now(datetime.timezone.utc)
+            now = datetime.datetime.now(datetime.UTC)
             user.consentimiento = True
             user.consentimiento_version = CONSENTIMIENTO_VERSION
             user.consentimiento_timestamp = now
@@ -189,7 +235,8 @@ async def procesar_mensaje(
         tutela = session.execute(
             select(Tutela).where(
                 Tutela.user_id == user.id,
-                Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "pruebas_pendiente",
+                Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+                                   "pruebas_pendiente",
                                    "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                    "esperando_decision_radicacion",
                                    "confirmar_pago", "esperando_pago", "completado"]),
@@ -207,6 +254,8 @@ async def procesar_mensaje(
                     _r(respuestas, telefono, NARRACION)
             elif tutela.estado == "narracion":
                 _r(respuestas, telefono, NARRACION)
+            elif tutela.estado == "revision_datos":
+                await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
             elif tutela.estado == "pruebas_pendiente":
                 _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
             elif tutela.estado == "datos_listos":
@@ -229,7 +278,8 @@ async def procesar_mensaje(
     tutela = session.execute(
         select(Tutela).where(
             Tutela.user_id == user.id,
-            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "pruebas_pendiente",
+            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+                               "pruebas_pendiente",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
                                "confirmar_pago", "esperando_pago", "completado"]),
@@ -308,14 +358,15 @@ async def procesar_mensaje(
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
                     datos[k] = v
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error extrayendo datos caso: {e}")
             _r(respuestas, telefono, "Hubo un error procesando tu caso. Intenta de nuevo.")
             return {"ok": True, "respuestas": respuestas}
 
         tutela.datos_json = json.dumps(datos)
-        tutela.estado = "pruebas_pendiente"
+        tutela.estado = "revision_datos"
         session.commit()
-        _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+        await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -330,9 +381,9 @@ async def procesar_mensaje(
                 if v and k not in ("tipo",):
                     datos[k] = v
             tutela.datos_json = json.dumps(datos)
-            tutela.estado = "pruebas_pendiente"
+            tutela.estado = "revision_datos"
             session.commit()
-            _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+            await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no"):
             datos.pop("_audio_temp", None)
@@ -343,6 +394,32 @@ async def procesar_mensaje(
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         _b(respuestas, telefono, "¿La transcripción es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   REVISION DATOS — cliente revisa extracción de IA
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "revision_datos":
+        if body in ("1", "confirmar", "si", "sí", "correcto", "verdadero"):
+            faltantes = campos_faltantes(datos)
+            if faltantes:
+                _r(respuestas, telefono, f"⚠️ *Faltan datos importantes:* {', '.join(faltantes)}")
+                _r(respuestas, telefono, "¿Quieres agregar más detalles? Escribe tu caso de nuevo.")
+                tutela.estado = "narracion"
+                session.commit()
+                _r(respuestas, telefono, NARRACION)
+                return {"ok": True, "respuestas": respuestas}
+            tutela.estado = "pruebas_pendiente"
+            session.commit()
+            _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+            return {"ok": True, "respuestas": respuestas}
+        elif body in ("2", "corregir", "no", "editar"):
+            _r(respuestas, telefono, "✍️ *Escribe tu caso de nuevo con más detalles o correcciones:*")
+            _r(respuestas, telefono, NARRACION)
+            tutela.estado = "narracion"
+            session.commit()
+            return {"ok": True, "respuestas": respuestas}
+        await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -375,7 +452,8 @@ async def procesar_mensaje(
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
                 try:
                     analisis = await analizar_imagen(ruta_local)
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Error analizando imagen: {e}")
                     analisis = ""
                 if analisis:
                     datos.setdefault("pruebas_analizadas", []).append(analisis)
@@ -489,8 +567,15 @@ def _b(respuestas: list[str], telefono: str, texto: str, botones: list[tuple[str
     respuestas.append(f"[BOTONES] {texto} | {botones}")
 
 
+async def _mostrar_revision_datos(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> None:
+    """Muestra al cliente los datos extraídos por la IA para confirmar o corregir."""
+    preview = await generar_preview(datos)
+    
+    _r(respuestas, telefono, "📋 *Revisa los datos extraídos de tu caso:*\n\n" + preview)
+    _b(respuestas, telefono, "¿Los datos son correctos?", [("1", "✅ Sí, confirmar"), ("2", "✏️ Corregir")])
+
+
 async def _mostrar_resumen_juramento(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> None:
-    campos_con_valor = {k: v for k, v in datos.items() if v and k not in ("tipo", "pruebas_paths", "pruebas_analizadas", "_step", "_pendientes")}
     hechos = datos.get("hechos", "")
     resumen = (
         "📋 *Resumen de tu tutela*\n\n"
@@ -542,8 +627,8 @@ async def _descargar_prueba(url: str) -> str | None:
             with open(ruta, "wb") as f:
                 f.write(r.content)
             return ruta
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Error descargando prueba: {e}")
     return None
 
 
@@ -560,7 +645,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
         else:
             tutela.estado_verificacion = "verificada"
 
-    ruta_pdf = generar_pdf(datos, contenido)
+    ruta_pdf = generar_pdf(datos, None)
     tutela.pdf_path = ruta_pdf
     tutela.datos_json = json.dumps(datos)
     tutela.estado = "pdf_generado"

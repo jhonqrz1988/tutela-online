@@ -6,7 +6,7 @@ scheduler = BackgroundScheduler()
 
 
 def iniciar_scheduler():
-    import app.tasks.jobs  # noqa: F401
+    import app.tasks.jobs
 
     scheduler.add_job(
         app.tasks.jobs.procesar_cola_radicacion,

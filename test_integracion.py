@@ -2,7 +2,6 @@
 Prueba de integración del flujo completo.
 Ejecutar: python test_integracion.py
 """
-import asyncio
 import json
 import os
 import sys
@@ -15,32 +14,33 @@ os.environ["TWILIO_ACCOUNT_SID"] = ""
 os.environ["TWILIO_AUTH_TOKEN"] = ""
 
 
-async def test_flujo_completo():
-    from app.database import init_db, async_session
+def test_flujo_completo():
+    from app.database import SessionLocal, init_db
     from app.models.tutela import Tutela
     from app.models.user import User
     from app.services.documento_service import generar_pdf
-    from app.bot.browser import BrowserManager
-    from sqlalchemy import select
 
     # 1. Inicializar DB
-    await init_db()
-    print("✅ DB inicializada")
+    init_db()
+    print("[OK] DB inicializada")
 
-    # 2. Crear usuario
-    async with async_session() as s:
-        user = User(telefono="whatsapp:+573001234567", nombre="Test User")
+    # 2. Crear usuario (eliminar uno anterior con el mismo teléfono si existe)
+    with SessionLocal() as s:
+        s.query(Tutela).filter(Tutela.user_id == s.query(User.id).filter(User.telefono == "whatsapp:+573001234567")).delete(synchronize_session="fetch")
+        s.query(User).filter(User.telefono == "whatsapp:+573001234567").delete(synchronize_session="fetch")
+        s.commit()
+        user = User(telefono="whatsapp:+573001234567", nombre="Test User", consentimiento=True)
         s.add(user)
-        await s.commit()
-        await s.refresh(user)
-        print(f"✅ Usuario creado: id={user.id}")
+        s.commit()
+        s.refresh(user)
+        print(f"[OK] Usuario creado: id={user.id}")
 
         # 3. Crear tutela con datos
         datos = {
             "tipo": "salud",
             "accionante_nombre": "Carlos Restrepo",
             "accionante_cedula": "12345678",
-            "accionante_direccion": "Cra 30 #45-10",
+            "accionante_tipo_doc": "CC",
             "accionante_telefono": "3001234567",
             "accionante_email": "carlos@email.com",
             "accionado": "EPS Sanitas",
@@ -56,46 +56,35 @@ async def test_flujo_completo():
         tutela = Tutela(
             user_id=user.id,
             tipo="salud",
-            estado="confirmada",
+            estado="datos_listos",
             datos_json=json.dumps(datos),
         )
         s.add(tutela)
-        await s.commit()
-        await s.refresh(tutela)
-        print(f"✅ Tutela creada: id={tutela.id}, estado={tutela.estado}")
+        s.commit()
+        s.refresh(tutela)
+        print(f"[OK] Tutela creada: id={tutela.id}, estado={tutela.estado}")
 
         # 4. Generar PDF
-        contenido = datos.get("hechos", "")
-        ruta_pdf = await generar_pdf(datos, contenido)
+        ruta_pdf = generar_pdf(datos, None)
         tutela.pdf_path = ruta_pdf
         tutela.estado = "pdf_generado"
-        await s.commit()
-        print(f"✅ PDF generado: {ruta_pdf}")
+        s.commit()
+        print(f"[OK] PDF generado: {ruta_pdf}")
         assert os.path.exists(ruta_pdf), "El PDF no se creo"
         assert os.path.getsize(ruta_pdf) > 1000, "El PDF esta vacio"
 
         # 5. Marcar como pendiente de radicacion
         tutela.estado = "pendiente_radicacion"
-        await s.commit()
-        print(f"✅ Tutela marcada para radicacion nocturna")
+        s.commit()
+        print("[OK] Tutela marcada para radicacion")
 
         # 6. Verificar scheduler
         from app.tasks.scheduler import scheduler
         jobs = scheduler.get_jobs()
-        print(f"✅ Scheduler activo: {len(list(jobs))} trabajo(s) registrado(s)")
+        print(f"[OK] Scheduler activo: {len(list(jobs))} trabajo(s) registrado(s)")
 
-        # 7. Verificar que el bot puede iniciar (solo browser check)
-        print("⏳ Verificando Playwright...")
-        try:
-            page = await BrowserManager.new_page()
-            await page.goto("about:blank")
-            await page.close()
-            print("✅ Playwright browser funcional")
-        except Exception as e:
-            print(f"⚠️ Playwright: {e}")
-
-        print("\n🎉 TODAS LAS PRUEBAS PASARON")
+        print("\n[OK] TODAS LAS PRUEBAS PASARON")
 
 
 if __name__ == "__main__":
-    asyncio.run(test_flujo_completo())
+    test_flujo_completo()

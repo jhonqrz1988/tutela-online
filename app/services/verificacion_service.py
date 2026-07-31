@@ -17,6 +17,8 @@ def normalizar_referencia(texto: str) -> str:
     texto = re.sub(r"acuerdo\s*", "acuerdo ", texto)
     texto = re.sub(r"constituci[oó]n pol[íi]tica", "constitucion politica", texto)
     texto = re.sub(r"c\.p\.", "constitucion politica", texto)
+    texto = re.sub(r"\bde\s+la\b", " ", texto)
+    texto = re.sub(r"\bdel\b", " ", texto)
     texto = re.sub(r"[\s\-\.]+", " ", texto)
     texto = texto.strip()
     return texto
@@ -29,7 +31,7 @@ def verificar_citas(citas_extraidas: list[dict], db_session: Session, vertical: 
     whitelist = {
         c.referencia_normalizada: c
         for c in db_session.query(CitaLegal)
-        .filter(CitaLegal.aplica_a == vertical, CitaLegal.vigente == True)
+        .filter(CitaLegal.aplica_a == vertical, CitaLegal.vigente.is_(True))
         .all()
     }
 
