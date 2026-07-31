@@ -53,9 +53,8 @@ async def webhook_whatsapp(request: Request, session=Depends(get_session)):
                 num_media = 0
                 media_url = ""
                 es_audio = False
-
                 if msg_type == "text":
-                    body_text = msg.get("text", {}).get("body", "").strip().lower()
+                    body_text = msg.get("text", {}).get("body", "").strip()
                 elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
@@ -75,7 +74,7 @@ async def webhook_whatsapp(request: Request, session=Depends(get_session)):
         else:
             form = await request.form()
             telefono = form.get("From", "").replace("whatsapp:", "")
-            body_text = (form.get("Body", "") or "").strip().lower()
+            body_text = (form.get("Body", "") or "").strip()
             num_media = int(form.get("NumMedia", "0"))
             media_url = form.get("MediaUrl0")
             es_audio = "audio" in str(form.get("MediaContentType0", ""))
@@ -133,7 +132,7 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
                 es_audio = False
 
                 if msg_type == "text":
-                    body_text = msg.get("text", {}).get("body", "").strip().lower()
+                    body_text = msg.get("text", {}).get("body", "").strip()
                 elif msg_type == "interactive":
                     interactive = msg.get("interactive", {})
                     ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
@@ -157,7 +156,7 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 async def webhook_zapi(request: Request, session=Depends(get_session)):
     data = await request.json()
     telefono = data.get("from", "").replace("55", "", 1) if data.get("from", "").startswith("55") else data.get("from", "")
-    body = (data.get("text", data.get("message", {}).get("text", "")) or "").strip().lower()
+    body = (data.get("text", data.get("message", {}).get("text", "")) or "").strip()
     num_media = 1 if data.get("mediaUrl") or data.get("message", {}).get("mediaUrl") else 0
     media_url = data.get("mediaUrl", data.get("message", {}).get("mediaUrl", ""))
     es_audio = bool(data.get("isAudio", data.get("message", {}).get("isAudio", False)))
@@ -172,6 +171,9 @@ async def procesar_mensaje(
     session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool
 ) -> dict:
     respuestas: list[str] = []
+    body = (body or "").strip()
+    raw_body = body
+    body = body.lower()
 
     msg_orm = MensajeWhatsApp(from_number=telefono, body=body, tipo_mensaje="audio" if es_audio else "texto", media_url=media_url)
     session.add(msg_orm)
@@ -318,7 +320,7 @@ async def procesar_mensaje(
         if step < len(DATOS_PERSONALES_STEPS):
             campo, _ = DATOS_PERSONALES_STEPS[step]
             # Si salta al siguiente (escribe adelante), detectar por comas
-            datos[campo] = body or ""
+            datos[campo] = raw_body or ""
             step += 1
             datos["_step"] = step
             tutela.datos_json = json.dumps(datos)
@@ -354,7 +356,7 @@ async def procesar_mensaje(
             return {"ok": True, "respuestas": respuestas}
 
         try:
-            datos_ia = await extraer_datos_caso(body)
+            datos_ia = await extraer_datos_caso(raw_body)
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
                     datos[k] = v
