@@ -69,12 +69,23 @@ async def iniciar_pago(
 
 @router.get("/pago/resultado")
 async def resultado_pago(
+    id: str = "",
     reference: str = "",
     transaction_id: str = "",
     session: Session = Depends(get_session),
 ):
-    """Página a la que Wompi redirige tras el pago."""
+    """Página a la que Wompi redirige tras el pago.
+
+    Wompi añade ``?id=<transaction_id>`` a la URL de redirección; se usa para
+    resolver la referencia y mostrar el estado. Es informativo: la confirmación
+    real llega por webhook.
+    """
     mensaje = "No pudimos confirmar tu pago."
+    txn_id = transaction_id or id
+    if txn_id:
+        txn = await consultar_transaccion(txn_id)
+        if txn:
+            reference = txn.get("reference") or reference
     if reference:
         tutela_id = None
         try:

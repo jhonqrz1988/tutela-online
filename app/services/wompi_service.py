@@ -34,7 +34,7 @@ def url_checkout(tutela_id: int, reference: str) -> str:
         "currency": currency,
         "amount-in-cents": str(amount),
         "reference": reference,
-        "redirect-url": f"{settings.app_url}/pago/resultado?reference={reference}",
+        "redirect-url": f"{settings.app_url}/pago/resultado",
         "signature:integrity": signature,
     }
     return "https://checkout.wompi.co/p/?" + urlencode(params)
