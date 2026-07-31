@@ -69,7 +69,7 @@ def verificar_evento(evento: dict, checksum_header: str | None) -> bool:
     signature = evento.get("signature", {})
     checksum = (checksum_header or "").strip() or signature.get("checksum", "")
     properties = signature.get("properties", [])
-    timestamp = signature.get("timestamp")
+    timestamp = evento.get("timestamp") or signature.get("timestamp")
     if not properties or not timestamp or not checksum:
         logger.error("Evento Wompi sin signature/properties/timestamp")
         return False
