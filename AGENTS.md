@@ -45,7 +45,8 @@
 15. `completado` - Done
 
 ## Payment Flow (Wompi Checkout + manual radicacion)
-- Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` creates Wompi transaction (reference `TUT-{id}`) and redirects to checkout
+- Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` builds the Wompi hosted checkout URL via `url_checkout()` (reference `TUT-{id}`) and redirects (302) — NO `POST /transactions` (that flow requires card tokenization + acceptance_token and is NOT used)
+- Checkout URL: `https://checkout.wompi.co/p/?public-key=...&currency=COP&amount-in-cents=...&reference=TUT-{id}&redirect-url=...&signature:integrity={firma}`
 - Wompi notifies webhook `POST /webhook/wompi` (event `transaction.updated`, status APPROVED) → verifies checksum SHA256 → sets `pago_confirmado`
 - If no Wompi configured, `/pago/{id}` shows informational page; user reports "Pagado" → state `pago_por_confirmar`
 - Human team verifies payment + does manual radicacion in admin panel:
