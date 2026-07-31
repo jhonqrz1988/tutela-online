@@ -439,7 +439,7 @@ async def procesar_mensaje(
             tutela.estado = "recibiendo_pruebas"
             session.commit()
             _r(respuestas, telefono, PRUEBAS_INSTRUCCION)
-            _b(respuestas, telefono, "Cuando termines de enviar tus soportes, presiona el botón.", [("listo", "✅ Listo, seguir")])
+            _b(respuestas, telefono, "Envía tus soportes. Cuando termines, presiona el botón.", [("listo", "✅ No tengo más")])
             return {"ok": True, "respuestas": respuestas}
         elif body in ("saltar", "no", "continuar", "sin soportes", "no tengo"):
             await _mostrar_resumen_juramento(session, tutela, datos, telefono, respuestas)
@@ -451,8 +451,12 @@ async def procesar_mensaje(
     #   RECIBIENDO PRUEBAS — archivos adjuntos
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "recibiendo_pruebas":
-        if body in ("listo", "seguir", "continuar", "terminé", "termine"):
+        if body in ("listo", "seguir", "continuar", "terminé", "termine", "no tengo", "no tengo mas", "no tengo más", "generar"):
             await _mostrar_resumen_juramento(session, tutela, datos, telefono, respuestas)
+            return {"ok": True, "respuestas": respuestas}
+        if body in ("enviar_otro", "otro", "agregar", "si otro"):
+            _r(respuestas, telefono, "📎 *Envía el siguiente soporte.*")
+            _b(respuestas, telefono, "Cuando termines de enviar tus soportes, presiona el botón.", [("listo", "✅ No tengo más")])
             return {"ok": True, "respuestas": respuestas}
 
         if num_media > 0 and media_url:
@@ -468,15 +472,16 @@ async def procesar_mensaje(
                     datos.setdefault("pruebas_analizadas", []).append(analisis)
                 tutela.datos_json = json.dumps(datos)
                 session.commit()
-                _r(respuestas, telefono, "✅ *Soporte recibido.*")
-                _b(respuestas, telefono, "¿Más soportes o continuamos?", [("listo", "✅ Listo, seguir")])
+                num_soportes = len(datos.get("pruebas_paths", []))
+                _r(respuestas, telefono, f"✅ *Soporte {num_soportes} recibido.*")
+                _b(respuestas, telefono, "¿Tienes más soportes o generamos la tutela con los que hay?", [("enviar_otro", "📎 Enviar otro"), ("listo", "✅ No tengo más")])
                 return {"ok": True, "respuestas": respuestas}
-            _r(respuestas, telefono, "No pude descargar el archivo. Presiona *Listo* para continuar.")
-            _b(respuestas, telefono, "¿Qué deseas hacer?", [("listo", "✅ Listo, seguir")])
+            _r(respuestas, telefono, "No pude descargar el archivo. Presiona *No tengo más* para continuar.")
+            _b(respuestas, telefono, "¿Qué deseas hacer?", [("enviar_otro", "📎 Intentar otro"), ("listo", "✅ No tengo más")])
             return {"ok": True, "respuestas": respuestas}
 
-        # Texto sin media: mostrar solo botón para seguir
-        _b(respuestas, telefono, "Presiona *Listo* cuando termines de enviar tus soportes.", [("listo", "✅ Listo, seguir")])
+        # Texto sin media: mostrar opciones para continuar
+        _b(respuestas, telefono, "Presiona *No tengo más* cuando termines de enviar tus soportes.", [("listo", "✅ No tengo más")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════

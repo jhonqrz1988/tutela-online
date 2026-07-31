@@ -2,6 +2,7 @@ import os
 from datetime import UTC, datetime
 
 from fpdf import FPDF
+from PIL import Image
 
 from app.utils.file_utils import path_tutela_pdf
 
@@ -146,5 +147,49 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     pdf.body_text(f"{tipo_doc}. {cedula}")
     pdf.body_text(f"Email: {email}")
 
+    # X. Anexos — imágenes de las pruebas incrustadas en el PDF
+    imagenes_anexos = _anexar_pruebas(pdf, pruebas_paths, pruebas_analizadas)
+
     pdf.output(ruta)
     return ruta
+
+
+IMG_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+
+
+def _anexar_pruebas(pdf, pruebas_paths: list[str], pruebas_analizadas: list[str]) -> int:
+    """Incrusta las imágenes de las pruebas como anexos al final del PDF."""
+    count = 0
+    for i, ruta in enumerate(pruebas_paths or []):
+        if not ruta or not os.path.exists(ruta):
+            continue
+        ext = os.path.splitext(ruta)[1].lower()
+        if ext not in IMG_EXT:
+            continue
+        try:
+            with Image.open(ruta) as img:
+                img.verify()
+        except (OSError, Image.UnidentifiedImageError):
+            continue
+        count += 1
+        pdf.add_page()
+        pdf.section_title(f"ANEXO {count} - PRUEBA {i + 1}")
+        analisis = pruebas_analizadas[i] if i < len(pruebas_analizadas) else ""
+        if analisis:
+            pdf.body_text(analisis[:200])
+        pdf.ln(3)
+        # Ajustar imagen para que quepa en la página (A4: 210x297mm, margen 15mm)
+        margen = 15
+        ancho_max = pdf.w - 2 * margen
+        alto_max = pdf.h - 2 * margen - 25
+        with Image.open(ruta) as img:
+            w, h = img.size
+        ratio = min(ancho_max / w, alto_max / h, 1.0)
+        ancho = w * ratio
+        alto = h * ratio
+        x = (pdf.w - ancho) / 2
+        try:
+            pdf.image(ruta, x=x, y=pdf.get_y(), w=ancho, h=alto)
+        except OSError:
+            count -= 1
+    return count
