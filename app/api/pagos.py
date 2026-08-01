@@ -23,50 +23,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.get("/pago/{tutela_id}")
-async def iniciar_pago(
-    tutela_id: int,
-    session: Session = Depends(get_session),
-):
-    """Crea el link de pago Wompi y redirige al checkout (o al resultado si no hay Wompi)."""
-    tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
-    if not tutela:
-        raise HTTPException(404, "Tutela no encontrada")
-
-    reference = f"TUT-{tutela_id}"
-
-    if settings.wompi_public_key and settings.wompi_integrity_secret:
-        checkout_url = url_checkout(tutela_id, reference)
-        return RedirectResponse(checkout_url, status_code=302)
-
-    # Sin Wompi configurado: página informativa + opción de confirmar manualmente
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="es">
-    <head><meta charset="utf-8"><title>Pago - Tutela</title>
-    <style>
-      body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px; color:#222; }}
-      h1 {{ color:#1a5fb4; }} .card {{ border:1px solid #ddd; border-radius:10px; padding:24px; }}
-      .btn {{ display:block; text-align:center; padding:14px; border-radius:8px; text-decoration:none;
-              font-weight:bold; margin:10px 0; }}
-      .btn-primary {{ background:#2ecc71; color:#fff; }}
-      .btn-outline {{ border:1px solid #999; color:#333; }}
-      .small {{ font-size:13px; color:#666; }}
-    </style></head>
-    <body>
-      <div class="card">
-        <h1>Radicación de tutela</h1>
-        <p>Radicamos tu tutela ante la Rama Judicial por <b>$20.000 COP</b>.</p>
-        <p><b>Importante:</b> Radicamos tu tutela y te entregamos el número de radicado.</p>
-        <p class="small">Para pagar por Nequi o transferencia, escríbenos por WhatsApp
-           con la palabra <b>Pagado</b> y el número de referencia
-           <code>{reference}</code>, y nuestro equipo confirmará el pago.</p>
-      </div>
-    </body></html>
-    """
-    return HTMLResponse(html)
-
-
 @router.get("/pago/resultado")
 async def resultado_pago(
     id: str = "",
@@ -110,6 +66,50 @@ async def resultado_pago(
       .card {{ border:1px solid #ddd; border-radius:10px; padding:32px; }}
     </style></head><body><div class="card"><h1>{mensaje}</h1>
     <p>Puedes cerrar esta página.</p></div></body></html>
+    """
+    return HTMLResponse(html)
+
+
+@router.get("/pago/{tutela_id}")
+async def iniciar_pago(
+    tutela_id: int,
+    session: Session = Depends(get_session),
+):
+    """Crea el link de pago Wompi y redirige al checkout (o al resultado si no hay Wompi)."""
+    tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
+    if not tutela:
+        raise HTTPException(404, "Tutela no encontrada")
+
+    reference = f"TUT-{tutela_id}"
+
+    if settings.wompi_public_key and settings.wompi_integrity_secret:
+        checkout_url = url_checkout(tutela_id, reference)
+        return RedirectResponse(checkout_url, status_code=302)
+
+    # Sin Wompi configurado: página informativa + opción de confirmar manualmente
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head><meta charset="utf-8"><title>Pago - Tutela</title>
+    <style>
+      body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px; color:#222; }}
+      h1 {{ color:#1a5fb4; }} .card {{ border:1px solid #ddd; border-radius:10px; padding:24px; }}
+      .btn {{ display:block; text-align:center; padding:14px; border-radius:8px; text-decoration:none;
+              font-weight:bold; margin:10px 0; }}
+      .btn-primary {{ background:#2ecc71; color:#fff; }}
+      .btn-outline {{ border:1px solid #999; color:#333; }}
+      .small {{ font-size:13px; color:#666; }}
+    </style></head>
+    <body>
+      <div class="card">
+        <h1>Radicación de tutela</h1>
+        <p>Radicamos tu tutela ante la Rama Judicial por <b>$20.000 COP</b>.</p>
+        <p><b>Importante:</b> Radicamos tu tutela y te entregamos el número de radicado.</p>
+        <p class="small">Para pagar por Nequi o transferencia, escríbenos por WhatsApp
+           con la palabra <b>Pagado</b> y el número de referencia
+           <code>{reference}</code>, y nuestro equipo confirmará el pago.</p>
+      </div>
+    </body></html>
     """
     return HTMLResponse(html)
 
