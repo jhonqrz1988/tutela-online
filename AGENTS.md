@@ -28,21 +28,24 @@
 - `seed_citas.py` - Seeds legal citation whitelist (10 citas)
 
 ## Critical State Machine (Tutela.estado)
-1. `recogiendo_datos` - Collect personal info (8 steps)
-2. `narracion` - User tells their case
-3. `confirmar_audio` - Confirm transcribed audio
-4. `revision_datos` - Review AI-extracted data before proceeding
-5. `pruebas_pendiente` - Ask to attach evidence
-6. `recibiendo_pruebas` - Receive attachments
-7. `datos_listos` - Show summary + get juramento
-8. `pdf_generado` - PDF generated
-9. `esperando_decision_radicacion` - Awaiting radicacion result
-10. `confirmar_pago` - Payment flow
-11. `esperando_pago` - Payment link sent, awaiting user confirmation
-12. `pago_por_confirmar` - User reported payment, human verifies in admin
-13. `pago_confirmado` - Payment confirmed, awaiting manual radicacion by team
-14. `radicada` - Radicado number registered from admin panel
-15. `completado` - Done
+1. `borrador` - Initial state on creation
+2. `recogiendo_datos` - Collect personal info (8 steps)
+3. `narracion` - User tells their case
+4. `confirmar_audio` - Confirm transcribed audio
+5. `revision_datos` - Review AI-extracted data before proceeding
+6. `pruebas_pendiente` - Ask to attach evidence
+7. `recibiendo_pruebas` - Receive attachments
+8. `datos_listos` - Show summary + get juramento
+9. `pdf_generado` - PDF generated (transient, goes to next)
+10. `esperando_decision_radicacion` - Awaiting radicacion result
+11. `confirmar_pago` - Payment flow
+12. `esperando_pago` - Payment link sent, awaiting user confirmation
+13. `pago_por_confirmar` - User reported payment, human verifies in admin
+14. `pago_confirmado` - Payment confirmed, awaiting manual radicacion by team
+15. `radicada` - Radicado number registered from admin panel
+16. `completado` - Done
+17. `pendiente_radicacion` - Retry queued (Reintentar or nightly job)
+18. `fallida` - Radicacion attempt failed
 
 ## Payment Flow (Wompi Checkout + manual radicacion)
 - Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` builds the Wompi hosted checkout URL via `url_checkout()` (reference `TUT-{id}`) and redirects (302) — NO `POST /transactions` (that flow requires card tokenization + acceptance_token and is NOT used)
@@ -60,7 +63,7 @@
 - All `/admin` routes require login. Protected via `Depends(require_admin)` in `app/api/admin.py` (signed cookie `tutela_admin`, 12h TTL).
 - `ADMIN_PASSWORD` env var (in `app/config.py`); if empty, admin returns 401 "no configurado". Login page at `/admin/login`, logout at `/admin/logout`.
 - Unauthenticated HTML GET → 303 to `/admin/login`; unauthenticated API/JSON routes → 401 (handled via `NoAuthRedirect` exception handler in `app/main.py`).
-- Panel features: pagination (`?pagina=N`, 50/page), status filter + badge colors for all 15 states, auto-refresh every 30s (paused when modal open), reference/payment link in detail modal, `Reintentar` also on `pendiente_radicacion`.
+- Panel features: pagination (`?pagina=N`, 50/page), status filter + badge colors for all 18 states, auto-refresh every 30s (paused when modal open), reference/payment link in detail modal, `Reintentar` on `fallida`/`pdf_generado`/`pendiente_radicacion`.
 - Jinja2 `env` in `admin.py` uses `select_autoescape` (HTML escaped).
 
 ## Key Conventions

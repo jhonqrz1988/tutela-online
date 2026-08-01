@@ -26,6 +26,7 @@
   .badge-warning { background: #fff3e0; color: #e65100; }
   .badge-info { background: #e3f2fd; color: #1565c0; }
   .badge-error { background: #fce4ec; color: #c62828; }
+  .badge-default { background: #eceff1; color: #455a64; }
   .btn { display: inline-block; padding: 5px 12px; border-radius: 5px; text-decoration: none; font-size: 13px; cursor: pointer; border: none; }
   .btn-primary { background: #1a237e; color: #fff; }
   .btn-small { padding: 3px 8px; font-size: 12px; background: #e0e0e0; color: #333; border: none; cursor: pointer; }
@@ -97,6 +98,8 @@
       <option value="pruebas_pendiente">Pruebas pendiente</option>
       <option value="recibiendo_pruebas">Recibiendo pruebas</option>
       <option value="datos_listos">Datos listos</option>
+      <option value="pdf_generado">PDF generado</option>
+      <option value="pendiente_radicacion">Pendiente radicaci&oacute;n</option>
       <option value="esperando_decision_radicacion">Esperando decisi&oacute;n</option>
       <option value="confirmar_pago">Confirmar pago</option>
       <option value="esperando_pago">Esperando pago</option>
@@ -128,9 +131,10 @@
         <td>{{ t.id }}</td>
         <td>{{ t.tipo }}</td>
         <td>
-          {% set cls = {'recogiendo_datos': 'badge-info', 'narracion': 'badge-info', 'confirmar_audio': 'badge-info',
+          {% set cls = {'borrador': 'badge-default', 'recogiendo_datos': 'badge-info', 'narracion': 'badge-info', 'confirmar_audio': 'badge-info',
                         'revision_datos': 'badge-info', 'pruebas_pendiente': 'badge-info',
                         'recibiendo_pruebas': 'badge-info', 'datos_listos': 'badge-warning',
+                        'pdf_generado': 'badge-warning', 'pendiente_radicacion': 'badge-warning',
                         'esperando_decision_radicacion': 'badge-warning', 'confirmar_pago': 'badge-warning',
                         'esperando_pago': 'badge-warning', 'pago_por_confirmar': 'badge-warning',
                         'pago_confirmado': 'badge-info', 'radicada': 'badge-success',
