@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     ai_whisper_model: str = "whisper-1"
 
     secret_key: str = "dev-key-change-in-production"
+    admin_password: str = ""  # si queda vacío, el panel admin exige configurarlo
     database_url: str = "sqlite:///./storage/tutelas.db"
     host: str = "0.0.0.0"
     port: int = 8000

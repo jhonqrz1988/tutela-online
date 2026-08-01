@@ -54,6 +54,14 @@
   - `POST /admin/tutelas/{id}/registrar-radicado` (form: `num_radicado`) → `radicada` + WhatsApp with number
 - Wompi env vars: `WOMPI_PUBLIC_KEY`, `WOMPI_PRIVATE_KEY`, `WOMPI_INTEGRITY_SECRET`, `WOMPI_EVENTS_SECRET`, `WOMPI_ENV`, `WOMPI_AMOUNT_CENTS`, `WOMPI_CURRENCY`
 - `firma_integridad()` = SHA256(reference+amount+currency+integrity_secret); `verificar_evento()` validates webhook checksum
+- Wompi `redirect-url` MUST be clean (no query string) — Wompi appends its own `?id=<transaction_id>`. `/pago/resultado` must be declared BEFORE `/pago/{tutela_id}` in `pagos.py` (FastAPI route order).
+
+## Admin Panel
+- All `/admin` routes require login. Protected via `Depends(require_admin)` in `app/api/admin.py` (signed cookie `tutela_admin`, 12h TTL).
+- `ADMIN_PASSWORD` env var (in `app/config.py`); if empty, admin returns 401 "no configurado". Login page at `/admin/login`, logout at `/admin/logout`.
+- Unauthenticated HTML GET → 303 to `/admin/login`; unauthenticated API/JSON routes → 401 (handled via `NoAuthRedirect` exception handler in `app/main.py`).
+- Panel features: pagination (`?pagina=N`, 50/page), status filter + badge colors for all 15 states, auto-refresh every 30s (paused when modal open), reference/payment link in detail modal, `Reintentar` also on `pendiente_radicacion`.
+- Jinja2 `env` in `admin.py` uses `select_autoescape` (HTML escaped).
 
 ## Key Conventions
 - WhatsApp bot flow: `procesar_mensaje()` handles state machine in `webhook_whatsapp.py`

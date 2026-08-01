@@ -1,9 +1,11 @@
-from contextlib import asynccontextmanager
 import logging
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
 
+from app.api.admin import NoAuthRedirect
 from app.api.admin import router as admin_router
 from app.api.health import router as health_router
 from app.api.pagos import router as pagos_router
@@ -37,10 +39,17 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(NoAuthRedirect)
+async def _no_auth_handler(request: Request, exc: NoAuthRedirect):
+    if request.url.path.startswith("/admin/api"):
+        return JSONResponse({"error": "No autorizado"}, status_code=401)
+    return RedirectResponse("/admin/login", status_code=303)
 
 app.include_router(admin_router)
 app.include_router(health_router)

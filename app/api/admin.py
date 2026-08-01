@@ -1,28 +1,140 @@
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import time
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from jinja2 import Environment, FileSystemLoader
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import select
 
+from app.config import settings
 from app.database import get_session
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
 
 router = APIRouter(prefix="/admin")
-env = Environment(loader=FileSystemLoader("app/templates"), cache_size=0)
+env = Environment(
+    loader=FileSystemLoader("app/templates"),
+    cache_size=0,
+    autoescape=select_autoescape(["html", "htm"]),
+)
+
+SESSION_COOKIE = "tutela_admin"
+SESSION_TTL = 12 * 3600  # 12 horas
+
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>Admin - Tutelas Online</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+         background:#1a237e; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  .card { background:#fff; border-radius:12px; padding:32px; width:320px; box-shadow:0 8px 30px rgba(0,0,0,.3); }
+  h1 { font-size:18px; color:#1a237e; margin:0 0 4px; }
+  p { font-size:13px; color:#666; margin:0 0 20px; }
+  input { width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-size:14px; box-sizing:border-box; }
+  button { width:100%; padding:11px; background:#1a237e; color:#fff; border:none; border-radius:6px;
+           font-size:14px; font-weight:600; cursor:pointer; margin-top:16px; }
+  button:hover { background:#283593; }
+</style></head>
+<body><div class="card">
+  <h1>&#x2696;&#xFE0F; Tutelas Online</h1>
+  <p>Panel de administración</p>
+  <!--ERROR-->
+  <form method="POST" action="/admin/login">
+    <input type="password" name="password" placeholder="Contraseña" autofocus required>
+    <button type="submit">Ingresar</button>
+  </form>
+</div></body></html>"""
+
+
+def _firma_cookie(payload: str) -> str:
+    return hmac.new(settings.secret_key.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _crear_sesion() -> str:
+    payload = f"{int(time.time()) + SESSION_TTL}:{secrets.token_hex(16)}"
+    return f"{payload}.{_firma_cookie(payload)}"
+
+
+def _validar_sesion(token: str | None) -> bool:
+    if not token:
+        return False
+    try:
+        payload, firma = token.rsplit(".", 1)
+    except ValueError:
+        return False
+    if not hmac.compare_digest(_firma_cookie(payload), firma):
+        return False
+    try:
+        exp = int(payload.split(":", 1)[0])
+    except ValueError:
+        return False
+    return time.time() < exp
+
+
+class NoAuthRedirect(Exception):
+    """Excepción interna para redirigir a /admin/login cuando no hay sesión."""
+
+
+def require_admin(request: Request):
+    """Dependencia que protege el panel. Redirige a /admin/login si no hay sesión."""
+    if not settings.admin_password:
+        raise HTTPException(401, "ADMIN_PASSWORD no está configurado")
+    if not _validar_sesion(request.cookies.get(SESSION_COOKIE)):
+        raise NoAuthRedirect()
+    return True
+
+
+@router.get("/login", response_class=HTMLResponse)
+def admin_login(request: Request):
+    return HTMLResponse(_LOGIN_HTML)
+
+
+@router.post("/login")
+async def admin_login_post(request: Request):
+    data = await request.form()
+    password = data.get("password", "")
+    if not settings.admin_password:
+        return HTMLResponse("<h3>ADMIN_PASSWORD no está configurado en el servidor.</h3>", status_code=400)
+    if password != settings.admin_password:
+        return HTMLResponse(_LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Contraseña incorrecta</p>'), status_code=401)
+    resp = RedirectResponse("/admin", status_code=303)
+    resp.set_cookie(SESSION_COOKIE, _crear_sesion(), max_age=SESSION_TTL, httponly=True, samesite="lax", secure=False)
+    return resp
+
+
+@router.get("/logout")
+def admin_logout():
+    resp = RedirectResponse("/admin/login", status_code=303)
+    resp.delete_cookie(SESSION_COOKIE)
+    return resp
 
 
 @router.get("", response_class=HTMLResponse)
-def admin_panel(request: Request, session=Depends(get_session)):
+def admin_panel(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+
+    pagina = 1
+    try:
+        pagina = max(1, int(request.query_params.get("pagina", "1")))
+    except (TypeError, ValueError):
+        pagina = 1
+    por_pagina = 50
+
+    total = session.execute(select(Tutela)).scalars().all()
+    total_tutelas = len(total)
+    total_paginas = max(1, -(-total_tutelas // por_pagina))
+    pagina = min(pagina, total_paginas)
+
     tutelas = session.execute(
-        select(Tutela).order_by(Tutela.created_at.desc()).limit(50)
+        select(Tutela).order_by(Tutela.created_at.desc()).offset((pagina - 1) * por_pagina).limit(por_pagina)
     ).scalars().all()
 
     rows = []
     stats = {"total": 0, "radicadas": 0, "pendientes": 0, "fallidas": 0}
-    for t in tutelas:
+    for t in total:
         stats["total"] += 1
         if t.estado == "radicada":
             stats["radicadas"] += 1
@@ -31,6 +143,7 @@ def admin_panel(request: Request, session=Depends(get_session)):
         else:
             stats["pendientes"] += 1
 
+    for t in tutelas:
         num_rad = ""
         constancia = ""
         if t.radicacion:
@@ -53,12 +166,19 @@ def admin_panel(request: Request, session=Depends(get_session)):
         })
 
     template = env.get_template("admin.html")
-    html = template.render(request=request, tutelas=rows, stats=stats)
+    html = template.render(
+        request=request,
+        tutelas=rows,
+        stats=stats,
+        pagina=pagina,
+        total_paginas=total_paginas,
+        total_tutelas=total_tutelas,
+    )
     return HTMLResponse(html)
 
 
 @router.get("/api/tutelas/{tutela_id}")
-def detalle_tutela(tutela_id: int, session=Depends(get_session)):
+def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not t:
         return JSONResponse({"error": "No encontrada"}, status_code=404)
@@ -95,6 +215,8 @@ def detalle_tutela(tutela_id: int, session=Depends(get_session)):
         "id": t.id,
         "tipo": t.tipo,
         "estado": t.estado,
+        "referencia": f"TUT-{t.id}",
+        "link_pago": f"{settings.app_url}/pago/{t.id}",
         "datos": datos,
         "pdf_path": t.pdf_path,
         "created_at": str(t.created_at) if t.created_at else "",
@@ -110,7 +232,7 @@ def detalle_tutela(tutela_id: int, session=Depends(get_session)):
 
 
 @router.post("/tutelas/{tutela_id}/reintentar")
-def reintentar_radicacion(tutela_id: int, session=Depends(get_session)):
+def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not t:
         return {"error": "No encontrada"}
@@ -131,7 +253,7 @@ def reintentar_radicacion(tutela_id: int, session=Depends(get_session)):
 
 
 @router.post("/tutelas/{tutela_id}/confirmar-pago")
-def confirmar_pago(tutela_id: int, session=Depends(get_session)):
+def confirmar_pago(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
     """Confirma manualmente el pago de una tutela y avisa al usuario por WhatsApp."""
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not t:
@@ -159,6 +281,7 @@ async def registrar_radicado_manual(
     tutela_id: int,
     request: Request,
     session=Depends(get_session),
+    _=Depends(require_admin),
 ):
     """Registra el número de radicado hecho manualmente por el equipo y avisa al usuario."""
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
@@ -195,24 +318,24 @@ async def registrar_radicado_manual(
 
 
 @router.get("/chat", response_class=HTMLResponse)
-def chat_page(request: Request):
+def chat_page(request: Request, _=Depends(require_admin)):
     template = env.get_template("chat.html")
     return HTMLResponse(template.render(request=request))
 
 
 @router.get("/tutelas/{tutela_id}/pdf")
-def descargar_pdf(tutela_id: int, session=Depends(get_session)):
+def descargar_pdf(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not t or not t.pdf_path or not os.path.exists(t.pdf_path):
-        return {"error": "PDF no encontrado"}, 404
+        return JSONResponse({"error": "PDF no encontrado"}, status_code=404)
     return FileResponse(t.pdf_path, filename=f"tutela_{tutela_id}.pdf", media_type="application/pdf")
 
 
 @router.get("/tutelas/{tutela_id}/constancia")
-def descargar_constancia(tutela_id: int, session=Depends(get_session)):
+def descargar_constancia(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
     r = session.execute(
         select(Radicacion).where(Radicacion.tutela_id == tutela_id)
     ).scalar_one_or_none()
     if not r or not r.constancia_path or not os.path.exists(r.constancia_path):
-        return {"error": "Constancia no encontrada"}, 404
+        return JSONResponse({"error": "Constancia no encontrada"}, status_code=404)
     return FileResponse(r.constancia_path, filename=f"constancia_{tutela_id}.pdf", media_type="application/pdf")

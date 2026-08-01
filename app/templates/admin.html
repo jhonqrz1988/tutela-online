@@ -63,7 +63,7 @@
 <body>
 <div class="header">
   <h1>&#x2696;&#xFE0F; Tutelas Online</h1>
-  <div><span>{{ tutelas|length }} tutelas</span> &nbsp; <a href="/admin" class="refresh">&#x21BB;</a></div>
+  <div><span>{{ total_tutelas }} tutelas</span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a></div>
 </div>
 
 <div class="container">
@@ -90,13 +90,20 @@
     <label>Filtrar:</label>
     <select id="filtro-estado" onchange="filtrar()">
       <option value="">Todos los estados</option>
-      <option value="borrador">Borrador</option>
+      <option value="recogiendo_datos">Recogiendo datos</option>
+      <option value="narracion">Narraci&oacute;n</option>
+      <option value="confirmar_audio">Confirmar audio</option>
+      <option value="revision_datos">Revisi&oacute;n datos</option>
+      <option value="pruebas_pendiente">Pruebas pendiente</option>
+      <option value="recibiendo_pruebas">Recibiendo pruebas</option>
       <option value="datos_listos">Datos listos</option>
-      <option value="confirmada">Confirmada</option>
-      <option value="pdf_generado">PDF generado</option>
+      <option value="esperando_decision_radicacion">Esperando decisi&oacute;n</option>
+      <option value="confirmar_pago">Confirmar pago</option>
+      <option value="esperando_pago">Esperando pago</option>
       <option value="pago_por_confirmar">Pago por confirmar</option>
       <option value="pago_confirmado">Pago confirmado</option>
       <option value="radicada">Radicada</option>
+      <option value="completado">Completado</option>
       <option value="fallida">Fallida</option>
     </select>
     <input type="text" id="filtro-buscar" placeholder="Buscar tel&#xE9;fono o ID..." oninput="filtrar()">
@@ -121,13 +128,18 @@
         <td>{{ t.id }}</td>
         <td>{{ t.tipo }}</td>
         <td>
-          {% set cls = {'borrador': 'badge-info', 'datos_listos': 'badge-info', 'confirmada': 'badge-warning',
-                        'pdf_generado': 'badge-warning', 'radicada': 'badge-success', 'fallida': 'badge-error'} %}
+          {% set cls = {'recogiendo_datos': 'badge-info', 'narracion': 'badge-info', 'confirmar_audio': 'badge-info',
+                        'revision_datos': 'badge-info', 'pruebas_pendiente': 'badge-info',
+                        'recibiendo_pruebas': 'badge-info', 'datos_listos': 'badge-warning',
+                        'esperando_decision_radicacion': 'badge-warning', 'confirmar_pago': 'badge-warning',
+                        'esperando_pago': 'badge-warning', 'pago_por_confirmar': 'badge-warning',
+                        'pago_confirmado': 'badge-info', 'radicada': 'badge-success',
+                        'completado': 'badge-success', 'fallida': 'badge-error'} %}
           <span class="badge {{ cls.get(t.estado, 'badge-info') }}">{{ t.estado }}</span>
         </td>
-        <td>{{ t.num_radicado or '&mdash;' }}</td>
-        <td>{{ t.user_nombre or '&mdash;' }}<br><small>{{ t.user_telefono or '' }}</small></td>
-        <td>{{ t.created_at[:10] if t.created_at else '&mdash;' }}</td>
+        <td>{{ t.num_radicado or '—' }}</td>
+        <td>{{ t.user_nombre or '—' }}<br><small>{{ t.user_telefono or '' }}</small></td>
+        <td>{{ (t.created_at[:16] if t.created_at else '—') }}</td>
         <td>
           {% if t.pdf_path %}
             <a href="/admin/tutelas/{{ t.id }}/pdf" class="btn btn-small" target="_blank">PDF</a>
@@ -146,6 +158,14 @@
       <p>No hay tutelas registradas a&uacute;n.</p>
       <p style="font-size: 13px; color: #bbb; margin-top: 5px;">Usa el chat o el simulador WhatsApp para crear la primera.</p>
     </div>
+  {% endif %}
+
+  {% if total_paginas > 1 %}
+  <div class="paginacion" style="display:flex; gap:8px; justify-content:center; align-items:center; margin-top:20px;">
+    {% if pagina > 1 %}<a class="btn btn-small" href="/admin?pagina={{ pagina - 1 }}">&larr; Anterior</a>{% endif %}
+    <span style="font-size:13px; color:#666;">P&aacute;gina {{ pagina }} de {{ total_paginas }}</span>
+    {% if pagina < total_paginas %}<a class="btn btn-small" href="/admin?pagina={{ pagina + 1 }}">Siguiente &rarr;</a>{% endif %}
+  </div>
   {% endif %}
 </div>
 
@@ -176,11 +196,6 @@ async function abrirDetalle(id) {
   }
 }
 
-function cerrarModal() {
-  document.getElementById('modal').classList.remove('show');
-  tutelaActual = null;
-}
-
 function renderDetalle() {
   const t = tutelaActual;
   if (!t) return;
@@ -191,7 +206,7 @@ function renderDetalle() {
   const errores = r.ultimo_error ? '<div class="error-box">' + escapeHtml(r.ultimo_error) + '</div>' : '';
   const datosStr = Object.keys(d).length ? escapeHtml(JSON.stringify(d, null, 2)) : '<span style="color:#999;">Sin datos</span>';
 
-  const puedeReintentar = t.estado === 'fallida' || t.estado === 'pdf_generado';
+  const puedeReintentar = t.estado === 'fallida' || t.estado === 'pdf_generado' || t.estado === 'pendiente_radicacion';
   const puedeConfirmarPago = t.estado === 'esperando_pago' || t.estado === 'pago_por_confirmar' || t.estado === 'confirmar_pago';
   const puedeRegistrarRadicado = t.estado === 'pago_confirmado' || t.estado === 'pago_por_confirmar';
 
@@ -202,9 +217,11 @@ function renderDetalle() {
         <div class="detail-item"><label>ID</label><span>${t.id}</span></div>
         <div class="detail-item"><label>Tipo</label><span>${t.tipo}</span></div>
         <div class="detail-item"><label>Estado</label><span class="badge badge-${t.estado === 'radicada' ? 'success' : t.estado === 'fallida' ? 'error' : 'warning'}">${t.estado}</span></div>
-        <div class="detail-item"><label>Creada</label><span>${t.created_at || '&mdash;'}</span></div>
-        <div class="detail-item"><label>Actualizada</label><span>${t.updated_at || '&mdash;'}</span></div>
-        <div class="detail-item"><label>PDF</label><span>${t.pdf_path ? '<a href="/admin/tutelas/' + t.id + '/pdf" target="_blank">Descargar</a>' : '&mdash;'}</span></div>
+        <div class="detail-item"><label>Creada</label><span>${t.created_at || '—'}</span></div>
+        <div class="detail-item"><label>Actualizada</label><span>${t.updated_at || '—'}</span></div>
+        <div class="detail-item"><label>PDF</label><span>${t.pdf_path ? '<a href="/admin/tutelas/' + t.id + '/pdf" target="_blank">Descargar</a>' : '—'}</span></div>
+        <div class="detail-item"><label>Referencia</label><span>${t.referencia || '—'}</span></div>
+        <div class="detail-item"><label>Link de pago</label><span>${t.link_pago ? '<a href="' + t.link_pago + '" target="_blank">Abrir</a>' : '—'}</span></div>
       </div>
     </div>
 
@@ -372,6 +389,13 @@ document.getElementById('modal').onclick = function(e) {
   if (e.target === this) cerrarModal();
 };
 document.onkeydown = function(e) { if (e.key === 'Escape') cerrarModal(); };
+
+setInterval(function() {
+  const modal = document.getElementById('modal');
+  if (!modal.classList.contains('show') && !document.hidden) {
+    location.reload();
+  }
+}, 30000);
 </script>
 </body>
 </html>
