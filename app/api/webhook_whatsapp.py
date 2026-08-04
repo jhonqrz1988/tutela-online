@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 
+import aiofiles
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import PlainTextResponse
@@ -267,7 +268,7 @@ async def procesar_mensaje(
             elif tutela.estado == "datos_listos":
                 _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
             else:
-                _r(respuestas, telefono, "🤖 *Tutela Online* — Continúa donde lo dejaste.")
+                _r(respuestas, telefono, "🤖 *TutelApp* — Continúa donde lo dejaste.")
             return {"ok": True, "respuestas": respuestas}
 
         tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
@@ -684,8 +685,8 @@ async def _descargar_prueba(url: str) -> str | None:
             r = await c.get(url, headers=headers, auth=auth)
         logger.info(f"_descargar_prueba: download status={r.status_code} bytes={len(r.content)}")
         if r.status_code == 200:
-            with open(ruta, "wb") as f:
-                f.write(r.content)
+            async with aiofiles.open(ruta, "wb") as f:
+                await f.write(r.content)
             return ruta
     except Exception as e:
         logger.error(f"Error descargando prueba: {e}")

@@ -1,9 +1,10 @@
 import base64
 import json
 import logging
-import os
 
+import aiofiles
 import httpx
+from anyio import Path
 from openai import AsyncOpenAI
 
 from app.config import settings
@@ -112,7 +113,7 @@ async def transcribir_audio(ruta_audio: str) -> str | None:
     if not client:
         return None
     try:
-        with open(ruta_audio, "rb") as f:
+        async with aiofiles.open(ruta_audio, "rb") as f:
             transcript = await client.audio.transcriptions.create(
                 model=settings.ai_whisper_model,
                 file=f,
@@ -145,9 +146,9 @@ async def analizar_imagen(url_imagen: str) -> str:
     if not client:
         return ""
     try:
-        if os.path.isfile(url_imagen):
-            with open(url_imagen, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode()
+        if Path(url_imagen).is_file():
+            async with aiofiles.open(url_imagen, "rb") as f:
+                img_b64 = base64.b64encode(await f.read()).decode()
         else:
             async with httpx.AsyncClient(timeout=20) as c:
                 r = await c.get(url_imagen)

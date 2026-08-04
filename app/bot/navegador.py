@@ -1,6 +1,8 @@
 import logging
 import uuid
 
+import aiofiles
+
 from app.bot.browser import BrowserManager
 from app.config import settings
 from app.utils.file_utils import path_constancia
@@ -120,8 +122,8 @@ class RadicadorBot:
     async def enviar_y_descargar(self) -> dict:
         if settings.simulate_bot:
             ruta = path_constancia()
-            with open(ruta, "w") as f:
-                f.write("SIMULACION CONSTANCIA")
+            async with aiofiles.open(ruta, "w") as f:
+                await f.write("SIMULACION CONSTANCIA")
             num = "1100101020230" + str(uuid.uuid4().hex[:10])
             return {"path": ruta, "num_radicado": num}
         try:

@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 
+from app.api.admin import require_admin
 from app.database import get_session
 from app.models.tutela import Tutela
 from app.schemas.tutela import DatosTutela
 from app.services.documento_service import generar_pdf
 from app.services.radicacion_service import iniciar_radicacion
 
-router = APIRouter(prefix="/api/v1/tutelas")
+router = APIRouter(prefix="/api/v1/tutelas", dependencies=[Depends(require_admin)])
 
 
 @router.post("")

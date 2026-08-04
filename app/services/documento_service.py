@@ -121,7 +121,7 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     if pruebas_fotos:
         pdf.section_title("VII. PRUEBAS")
         pdf.body_text("Se adjuntan las siguientes pruebas:")
-        for ruta_prueba, nombre, analisis in pruebas_fotos:
+        for _, nombre, analisis in pruebas_fotos:
             texto = f"- {nombre}: {analisis[:150] if analisis else 'Documento adjunto'}"
             pdf.body_text(texto)
 
@@ -182,7 +182,7 @@ def _filtrar_pruebas(pruebas_paths: list[str], pruebas_analizadas: list[str]) ->
 def _anexar_pruebas(pdf, pruebas: list[tuple[str, str, str]]) -> int:
     """Incrusta las fotos y las páginas de los PDFs como anexos al final del PDF."""
     count = 0
-    for i, (ruta, nombre, analisis) in enumerate(pruebas):
+    for i, (ruta, _, analisis) in enumerate(pruebas):
         ext = os.path.splitext(ruta)[1].lower()
         count += 1
         pdf.add_page()

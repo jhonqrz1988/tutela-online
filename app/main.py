@@ -1,6 +1,8 @@
 import logging
 from contextlib import asynccontextmanager
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -62,9 +64,15 @@ app.include_router(tutelas_router)
 app.include_router(pagos_router)
 
 
-_LANDING_HTML = open("app/templates/landing.html", encoding="utf-8").read()
+_LANDING_HTML = Path("app/templates/landing.html").read_text(encoding="utf-8")
+_PRIVACIDAD_HTML = Path("app/templates/privacidad.html").read_text(encoding="utf-8")
 
 
 @app.get("/", response_class=HTMLResponse)
 async def pagina_inicio():
     return HTMLResponse(_LANDING_HTML)
+
+
+@app.get("/privacidad", response_class=HTMLResponse)
+async def pagina_privacidad():
+    return HTMLResponse(_PRIVACIDAD_HTML)

@@ -29,3 +29,10 @@ dev = [
     "pytest-asyncio>=0.25",
     "httpx>=0.28",
 ]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "SIM", "ASYNC"]
+ignore = [
+    "B008",   # FastAPI idiom: Depends() en argument defaults
+    "BLE001", # Handlers de red/webhook: captura amplia intencional para logging
+]
