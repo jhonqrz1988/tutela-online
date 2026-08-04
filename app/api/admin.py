@@ -27,7 +27,7 @@ SESSION_TTL = 12 * 3600  # 12 horas
 
 _LOGIN_HTML = """<!DOCTYPE html>
 <html lang="es">
-<head><meta charset="UTF-8"><title>Admin - Tutelas Online</title>
+<head><meta charset="UTF-8"><title>Admin - TutelApp</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
          background:#1a237e; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
@@ -40,7 +40,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   button:hover { background:#283593; }
 </style></head>
 <body><div class="card">
-  <h1>&#x2696;&#xFE0F; Tutelas Online</h1>
+  <h1>&#x2696;&#xFE0F; TutelApp</h1>
   <p>Panel de administración</p>
   <!--ERROR-->
   <form method="POST" action="/admin/login">

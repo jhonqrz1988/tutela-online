@@ -160,7 +160,8 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
                 tutela.user.telefono,
                 "✅ *¡Pago confirmado!* Recibimos tu pago de $29.000 COP.\n\n"
                 "Nuestro equipo radicará tu tutela y te enviaremos el "
-                "*número de radicado* por este chat.",
+                "*número de radicado* por este chat en máximo *4 horas hábiles* "
+                "(lun-vie 8am-5pm).",
             )
     return {"ok": True}
 
@@ -187,7 +188,8 @@ async def verificar_pago(
             enviar_texto(
                 tutela.user.telefono,
                 "✅ *¡Pago confirmado!* Nuestro equipo radicará tu tutela y te "
-                "enviaremos el número de radicado por este chat.",
+                "enviaremos el número de radicado por este chat en máximo "
+                "*4 horas hábiles* (lun-vie 8am-5pm).",
             )
         return {"ok": True, "status": "approved"}
     return {"ok": False, "status": (txn or {}).get("status", "DESCONOCIDO")}

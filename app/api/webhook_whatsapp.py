@@ -513,7 +513,7 @@ async def procesar_mensaje(
                                      "Si al intentar radicarla lo ves complejo, "
                                      "pulsa el botón y lo hacemos por ti por *$29.000 COP* "
                                      "sin tener que repetir tus datos.")
-            _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Que la radiquen $29k"), ("2", "✍️ Lo hago yo")])
+            _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Radiquen $29k"), ("2", "✍️ Lo hago yo")])
             tutela.estado = "hazlo_tu_mismo"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
@@ -541,7 +541,7 @@ async def procesar_mensaje(
         _b(respuestas, telefono,
            "📄 Recibiste el PDF de tu tutela. ¿Qué prefieres hacer?\n\n"
            "1️⃣ *Que la radiquen por ti* — $29.000 COP\n"
-           "2️⃣ *Seguir tú mismo*", [("1", "💳 Que la radiquen $29k"), ("2", "✍️ Sigo yo")])
+           "2️⃣ *Seguir tú mismo*", [("1", "💳 Radiquen $29k"), ("2", "✍️ Sigo yo")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -554,7 +554,6 @@ async def procesar_mensaje(
                f"💰 *Radicación automática*\n\n"
                f"Para completar el pago de *$29.000 COP*:\n\n"
                f"🔗 {link_pago}\n\n"
-               f"Después de pagar, escribe *Pagado* para confirmar.\n\n"
                f"⚠️ *Importante:* Radicamos tu tutela y te entregamos el "
                f"*número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm).")
             tutela.estado = "esperando_pago"
@@ -564,7 +563,7 @@ async def procesar_mensaje(
             _r(respuestas, telefono, "Entendido. Recibiste el PDF con tu tutela por este chat.\n\n"
                                      "Si al intentarlo lo ves complejo, pulsa el botón y lo hacemos "
                                      "por ti por *$29.000 COP* sin repetir datos.")
-            _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Que la radiquen $29k"), ("2", "✍️ Lo hago yo")])
+            _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Radiquen $29k"), ("2", "✍️ Lo hago yo")])
             tutela.estado = "hazlo_tu_mismo"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
@@ -586,7 +585,7 @@ async def procesar_mensaje(
             session.commit()
             logger.info(f"Tutela {tutela.id}: usuario reporta pago, queda pago_por_confirmar")
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "Estamos esperando tu pago. Cuando hayas pagado, escribe *Pagado*.")
+        _r(respuestas, telefono, "Estamos esperando la confirmación de tu pago. Te avisaremos por este chat.")
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -762,7 +761,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 CONSENTIMIENTO_VERSION = "v1.0"
 
 BIENVENIDA = (
-    "👋 *Hola! Soy el asistente de Tutelas Online AI.*\n\n"
+    "👋 *Hola! Soy el asistente de TutelApp.*\n\n"
     "Te ayudo a crear y radicar acciones de tutela en Colombia "
     "de forma rápida y sencilla.\n\n"
     "Comencemos con la autorización de datos."
@@ -772,7 +771,7 @@ AVISO_PRIVACIDAD = (
     "📄 *Aviso de Tratamiento de Datos Personales*\n\n"
     "De acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013, "
     "te informamos que:\n\n"
-    "🔹 *Responsable:* Tutelas Online AI\n"
+    "🔹 *Responsable:* TutelApp\n"
     "🔹 *Finalidad:* Gestionar, crear y radicar tu acción de tutela "
     "ante la Rama Judicial\n"
     "🔹 *Datos recolectados:* Nombre, documento, teléfono, correo, "
@@ -834,7 +833,7 @@ CONFIRMAR_PAGO_TEXTO = (
 )
 
 MENU_DEFAULT = (
-    "🤖 *Asistente Tutelas Online*\n\n"
+    "🤖 *Asistente TutelApp*\n\n"
     "Comandos:\n"
     "• *Hola* — iniciar o continuar\n"
     "• *Eliminar mis datos* — borrar tu información"
