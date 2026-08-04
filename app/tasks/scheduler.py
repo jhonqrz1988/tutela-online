@@ -6,6 +6,11 @@ scheduler = BackgroundScheduler()
 
 
 def iniciar_scheduler():
+    """Radicación automática nocturna. DESACTIVADO: la radicación es manual
+    desde el panel (`/admin`), el bot no se usa. Rendimiento no crítico.
+    """
+    if not settings.enable_scheduler:
+        return
     import app.tasks.jobs
 
     scheduler.add_job(

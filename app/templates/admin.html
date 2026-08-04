@@ -212,7 +212,7 @@ function renderDetalle() {
   const errores = r.ultimo_error ? '<div class="error-box">' + escapeHtml(r.ultimo_error) + '</div>' : '';
   const datosStr = Object.keys(d).length ? escapeHtml(JSON.stringify(d, null, 2)) : '<span style="color:#999;">Sin datos</span>';
 
-  const puedeReintentar = t.estado === 'fallida' || t.estado === 'pdf_generado' || t.estado === 'pendiente_radicacion';
+  const puedeReintentar = false; // radicación manual desde el panel; bot desactivado
   const puedeConfirmarPago = t.estado === 'esperando_pago' || t.estado === 'pago_por_confirmar' || t.estado === 'confirmar_pago';
   const puedeRegistrarRadicado = t.estado === 'pago_confirmado' || t.estado === 'pago_por_confirmar';
 

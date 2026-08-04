@@ -367,4 +367,18 @@ def descargar_constancia(tutela_id: int, request: Request, session=Depends(get_s
     ).scalar_one_or_none()
     if not r or not r.constancia_path or not os.path.exists(r.constancia_path):
         return JSONResponse({"error": "Constancia no encontrada"}, status_code=404)
-    return FileResponse(r.constancia_path, filename=f"constancia_{tutela_id}.pdf", media_type="application/pdf")
+
+    ext = os.path.splitext(r.constancia_path)[1].lower()
+    media_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".pdf": "application/pdf",
+    }.get(ext, "application/octet-stream")
+    return FileResponse(
+        r.constancia_path,
+        filename=f"constancia_{tutela_id}{ext}",
+        media_type=media_type,
+    )

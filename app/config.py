@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     filing_hour: int = 8
     filing_minute: int = 5
     simulate_bot: bool = True
+    enable_scheduler: bool = False  # radicación automática nocturna (bot) — desactivada
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
