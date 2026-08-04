@@ -244,7 +244,7 @@ async def procesar_mensaje(
                                "pruebas_pendiente",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
-                               "confirmar_pago", "esperando_pago", "pago_por_confirmar",
+                               "hazlo_tu_mismo", "confirmar_pago", "esperando_pago", "pago_por_confirmar",
                                "pago_confirmado", "completado"]),
             ).order_by(Tutela.created_at.desc()).limit(1)
         ).scalar_one_or_none()
@@ -288,7 +288,7 @@ async def procesar_mensaje(
                                "pruebas_pendiente",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
-                               "confirmar_pago", "esperando_pago", "pago_por_confirmar",
+                               "hazlo_tu_mismo", "confirmar_pago", "esperando_pago", "pago_por_confirmar",
                                "pago_confirmado", "completado"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
@@ -504,19 +504,20 @@ async def procesar_mensaje(
     if tutela.estado == "esperando_decision_radicacion":
         if body in ("1", "pagar", "radicar", "si radicar"):
             _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$20.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
+            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$29.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
             _r(respuestas, telefono, "Entendido. Recibiste el PDF de tu tutela por este chat.\n\n"
-                                     "Si al intentar radicarla lo ves complejo o tienes dudas, "
-                                     "solo escribe *Quiero que la radiquen* y lo hacemos por ti por *$20.000 COP* "
+                                     "Si al intentar radicarla lo ves complejo, "
+                                     "pulsa el botón y lo hacemos por ti por *$29.000 COP* "
                                      "sin tener que repetir tus datos.")
+            _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Que la radiquen $29k"), ("2", "✍️ Lo hago yo")])
             tutela.estado = "hazlo_tu_mismo"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "✍️ Hazlo tú mismo")])
+        _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $29k"), ("2", "✍️ Hazlo tú mismo")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -527,20 +528,20 @@ async def procesar_mensaje(
                     "si radicar", "mejor pagar", "lo hacen ustedes", "quiero pagar", "no puedo",
                     "me parece complejo", "es complejo", "me ayudan", "radiquenla"):
             _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$20.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
+            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$29.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no", "lo intento yo", "hacer yo mismo", "ya lo logre", "no necesito"):
             _r(respuestas, telefono, "Perfecto. Tu tutela quedó enviada en el PDF de este chat. "
-                                     "Si cambias de opinión, escríbenos *Quiero que la radiquen*.")
+                                     "Si cambias de opinión, pulsa el botón y te ayudamos.")
             tutela.estado = "completado"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         _b(respuestas, telefono,
            "📄 Recibiste el PDF de tu tutela. ¿Qué prefieres hacer?\n\n"
-           "1️⃣ *Que la radiquen por ti* — $20.000 COP\n"
-           "2️⃣ *Seguir tú mismo*", [("1", "💳 Que la radiquen $20k"), ("2", "✍️ Sigo yo")])
+           "1️⃣ *Que la radiquen por ti* — $29.000 COP\n"
+           "2️⃣ *Seguir tú mismo*", [("1", "💳 Que la radiquen $29k"), ("2", "✍️ Sigo yo")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -551,7 +552,7 @@ async def procesar_mensaje(
             link_pago = f"{settings.app_url}/pago/{tutela.id}"
             _r(respuestas, telefono,
                f"💰 *Radicación automática*\n\n"
-               f"Para completar el pago de *$20.000 COP*:\n\n"
+               f"Para completar el pago de *$29.000 COP*:\n\n"
                f"🔗 {link_pago}\n\n"
                f"Después de pagar, escribe *Pagado* para confirmar.\n\n"
                f"⚠️ *Importante:* Radicamos tu tutela y te entregamos el "
@@ -561,12 +562,13 @@ async def procesar_mensaje(
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
             _r(respuestas, telefono, "Entendido. Recibiste el PDF con tu tutela por este chat.\n\n"
-                                     "Si al intentarlo lo ves complejo, solo escribe *Quiero que la radiquen* "
-                                     "y lo hacemos por ti por *$20.000 COP* sin repetir datos.")
+                                     "Si al intentarlo lo ves complejo, pulsa el botón y lo hacemos "
+                                     "por ti por *$29.000 COP* sin repetir datos.")
+            _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Que la radiquen $29k"), ("2", "✍️ Lo hago yo")])
             tutela.estado = "hazlo_tu_mismo"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO, [("confirmar_pago", "✅ Sí, pagar $20k"), ("2", "✍️ Hazlo tú mismo")])
+        _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO, [("confirmar_pago", "✅ Sí, pagar $29k"), ("2", "✍️ Hazlo tú mismo")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -747,7 +749,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
     ok = enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
     if not ok:
         _r(respuestas, telefono, "⚠️ No pude enviar el PDF. Intenta de nuevo.")
-    _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "✍️ Hazlo tú mismo")])
+    _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $29k"), ("2", "✍️ Hazlo tú mismo")])
     tutela.estado = "esperando_decision_radicacion"
     session.commit()
     return ruta_pdf
@@ -814,7 +816,7 @@ JURAMENTO_TEXTO = (
 POST_PDF_OPCIONES = (
     "📄 *PDF generado y enviado*\n\n"
     "Ahora tienes 2 opciones:\n\n"
-    "1️⃣ *Radicación automática* — *$20.000 COP*\n"
+    "1️⃣ *Radicación automática* — *$29.000 COP*\n"
     "   Radicamos por ti ante la Rama Judicial.\n"
     "   Entrega en máximo *4 horas hábiles*.\n"
     "   Te entregamos el número de radicado.\n\n"
@@ -823,7 +825,7 @@ POST_PDF_OPCIONES = (
 
 CONFIRMAR_PAGO_TEXTO = (
     "💳 *Radicación automática*\n\n"
-    "Por *$20.000 COP* radicamos tu tutela ante la Rama Judicial.\n"
+    "Por *$29.000 COP* radicamos tu tutela ante la Rama Judicial.\n"
     "Incluye:\n"
     "✅ Radicación en el portal oficial\n"
     "✅ Número de radicado y constancia\n"

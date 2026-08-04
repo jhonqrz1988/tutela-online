@@ -90,7 +90,7 @@ async def iniciar_pago(
     <body>
       <div class="card">
         <h1>Radicación de tutela</h1>
-        <p>Radicamos tu tutela ante la Rama Judicial por <b>$20.000 COP</b>.</p>
+        <p>Radicamos tu tutela ante la Rama Judicial por <b>$29.000 COP</b>.</p>
         <p><b>Importante:</b> Radicamos tu tutela y te entregamos el número de radicado.</p>
         <p class="small">Para pagar por Nequi o transferencia, escríbenos por WhatsApp
            con la palabra <b>Pagado</b> y el número de referencia
@@ -158,7 +158,7 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
         if tutela.user and tutela.user.telefono:
             enviar_texto(
                 tutela.user.telefono,
-                "✅ *¡Pago confirmado!* Recibimos tu pago de $20.000 COP.\n\n"
+                "✅ *¡Pago confirmado!* Recibimos tu pago de $29.000 COP.\n\n"
                 "Nuestro equipo radicará tu tutela y te enviaremos el "
                 "*número de radicado* por este chat.",
             )

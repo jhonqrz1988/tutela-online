@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     mercadopago_access_token: str = ""
     mercadopago_webhook_secret: str = ""
     mercadopago_env: str = "sandbox"  # "sandbox" | "production"
-    mercadopago_amount: float = 20000.0  # $20.000 COP
+    mercadopago_amount: float = 29000.0  # $29.000 COP
     mercadopago_currency: str = "COP"
 
     rama_judicial_url: str = "https://procesojudicial.ramajudicial.gov.co/TutelaEnLinea"
