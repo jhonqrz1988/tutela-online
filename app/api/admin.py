@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
@@ -16,6 +17,7 @@ from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
 
 router = APIRouter(prefix="/admin")
+logger = logging.getLogger(__name__)
 env = Environment(
     loader=FileSystemLoader("app/templates"),
     cache_size=0,
@@ -293,6 +295,25 @@ async def registrar_radicado_manual(
     if not num_radicado:
         return {"ok": False, "error": "Número de radicado requerido"}
 
+    constancia_img = data.get("constancia_img")
+    ruta_constancia = ""
+    if constancia_img and getattr(constancia_img, "filename", ""):
+        try:
+            contenido = await constancia_img.read()
+            if contenido:
+                ext = os.path.splitext(constancia_img.filename or "")[1].lower()
+                if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                    ext = ".png"
+                from app.utils.file_utils import path_constancia_imagen
+
+                import aiofiles
+
+                ruta_constancia = path_constancia_imagen(ext)
+                async with aiofiles.open(ruta_constancia, "wb") as f:
+                    await f.write(contenido)
+        except Exception as e:
+            logger.error(f"Error guardando constancia imagen tutela {tutela_id}: {e}")
+
     rad = None
     if t.radicacion:
         rad = t.radicacion[0]
@@ -302,10 +323,12 @@ async def registrar_radicado_manual(
 
     rad.num_radicado = num_radicado
     rad.estado = "radicada"
+    if ruta_constancia:
+        rad.constancia_path = ruta_constancia
     t.estado = "radicada"
     session.commit()
 
-    from app.services.whatsapp_service import enviar_texto
+    from app.services.whatsapp_service import enviar_imagen, enviar_texto
 
     if t.user and t.user.telefono:
         enviar_texto(
@@ -314,7 +337,13 @@ async def registrar_radicado_manual(
             f"N° radicado: *{num_radicado}*\n\n"
             f"Gracias por usar nuestro servicio.",
         )
-    return {"ok": True, "estado": t.estado, "num_radicado": num_radicado}
+        if ruta_constancia:
+            enviar_imagen(
+                t.user.telefono,
+                ruta_constancia,
+                caption=f"📄 *Constancia de radicación*\nN° radicado: {num_radicado}",
+            )
+    return {"ok": True, "estado": t.estado, "num_radicado": num_radicado, "constancia_path": ruta_constancia}
 
 
 @router.get("/chat", response_class=HTMLResponse)

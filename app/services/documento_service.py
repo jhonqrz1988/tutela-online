@@ -138,7 +138,7 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     pdf.body_text("Atentamente,")
     pdf.ln(15)
     pdf.body_text(accionante)
-    pdf.body_text(f"{tipo_doc}. {cedula}")
+    _firma_documento(pdf, tipo_doc, cedula)
     pdf.body_text(f"Email: {email}")
 
     # X. Anexos — imágenes de las pruebas incrustadas en el PDF
@@ -150,6 +150,20 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
 PDF_EXT = {".pdf"}
+
+
+def _firma_documento(pdf, tipo_doc: str, cedula: str) -> None:
+    """Imprime la línea de documento en la firma solo si el dato es real.
+
+    Omite la línea si la cédula está vacía o es un placeholder generado por
+    el bot, evitando firmar un documento con datos ficticios.
+    """
+    tipo = (tipo_doc or "").strip().upper()
+    ced = (cedula or "").strip().upper()
+    if ced and ced not in ("___________", "____________"):
+        pdf.body_text(f"{tipo or 'CC'}. {ced}")
+    elif tipo and tipo not in ("CC", "CE"):
+        pdf.body_text(tipo)
 
 
 def _filtrar_pruebas(pruebas_paths: list[str], pruebas_analizadas: list[str]) -> list[tuple[str, str, str]]:

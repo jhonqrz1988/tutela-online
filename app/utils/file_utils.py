@@ -19,3 +19,8 @@ def path_prueba(ext: str = ".jpg") -> str:
 def path_constancia() -> str:
     os.makedirs("storage/constancias", exist_ok=True)
     return f"storage/constancias/{unique_filename('.pdf')}"
+
+
+def path_constancia_imagen(ext: str = ".png") -> str:
+    os.makedirs("storage/constancias", exist_ok=True)
+    return f"storage/constancias/{unique_filename(ext)}"

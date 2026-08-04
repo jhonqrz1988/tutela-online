@@ -285,6 +285,101 @@ def _enviar_documento_zapi(telefono: str, ruta_pdf: str, filename: str) -> bool:
         return False
 
 
+def enviar_imagen(telefono: str, ruta_imagen: str, caption: str = "") -> bool:
+    """Envía una imagen (pantallazo/constancia) por WhatsApp.
+
+    Solo Meta Cloud API y Twilio tienen soporte nativo de imagen; para los
+    demás proveedores se devuelve False (el llamador decide el respaldo).
+    """
+    telefono_limpio = telefono.replace("whatsapp:", "").replace("+", "").strip()
+
+    provider = settings.whatsapp_provider
+    if provider == "meta":
+        return _enviar_imagen_meta(telefono_limpio, ruta_imagen, caption)
+    elif provider == "twilio":
+        return _enviar_imagen_twilio(telefono, ruta_imagen, caption)
+    return False
+
+
+def _enviar_imagen_meta(telefono: str, ruta_imagen: str, caption: str) -> bool:
+    try:
+        ext = ruta_imagen.rsplit(".", 1)[-1].lower() if "." in ruta_imagen else "png"
+        mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/png")
+        filename = ruta_imagen.rsplit("/", 1)[-1]
+
+        upload_url = f"https://graph.facebook.com/v22.0/{settings.meta_phone_number_id}/media"
+        with open(ruta_imagen, "rb") as f:
+            r_up = httpx.post(
+                upload_url,
+                data={"messaging_product": "whatsapp", "type": mime},
+                files={"file": (filename, f, mime)},
+                headers={"Authorization": f"Bearer {settings.meta_access_token}"},
+                timeout=30,
+            )
+        if r_up.status_code != 200:
+            logger.error(f"Meta upload imagen falló: {r_up.status_code} {r_up.text[:200]}")
+            return False
+        media_id = r_up.json().get("id")
+        if not media_id:
+            return False
+
+        url = META_API_BASE.replace("{phone_number_id}", settings.meta_phone_number_id)
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": telefono,
+            "type": "image",
+            "image": {"id": media_id, "caption": caption[:1024]},
+        }
+        r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=30)
+        if not r.is_success:
+            logger.error(f"Meta send imagen falló: {r.status_code} {r.text[:200]}")
+        return r.is_success
+    except Exception as e:
+        logger.error(f"Error _enviar_imagen_meta: {e}")
+        return False
+
+
+def _enviar_imagen_twilio(telefono: str, ruta_imagen: str, caption: str) -> bool:
+    if not settings.twilio_account_sid:
+        return False
+    try:
+        auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
+
+        import re
+        with open(ruta_imagen, "rb") as f:
+            r_up = httpx.post(
+                "https://tmpfiles.org/api/v1/upload",
+                files={"file": (ruta_imagen.rsplit("/", 1)[-1], f, "image/png")},
+                timeout=20,
+            )
+        if r_up.status_code != 200:
+            return False
+        tmp_url = r_up.json().get("data", {}).get("url", "")
+        if not tmp_url:
+            return False
+        r_dl = httpx.get(tmp_url.replace("tmpfiles.org/", "tmpfiles.org/dl/"), follow_redirects=True, timeout=10)
+        match = re.search(r'href=["\'](https://tmpfiles\.org/dl/[^"\']+\.png)["\']', r_dl.text)
+        if not match:
+            return False
+        imagen_url = match.group(1)
+
+        r = httpx.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{settings.twilio_account_sid}/Messages.json",
+            data={
+                "Body": caption,
+                "From": _from_whatsapp(),
+                "To": _to_whatsapp(telefono),
+                "MediaUrl": imagen_url,
+            },
+            auth=auth,
+            timeout=30,
+        )
+        return r.is_success
+    except Exception as e:
+        logger.error(f"Error _enviar_imagen_twilio: {e}")
+        return False
+
+
 def _from_whatsapp() -> str:
     return f"whatsapp:{settings.twilio_whatsapp_number}"
 
