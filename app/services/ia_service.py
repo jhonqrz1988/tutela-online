@@ -113,12 +113,18 @@ async def transcribir_audio(ruta_audio: str) -> str | None:
     if not client:
         return None
     try:
+        # Leer los bytes de forma asíncrona y pasarlos al SDK; el cliente
+        # async no acepta file objects de aiofiles (solo bytes/PathLike).
+        # Se usa el nombre del archivo con su extensión real para que el
+        # proveedor detecte el formato de audio.
+        nombre = Path(ruta_audio).name
         async with aiofiles.open(ruta_audio, "rb") as f:
-            transcript = await client.audio.transcriptions.create(
-                model=settings.ai_whisper_model,
-                file=f,
-                language="es",
-            )
+            contenido = await f.read()
+        transcript = await client.audio.transcriptions.create(
+            model=settings.ai_whisper_model,
+            file=(nombre, contenido),
+            language="es",
+        )
         return transcript.text
     except Exception as e:
         logger.error(f"Error transcribiendo audio: {e}")
