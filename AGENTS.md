@@ -47,17 +47,16 @@
 17. `pendiente_radicacion` - Retry queued (Reintentar or nightly job)
 18. `fallida` - Radicacion attempt failed
 
-## Payment Flow (Wompi Checkout + manual radicacion)
-- Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` builds the Wompi hosted checkout URL via `url_checkout()` (reference `TUT-{id}`) and redirects (302) — NO `POST /transactions` (that flow requires card tokenization + acceptance_token and is NOT used)
-- Checkout URL: `https://checkout.wompi.co/p/?public-key=...&currency=COP&amount-in-cents=...&reference=TUT-{id}&redirect-url=...&signature:integrity={firma}`
-- Wompi notifies webhook `POST /webhook/wompi` (event `transaction.updated`, status APPROVED) → verifies checksum SHA256 → sets `pago_confirmado`
-- If no Wompi configured, `/pago/{id}` shows informational page; user reports "Pagado" → state `pago_por_confirmar`
+## Payment Flow (Mercado Pago Checkout Pro + manual radicacion)
+- Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` creates a Mercado Pago preference via `crear_preferencia_checkout()` in `app/services/mercadopago_service.py` (reference `TUT-{id}`, `notification_url` = `{app_url}/webhook/mercadopago`) and redirects (302) to the returned `init_point`.
+- Mercado Pago notifies webhook `POST /webhook/mercadopago` (body `{"type":"payment","data":{"id":...}}`, header `x-signature: ts=<ts>,v1=<hash>`) → `verificar_firma()` validates HMAC-SHA256 with `MERCADOPAGO_WEBHOOK_SECRET` → `consultar_pago()` fetches the payment (status must be `approved`) → resolves `external_reference` `TUT-{id}` → sets `pago_confirmado`.
+- Movement back-redirect `/pago/resultado` (Mercado Pago `back_urls.success`) is informational only; real confirmation arrives via webhook.
+- If no Mercado Pago configured, `/pago/{id}` shows informational page; user reports "Pagado" → state `pago_por_confirmar`.
+- Rail-note: Mercado Pago requires a public website to activate a production account; the app's own root `/` page (in `app/main.py`) is used as that site (root returns an HTML landing page, not 404).
 - Human team verifies payment + does manual radicacion in admin panel:
   - `POST /admin/tutelas/{id}/confirmar-pago` → `pago_confirmado` + WhatsApp to user
   - `POST /admin/tutelas/{id}/registrar-radicado` (form: `num_radicado`) → `radicada` + WhatsApp with number
-- Wompi env vars: `WOMPI_PUBLIC_KEY`, `WOMPI_PRIVATE_KEY`, `WOMPI_INTEGRITY_SECRET`, `WOMPI_EVENTS_SECRET`, `WOMPI_ENV`, `WOMPI_AMOUNT_CENTS`, `WOMPI_CURRENCY`
-- `firma_integridad()` = SHA256(reference+amount+currency+integrity_secret); `verificar_evento()` validates webhook checksum
-- Wompi `redirect-url` MUST be clean (no query string) — Wompi appends its own `?id=<transaction_id>`. `/pago/resultado` must be declared BEFORE `/pago/{tutela_id}` in `pagos.py` (FastAPI route order).
+- Mercado Pago env vars: `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`, `MERCADOPAGO_ENV`, `MERCADOPAGO_AMOUNT`, `MERCADOPAGO_CURRENCY`
 
 ## Admin Panel
 - All `/admin` routes require login. Protected via `Depends(require_admin)` in `app/api/admin.py` (signed cookie `tutela_admin`, 12h TTL).

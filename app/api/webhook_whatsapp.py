@@ -499,21 +499,22 @@ async def procesar_mensaje(
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
-    #   POST-PDF — decisión: pagar o video gratis
+    #   POST-PDF — decisión: pagar o hazlo tú mismo
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_decision_radicacion":
         if body in ("1", "pagar", "radicar", "si radicar"):
             _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$20.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, mejor ver video")])
+            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$20.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "video", "gratis", "hacer yo mismo"):
-            _r(respuestas, telefono, VIDEO_GUIA)
+        elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
+            _r(respuestas, telefono, "Entendido. Recibiste el PDF de tu tutela por este chat. "
+                                     "Quedamos atentos por si necesitas nuestra ayuda más adelante.")
             tutela.estado = "completado"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "📹 Video gratis")])
+        _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "✍️ Hazlo tú mismo")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -532,12 +533,12 @@ async def procesar_mensaje(
             tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "no", "video", "mejor video"):
-            _r(respuestas, telefono, VIDEO_GUIA)
+        elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
+            _r(respuestas, telefono, "Entendido. Recibiste el PDF con tu tutela por este chat. Quedamos atentos.")
             tutela.estado = "completado"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO, [("confirmar_pago", "✅ Sí, pagar $20k"), ("2", "🎥 Mejor ver video")])
+        _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO, [("confirmar_pago", "✅ Sí, pagar $20k"), ("2", "✍️ Hazlo tú mismo")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -718,7 +719,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
     ok = enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
     if not ok:
         _r(respuestas, telefono, "⚠️ No pude enviar el PDF. Intenta de nuevo.")
-    _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "📹 Video gratis")])
+    _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $20k"), ("2", "✍️ Hazlo tú mismo")])
     tutela.estado = "esperando_decision_radicacion"
     session.commit()
     return ruta_pdf
@@ -789,8 +790,7 @@ POST_PDF_OPCIONES = (
     "   Radicamos por ti ante la Rama Judicial.\n"
     "   Entrega en máximo *4 horas hábiles*.\n"
     "   Te entregamos el número de radicado.\n\n"
-    "2️⃣ *Hazlo tú mismo* — GRATIS\n"
-    "   Te enviamos un video explicativo."
+    "2️⃣ *Hazlo tú mismo* — GRATIS"
 )
 
 CONFIRMAR_PAGO_TEXTO = (
@@ -801,20 +801,6 @@ CONFIRMAR_PAGO_TEXTO = (
     "✅ Número de radicado y constancia\n"
     "✅ Entrega en máximo 4 horas hábiles\n\n"
     "¿Quieres continuar con el pago?"
-)
-
-VIDEO_GUIA = (
-    "🎥 *Video guía para radicar tu tutela*\n\n"
-    "Mira este video paso a paso:\n"
-    "https://youtu.be/ejemplo-tutela-rama-judicial\n\n"
-    "📌 *Importante:*\n"
-    "• Ten a mano el PDF de la tutela\n"
-    "• Tus documentos personales\n"
-    "• Correo electrónico\n\n"
-    "Si en cualquier momento te parece complicado, "
-    "recuerda que por solo *$20.000 COP* nosotros lo hacemos por ti "
-    "en máximo 4 horas hábiles.\n"
-    "Solo responde *Pagar* para iniciar el proceso."
 )
 
 MENU_DEFAULT = (
