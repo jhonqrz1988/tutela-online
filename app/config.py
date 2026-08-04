@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from secrets import token_hex
 
 
 class Settings(BaseSettings):
@@ -49,4 +50,14 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
-settings = Settings()
+_settings = Settings()
+
+
+# Si SECRET_KEY quedó vacía o con el default de desarrollo, genera una
+# aleatoria en cada arranque: la cookie del admin solo es válida mientras
+# el proceso viva (se invalida al reiniciar), evitando que un tercero
+# pueda forjar una sesión con la clave por defecto.
+if not _settings.secret_key or _settings.secret_key == "dev-key-change-in-production":
+    _settings.secret_key = token_hex(32)
+
+settings = _settings
