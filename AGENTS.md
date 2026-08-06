@@ -1,5 +1,10 @@
 # AGENTS.md - Project Instructions
 
+## Skills Disponibles (opencode)
+Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` cuando apliquen:
+- `security-and-hardening`: usa cuando toques input de usuario, auth, webhooks, subidas de archivo, pagos o salida de LLM.
+- `test-driven-development`: usa al implementar lógica o cambiar comportamiento (flujo de estados del bot).
+
 ## Environment Setup
 - Python venv: `.\.venv\Scripts\python.exe`
 - Activate: `.\.venv\Scripts\activate`
