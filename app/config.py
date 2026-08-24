@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     meta_phone_number_id: str = ""
     meta_verify_token: str = ""
     meta_app_secret: str = ""
+    # Temporal mientras se prueba sin META_APP_SECRET: si True exige y valida
+    # la firma HMAC del webhook (rechaza si no hay secret); si False la omite.
+    strict_webhook_firma: bool = False
 
     # === AI Provider: "openai", "groq", o "gemini" ===
     ai_provider: str = "openai"

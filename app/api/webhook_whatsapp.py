@@ -87,15 +87,19 @@ async def webhook_whatsapp(request: Request, session=Depends(get_session)):
 def _verify_meta_signature(payload: bytes, signature_header: str) -> bool:
     """Verifica la firma HMAC-SHA256 del webhook de Meta.
 
-    Temporal (modo pruebas): si el proveedor es meta pero META_APP_SECRET
-    no está configurado, se acepta la petición con un warning para poder
-    seguir probando. En cuanto se configure el secret, la firma se valida
-    obligatoriamente.
+    Si el proveedor es meta y META_APP_SECRET no está configurado, el
+    comportamiento depende de strict_webhook_firma (app/config.py:23):
+    - False (default, modo pruebas): acepta con warning.
+    - True: rechaza (útil en producción para no dejar webhooks sin validar).
+    En cuanto se configure el secret, la firma se valida obligatoriamente.
     """
     if settings.whatsapp_provider != "meta":
         return True
     if not settings.meta_app_secret:
-        logger.warning("_verify_meta_signature: proveedor meta sin META_APP_SECRET — aceptando webhook (modo pruebas)")
+        if settings.strict_webhook_firma:
+            logger.error("_verify_meta_signature: STRICT — META_APP_SECRET vacío, rechazando webhook")
+            return False
+        logger.warning("_verify_meta_signature: proveedor meta sin META_APP_SECRET — aceptando webhook (modo pruebas, strict_webhook_firma=False)")
         return True
     expected = hmac.new(
         settings.meta_app_secret.encode(),

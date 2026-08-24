@@ -17,7 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 COPY . .
 
-RUN mkdir -p storage/tutelas storage/pruebas storage/constancias
+RUN mkdir -p storage/tutelas storage/pruebas storage/constancias /data
+
+# Volumen para persistencia en Railway: montar un Volume en /data y
+# configurar DATABASE_URL=sqlite:////data/tutelas.db (ver .env.example).
+VOLUME ["/data"]
 
 EXPOSE 8000
 
