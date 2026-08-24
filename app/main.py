@@ -14,7 +14,6 @@ from app.api.health import router as health_router
 from app.api.pagos import router as pagos_router
 from app.api.tutelas import router as tutelas_router
 from app.api.webhook_whatsapp import router as whatsapp_router
-from app.bot.browser import BrowserManager
 from app.database import init_db
 
 logging.basicConfig(
@@ -29,7 +28,6 @@ async def lifespan(app: FastAPI):
     from app.tasks.scheduler import iniciar_scheduler
     iniciar_scheduler()
     yield
-    await BrowserManager.close()
 
 
 app = FastAPI(
