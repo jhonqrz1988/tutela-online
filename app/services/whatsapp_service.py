@@ -40,6 +40,8 @@ def enviar_texto(telefono: str, mensaje: str) -> bool:
     telefono_limpio = telefono.replace("whatsapp:", "").replace("+", "").strip()
 
     provider = settings.whatsapp_provider
+    logger.info(f"[DEBUG] enviar_texto provider={provider} to={telefono_limpio[:10]}... msg_len={len(mensaje)}")
+    logger.info(f"[DEBUG] META_ACCESS_TOKEN set={bool(settings.meta_access_token)} META_PHONE_NUMBER_ID={settings.meta_phone_number_id}")
     if provider == "meta":
         return _enviar_meta_texto(telefono_limpio, mensaje)
     elif provider == "zapi":
