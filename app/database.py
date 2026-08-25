@@ -26,10 +26,19 @@ def _ensure_sqlite_dir(db_url: str) -> None:
 _ensure_sqlite_dir(settings.database_url)
 
 connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+
+# Neon pooler cierra conexiones inactivas -> pool_pre_ping verifica antes de usar
+engine_kwargs = {"connect_args": connect_args}
+if not settings.database_url.startswith("sqlite"):
+    engine_kwargs.update({
+        "pool_pre_ping": True,
+        "pool_recycle": 300,  # reciclar cada 5 min (Neon cierra a los ~5 min)
+    })
+
 engine = create_engine(
     settings.database_url.replace("+aiosqlite", ""),
     echo=False,
-    connect_args=connect_args,
+    **engine_kwargs,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
