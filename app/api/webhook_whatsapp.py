@@ -398,9 +398,18 @@ async def procesar_mensaje(
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "confirmar_audio":
         texto_audio = datos.get("_audio_temp", "")
-        if body in ("1", "sí", "si", "correcto"):
+        if body in ("1", "sí", "si", "correcto") or (body == "reintentar" and texto_audio):
             datos.pop("_audio_temp", None)
-            datos_ia = await extraer_datos_caso(texto_audio)
+            try:
+                datos_ia = await extraer_datos_caso(texto_audio)
+            except Exception as e:
+                logger.error(f"Error extrayendo datos tras audio: {e}")
+                # Conservar el texto para reintentar sin regrabar el audio
+                datos["_audio_temp"] = texto_audio
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono, "Hubo un error procesando tu caso con la IA. Escribe *reintentar* en un momento.")
+                return {"ok": True, "respuestas": respuestas}
             for k, v in datos_ia.items():
                 if v and k not in ("tipo",):
                     datos[k] = v
