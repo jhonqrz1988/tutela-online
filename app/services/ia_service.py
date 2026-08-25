@@ -15,9 +15,6 @@ logger = logging.getLogger(__name__)
 # Base URL compatible con OpenAI del SDK nativo de Gemini (para transcribir audio)
 _GEMINI_SDK = "google-genai"
 
-# Modelos Gemini que aceptan audio como entrada
-_MODELOS_AUDIO_GEMINI = {"gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"}
-
 
 def _get_client() -> AsyncOpenAI | None:
     api_key = settings.ai_api_key
@@ -122,7 +119,9 @@ def _transcribir_con_gemini_sync(ruta_audio: str) -> str | None:
         with open(ruta_audio, "rb") as f:
             data = f.read()
 
-        modelo = settings.ai_chat_model if settings.ai_chat_model in _MODELOS_AUDIO_GEMINI else "gemini-2.0-flash"
+        # Cualquier variante flash/pro sirve para audio (-latest incluido);
+        # si el modelo configurado no es Gemini, usa uno conocido.
+        modelo = settings.ai_chat_model if "gemini" in settings.ai_chat_model.lower() else "gemini-2.0-flash"
         resp = cliente.models.generate_content(
             model=modelo,
             contents=[
