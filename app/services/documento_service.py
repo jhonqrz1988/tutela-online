@@ -11,17 +11,14 @@ from app.utils.file_utils import path_tutela_pdf
 # Títulos de sección estilo "IV. HECHOS" / "VIII. PRETENSIONES"
 _TITULO_SECCION_RE = re.compile(r"^[IVXLCDM]{1,4}\.\s+\S")
 
-# Tipografía unicode común en texto de IA que la fuente core (latin-1) no soporta
-_REEMPLAZOS_TIPografICOS = {
-    "\u2014": "-", "\u2013": "-", "\u2018": "'", "\u2019": "'",
-    "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u2022": "-",
-}
+# Glifos sin representación en documentos legales (emoji, variant selectors,
+# zero-width) y espacios no rompibles; se limpian antes de renderizar.
+_RE_GLIFOS_INVALIDOS = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200b-\u200d\ufeff]")
 
 
-def _latin1_seguro(texto: str) -> str:
-    """Convierte tipografía unicode a equivalentes latin-1 para la fuente Times."""
-    t = "".join(_REEMPLAZOS_TIPografICOS.get(c, c) for c in texto)
-    return t.encode("latin-1", errors="replace").decode("latin-1")
+def _limpiar_texto(texto: str) -> str:
+    """Quita emoji/zero-width; preserva tildes, —, «», ¿¡ y demás tipografía."""
+    return _RE_GLIFOS_INVALIDOS.sub("", texto.replace("\u00a0", " "))
 
 
 def _render_contenido_ia(pdf: FPDF, contenido: str) -> None:
@@ -43,24 +40,42 @@ def _render_contenido_ia(pdf: FPDF, contenido: str) -> None:
 
 
 class TutelaPDF(FPDF):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # DejaVu cubre Unicode completo (tildes, —, «», ¿¡…); si las fuentes
+        # no están disponibles cae a Times core con saneo latin-1.
+        try:
+            self.add_font("DejaVu", "", os.path.join("fonts", "DejaVuSans.ttf"))
+            self.add_font("DejaVu", "B", os.path.join("fonts", "DejaVuSans-Bold.ttf"))
+            self.add_font("DejaVu", "I", os.path.join("fonts", "DejaVuSans-Oblique.ttf"))
+            self.fuente = "DejaVu"
+        except Exception:
+            self.fuente = "Times"
+
     def header(self):
-        self.set_font("Times", "B", 14)
-        self.cell(0, 10, "ACCION DE TUTELA", align="C", new_x="LMARGIN", new_y="NEXT")
+        self.set_font(self.fuente, "B", 14)
+        self.cell(0, 10, "ACCIÓN DE TUTELA", align="C", new_x="LMARGIN", new_y="NEXT")
         self.ln(5)
 
     def footer(self):
         self.set_y(-15)
-        self.set_font("Times", "I", 8)
+        self.set_font(self.fuente, "I", 8)
         self.cell(0, 10, f"Página {self.page_no()}/{{nb}}", align="C")
 
     def section_title(self, title: str):
-        self.set_font("Times", "B", 12)
-        self.cell(0, 8, _latin1_seguro(title), new_x="LMARGIN", new_y="NEXT")
+        self.set_font(self.fuente, "B", 12)
+        titulo = _limpiar_texto(title)
+        if self.fuente == "Times":
+            titulo = titulo.encode("latin-1", errors="replace").decode("latin-1")
+        self.cell(0, 8, titulo, new_x="LMARGIN", new_y="NEXT")
         self.ln(2)
 
     def body_text(self, text: str):
-        self.set_font("Times", "", 11)
-        self.multi_cell(0, 5.5, _latin1_seguro(text))
+        self.set_font(self.fuente, "", 11)
+        texto = _limpiar_texto(text)
+        if self.fuente == "Times":
+            texto = texto.encode("latin-1", errors="replace").decode("latin-1")
+        self.multi_cell(0, 5.5, texto)
         self.ln(2)
 
 
