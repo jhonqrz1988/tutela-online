@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -11,6 +12,12 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Base URL compatible con OpenAI del SDK nativo de Gemini (para transcribir audio)
+_GEMINI_SDK = "google-genai"
+
+# Modelos Gemini que aceptan audio como entrada
+_MODELOS_AUDIO_GEMINI = {"gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"}
+
 
 def _get_client() -> AsyncOpenAI | None:
     api_key = settings.ai_api_key
@@ -22,6 +29,9 @@ def _get_client() -> AsyncOpenAI | None:
         kwargs["base_url"] = "https://api.groq.com/openai/v1"
     elif settings.ai_provider == "openai":
         kwargs["base_url"] = "https://api.openai.com/v1"
+    elif settings.ai_provider == "gemini":
+        # Endpoint compatible con OpenAI expuesto por Google para Gemini
+        kwargs["base_url"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
     return AsyncOpenAI(**kwargs)
 
@@ -57,66 +67,91 @@ Reglas:
 
 Respuesta SOLO JSON, sin explicaciones."""
 
-SISTEMA_TUTELA = """Eres un abogado constitucionalista colombiano con 20 años de experiencia en acciones de tutela de salud.
+# Prompt de sistema anti-alucinación: estructura rígida y marcadores [FALTA: ...]
+SISTEMA_TUTELA = """Eres un asistente especializado en redactar acciones de tutela conforme al
+ordenamiento jurídico colombiano (Artículo 86 de la Constitución Política
+y Decreto 2591 de 1991). Con la información que te entregue el usuario,
+genera el escrito siguiendo esta estructura exacta, en este orden:
 
-Genera una TUTELA LEGAL COMPLETA, PROFESSIONAL y JURISDICCIONAL siguiendo EXACTAMENTE la estructura de la Corte Constitucional y la Rama Judicial Colombiana.
+1. ENCABEZADO: dirigido al juez competente (reparto), ciudad y fecha.
+2. IDENTIFICACIÓN DEL ACCIONANTE: nombres completos, cédula, dirección,
+   teléfono, correo — solo con los datos que el usuario proporcionó.
+3. IDENTIFICACIÓN DEL ACCIONADO: entidad o persona, con los datos disponibles.
+4. HECHOS: narración cronológica, numerada, clara y verificable. Usa
+   ÚNICAMENTE los hechos que el usuario relató. Si falta una fecha, un
+   nombre o un dato clave, dejar un marcador explícito como
+   [FALTA: fecha de la negativa] en vez de inventarlo.
+5. DERECHOS FUNDAMENTALES VULNERADOS: identifica el o los derechos
+   concretos y explica en 2-3 frases cómo los hechos narrados los vulneran.
+6. FUNDAMENTOS DE PROCEDIBILIDAD: por qué no existe otro mecanismo idóneo
+   (subsidiariedad) y por qué se presenta dentro de un plazo razonable
+   (inmediatez).
+7. PRETENSIONES: qué se le pide al juez, en numeral, de forma concreta.
+8. JURAMENTO: "Manifiesto bajo la gravedad de juramento que no he
+   interpuesto otra acción de tutela por los mismos hechos y derechos"
+   (Art. 37, Decreto 2591 de 1991).
+9. PRUEBAS Y ANEXOS: listar solo lo que el usuario haya mencionado.
+10. NOTIFICACIONES: datos de contacto para recibir la respuesta.
 
-ESTRUCTURA REQUERIDA:
+REGLAS ESTRICTAS:
+- Nunca inventes hechos, fechas, nombres o cifras que el usuario no haya
+  proporcionado. Usa [FALTA: ...] en vez de rellenar con supuestos.
+- Lenguaje formal jurídico pero comprensible.
+- No emitas opiniones sobre el resultado del caso ni cites jurisprudencia
+  que no te haya sido dada como contexto verificado.
+- Responde solo con el texto de la tutela en el formato anterior."""
 
-1. ENCABEZADO: "Señor JUEZ CONSTITUCIONAL DE [CIUDAD] (REPARTO) - E.S.D." con fecha exacta (día de mes de año)
 
-2. ACCIONANTE: Nombre completo, tipo y número de documento, teléfono, correo, ciudad
+def _transcribir_con_gemini_sync(ruta_audio: str) -> str | None:
+    """Llamada síncrona al SDK nativo de Gemini para transcribir audio.
+    Se ejecuta en un hilo aparte vía asyncio.to_thread."""
+    try:
+        from google import genai
+        from google.genai import types
 
-3. ACCIONADO: Nombre de la entidad (EPS, alcaldía, etc.), tipo (jurídica/natural), NIT si aplica
+        ext = ruta_audio.rsplit(".", 1)[-1].lower() if "." in ruta_audio else "ogg"
+        mime_map = {
+            "ogg": "audio/ogg", "oga": "audio/ogg", "opus": "audio/ogg",
+            "mp3": "audio/mpeg", "m4a": "audio/mp4", "mp4": "audio/mp4",
+            "wav": "audio/wav", "webm": "audio/webm", "aac": "audio/aac",
+            "amr": "audio/amr",
+        }
+        mime = mime_map.get(ext, "audio/ogg")
 
-4. HECHOS: Numerados (1., 2., 3.), cronológicos, con FECHAS EXACTAS. Menciona gestiones previas (quejas, reclamos, derechos de petición). Género concordante según accionante.
+        cliente = genai.Client(api_key=settings.ai_api_key)
+        with open(ruta_audio, "rb") as f:
+            data = f.read()
 
-5. DERECHOS VULNERADOS: Citar artículos específicos:
-   - Art. 11 C.P. (derecho a la vida)
-   - Art. 48 C.P. (seguridad social)
-   - Art. 49 C.P. (derecho a la salud)
-   - Art. 86 C.P. (acción de tutela)
-   - Art. 2 C.P. (fines del Estado)
-   - Sentencia T-760/2008 (salud)
-
-6. PETICIÓN: Solicitud clara, precisa, concreta. Ej: "Que se autorice cita con medicina general en 48 horas". Si es urgente, menciona "medida provisional" y "irremediable".
-
-7. JURAMENTO: "Bajo la gravedad de juramento, afirmo que no he promovido ni promuevo otra acción de tutela por los mismos hechos y derechos, conforme al artículo 37 del Decreto 2591 de 1991."
-
-8. PRUEBAS: Listar documentos adjuntos (cédula, historia clínica, resultados, etc.)
-
-9. NOTIFICACIONES: Correo y teléfono del accionante y del accionado
-
-10. FIRMA: Nombre completo, tipo y número de documento
-
-REQUISITO CRÍTICO: Usa citas legales REALES y verificadas. El texto debe sonar como lo escribiría un abogado litigante colombiano. NO uses lenguaje genérico. Sé específico en cada hecho y petición."""
-
-SISTEMA_PREVIEW_TUTELA = """Eres un asistente legal que genera resúmenes claros de acciones de tutela.
-
-Basado en los datos proporcionados, genera un RESUMEN CLIENTE-FRIENDLY que incluya:
-
-1. RESUMEN DE DATOS: Lista los datos recolectados
-2. HECHOS EXTRAÍDOS: Cronología clara con fechas
-3. DERECHOS IDENTIFICADOS: Artículos de aplicación
-4. PETICIÓN PROPUESTA: Qué se solicita al juez en lenguaje claro
-5. PRÓXIMOS PASOS: Qué hará el cliente después
-
-Si faltan datos importantes, indica qué falta. Si los hechos son muy breves, sugiere más detalles.
-
-Formato: Texto claro, sin formato legal complejo. Usa viñetas y numeración para legibilidad.
-
-Datos: {datos_json}"""
+        modelo = settings.ai_chat_model if settings.ai_chat_model in _MODELOS_AUDIO_GEMINI else "gemini-2.0-flash"
+        resp = cliente.models.generate_content(
+            model=modelo,
+            contents=[
+                "Transcribe este audio a texto en español colombiano, de forma "
+                "literal, sin comentarios ni resúmenes adicionales.",
+                types.Part.from_bytes(data=data, mime_type=mime),
+            ],
+        )
+        return (resp.text or "").strip() or None
+    except Exception as e:
+        logger.error(f"Error transcribiendo audio con Gemini: {e}")
+        return None
 
 
 async def transcribir_audio(ruta_audio: str) -> str | None:
+    """Transcribe audio. Con provider=gemini usa el SDK nativo (multimodal);
+    con openai/groq usa Whisper."""
+    if not settings.ai_api_key:
+        return None
+
+    if settings.ai_provider == "gemini":
+        return await asyncio.to_thread(_transcribir_con_gemini_sync, ruta_audio)
+
     client = _get_client()
     if not client:
         return None
     try:
         # Leer los bytes de forma asíncrona y pasarlos al SDK; el cliente
         # async no acepta file objects de aiofiles (solo bytes/PathLike).
-        # Se usa el nombre del archivo con su extensión real para que el
-        # proveedor detecte el formato de audio.
         nombre = Path(ruta_audio).name
         async with aiofiles.open(ruta_audio, "rb") as f:
             contenido = await f.read()
@@ -152,7 +187,7 @@ async def analizar_imagen(url_imagen: str) -> str:
     if not client:
         return ""
     try:
-        if Path(url_imagen).is_file():
+        if await Path(url_imagen).is_file():
             async with aiofiles.open(url_imagen, "rb") as f:
                 img_b64 = base64.b64encode(await f.read()).decode()
         else:
@@ -224,11 +259,10 @@ async def generar_tutela(datos: dict) -> str | None:
     accionante = datos.get("accionante_nombre", "el accionante")
     ciudad = datos.get("ciudad", "la ciudad")
     genero = datos.get("genero", "masculino")
-    pronombres = "él/le/lo/afiliado/diagnosticado/paciente" if genero == "masculino" else "ella/le/la/afiliada/diagnosticada/paciente"
 
     prompt = (
-        f"Redacta una accion de tutela formal en formato legal colombiano.\n\n"
-        f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes: {pronombres})\n\n"
+        f"Redacta una acción de tutela formal en formato legal colombiano.\n\n"
+        f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes)\n\n"
         f"DATOS DEL ACCIONANTE:\n"
         f"Nombre: {accionante}\n"
         f"Documento: {datos.get('accionante_tipo_doc', 'CC')} {datos.get('accionante_cedula', '')}\n"
@@ -243,7 +277,8 @@ async def generar_tutela(datos: dict) -> str | None:
         f"HECHOS:\n{datos.get('hechos', '')}\n\n"
         f"DERECHOS VULNERADOS: {', '.join(datos.get('derechos_vulnerados', []))}\n\n"
         f"PETICIÓN:\n{datos.get('peticion', '')}\n\n"
-        f"Incluye el juramento obligatorio, lista de pruebas documentales, notificaciones y firma."
+        "Recuerda: si falta algún dato (fecha, dirección, NIT, correo), usa el "
+        "marcador [FALTA: descripción del dato] en lugar de inventarlo."
     )
 
     resp = await client.chat.completions.create(
@@ -256,12 +291,29 @@ async def generar_tutela(datos: dict) -> str | None:
     return resp.choices[0].message.content
 
 
+SISTEMA_PREVIEW_TUTELA = """Eres un asistente legal que genera resúmenes claros de acciones de tutela.
+
+Basado en los datos proporcionados, genera un RESUMEN CLIENTE-FRIENDLY que incluya:
+
+1. RESUMEN DE DATOS: Lista los datos recolectados
+2. HECHOS EXTRAÍDOS: Cronología clara con fechas
+3. DERECHOS IDENTIFICADOS: Artículos de aplicación
+4. PETICIÓN PROPUESTA: Qué se solicita al juez en lenguaje claro
+5. PRÓXIMOS PASOS: Qué hará el cliente después
+
+Si faltan datos importantes, indica qué falta. Si los hechos son muy breves, sugiere más detalles.
+
+Formato: Texto claro, sin formato legal complejo. Usa viñetas y numeración para legibilidad.
+
+Datos: {datos_json}"""
+
+
 async def generar_preview(datos: dict) -> str:
     """Genera un resumen amigable para que el cliente revise antes de PDF final."""
     client = _get_client()
     if not client:
         return "No se puede generar preview sin conexión a IA"
-    
+
     resp = await client.chat.completions.create(
         model=settings.ai_chat_model,
         messages=[

@@ -5,6 +5,7 @@ fastapi==0.139.0
 fastapi-cli==0.0.29
 fastapi-cloud-cli==0.22.2
 fpdf2==2.8.7
+google-genai==1.30.0
 httpx==0.28.1
 Jinja2==3.1.6
 openai==2.45.0
