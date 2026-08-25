@@ -119,9 +119,9 @@ def _transcribir_con_gemini_sync(ruta_audio: str) -> str | None:
         with open(ruta_audio, "rb") as f:
             data = f.read()
 
-        # Cualquier variante flash/pro sirve para audio (-latest incluido);
-        # si el modelo configurado no es Gemini, usa uno conocido.
-        modelo = settings.ai_chat_model if "gemini" in settings.ai_chat_model.lower() else "gemini-2.0-flash"
+        # Alias -latest siempre apunta al modelo flash vigente (los
+        # versionados quedan obsoletos: p.ej. gemini-2.0-flash fue retirado).
+        modelo = settings.ai_chat_model if "gemini" in settings.ai_chat_model.lower() else "gemini-flash-latest"
         resp = cliente.models.generate_content(
             model=modelo,
             contents=[
