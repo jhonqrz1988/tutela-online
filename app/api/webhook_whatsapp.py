@@ -751,26 +751,30 @@ def _ext_desde_mime(mime_type: str, url: str = "") -> str:
 async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> str | None:
     _r(respuestas, telefono, "⏳ *Generando tu tutela...* Esto puede tardar unos segundos.")
 
-    # El PDF se arma desde `datos`; el texto de la IA solo alimenta la
-    # verificación de citas, así que un fallo de IA NO debe bloquear el PDF.
+    # El PDF usa el texto de la IA (estructura I-XI) cuando la IA responde;
+    # si falla, generar_pdf cae al modo plantilla construido desde `datos`.
+    contenido_final: str | None = None
     try:
-        contenido = await generar_tutela(datos) or datos.get("hechos", "")
+        texto = await generar_tutela(datos)
+        if not texto:
+            raise ValueError("la IA no devolvió texto")
 
-        citas = await extraer_citas(contenido)
+        citas = await extraer_citas(texto)
         if citas:
             resultado = verificar_citas(citas, session)
             if resultado["pendientes_revision"]:
                 tutela.estado_verificacion = "verificada_con_pendientes"
                 guardar_pendientes(tutela.id, resultado["pendientes_revision"], session)
-                contenido = limpiar_texto_para_pdf(contenido, resultado["pendientes_revision"])
+                texto = limpiar_texto_para_pdf(texto, resultado["pendientes_revision"])
             else:
                 tutela.estado_verificacion = "verificada"
+        contenido_final = texto
     except Exception as e:
-        logger.error(f"IA/verificación falló (se genera PDF igual): {e}")
+        logger.error(f"IA/verificación falló (se genera PDF en modo plantilla): {e}")
         tutela.estado_verificacion = "pendiente_revision"
 
     try:
-        ruta_pdf = generar_pdf(datos, None)
+        ruta_pdf = generar_pdf(datos, contenido_final)
     except Exception as e:
         logger.error(f"Error generando PDF para tutela {tutela.id}: {e}")
         _r(respuestas, telefono, "Hubo un error técnico generando tu PDF. Escribe *juro* para reintentarlo.")

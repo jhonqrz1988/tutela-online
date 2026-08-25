@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import UTC, datetime
 
 import fitz
@@ -6,6 +7,39 @@ from fpdf import FPDF
 from PIL import Image
 
 from app.utils.file_utils import path_tutela_pdf
+
+# Títulos de sección estilo "IV. HECHOS" / "VIII. PRETENSIONES"
+_TITULO_SECCION_RE = re.compile(r"^[IVXLCDM]{1,4}\.\s+\S")
+
+# Tipografía unicode común en texto de IA que la fuente core (latin-1) no soporta
+_REEMPLAZOS_TIPografICOS = {
+    "\u2014": "-", "\u2013": "-", "\u2018": "'", "\u2019": "'",
+    "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u2022": "-",
+}
+
+
+def _latin1_seguro(texto: str) -> str:
+    """Convierte tipografía unicode a equivalentes latin-1 para la fuente Times."""
+    t = "".join(_REEMPLAZOS_TIPografICOS.get(c, c) for c in texto)
+    return t.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _render_contenido_ia(pdf: FPDF, contenido: str) -> None:
+    """Renderiza el texto generado por la IA (ya verificado) como cuerpo del PDF.
+
+    Las líneas que parecen títulos de sección (numeración romana o MAYÚSCULAS
+    cortas) se resaltan en negrita; el resto va como párrafos justificados.
+    """
+    for linea in contenido.splitlines():
+        limpia = linea.strip()
+        if not limpia:
+            pdf.ln(2)
+            continue
+        if _TITULO_SECCION_RE.match(limpia) or (limpia.isupper() and len(limpia) <= 90):
+            pdf.ln(2)
+            pdf.section_title(limpia)
+        else:
+            pdf.body_text(limpia)
 
 
 class TutelaPDF(FPDF):
@@ -21,12 +55,12 @@ class TutelaPDF(FPDF):
 
     def section_title(self, title: str):
         self.set_font("Times", "B", 12)
-        self.cell(0, 8, title, new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 8, _latin1_seguro(title), new_x="LMARGIN", new_y="NEXT")
         self.ln(2)
 
     def body_text(self, text: str):
         self.set_font("Times", "", 11)
-        self.multi_cell(0, 5.5, text)
+        self.multi_cell(0, 5.5, _latin1_seguro(text))
         self.ln(2)
 
 
@@ -52,6 +86,19 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
 
     now = datetime.now(UTC)
     fecha = now.strftime("%d de %B de %Y").lower()
+
+    pruebas_paths = datos.get("pruebas_paths", [])
+    pruebas_analizadas = datos.get("pruebas_analizadas", [])
+    pruebas_fotos = _filtrar_pruebas(pruebas_paths, pruebas_analizadas)
+
+    if contenido_tutela:
+        # Modo IA: el texto generado (estructura I-XI, ya verificado) ES el documento.
+        _render_contenido_ia(pdf, contenido_tutela)
+        _anexar_pruebas(pdf, pruebas_fotos)
+        pdf.output(ruta)
+        return ruta
+
+    # Modo plantilla: respaldo si la IA no generó texto — se arma desde `datos`.
 
     # Encabezado (formato legal colombiano)
     pdf.set_font("Times", "B", 14)
@@ -115,9 +162,6 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     )
 
     # VII. Pruebas — fotos y PDFs adjuntos
-    pruebas_paths = datos.get("pruebas_paths", [])
-    pruebas_analizadas = datos.get("pruebas_analizadas", [])
-    pruebas_fotos = _filtrar_pruebas(pruebas_paths, pruebas_analizadas)
     if pruebas_fotos:
         pdf.section_title("VII. PRUEBAS")
         pdf.body_text("Se adjuntan las siguientes pruebas:")
