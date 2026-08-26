@@ -25,6 +25,7 @@ def _get_bot() -> RadicadorBot:
 async def iniciar_radicacion(
     tutela_id: int,
     token_usuario: str | None = None,
+    forzar: bool = False,
 ) -> dict:
     """Inicia la radicación de una tutela en el portal de Rama Judicial.
 
@@ -33,6 +34,9 @@ async def iniciar_radicacion(
     2. Llena el formulario (pasos 1-4)
     3. Si el portal pide código de email → pausa, envía WhatsApp al usuario
     4. Retorna estado pendiente para que el webhook espere el código
+
+    Args:
+        forzar: Si True, ignora restricción de horario hábil (para admin manual).
     """
     session = SessionLocal()
     try:
@@ -42,12 +46,11 @@ async def iniciar_radicacion(
         if not tutela:
             return {"ok": False, "error": "Tutela no encontrada"}
 
-        # Verificar horario hábil
-        from datetime import datetime
-        ahora = datetime.now()
-        hora = ahora.hour
-        if not (8 <= hora < 12 or 14 <= hora < 16):
-            return {"ok": False, "error": "Fuera de horario hábil (8am-12pm, 2pm-4pm)"}
+        # Verificar horario hábil (solo si no está forzado)
+        if not forzar:
+            from app.tasks.jobs import es_horario_habil
+            if not es_horario_habil():
+                return {"ok": False, "error": "Fuera de horario hábil (8am-12pm, 2pm-4pm). Use forzar=True desde admin."}
 
         datos = json.loads(tutela.datos_json or "{}")
 

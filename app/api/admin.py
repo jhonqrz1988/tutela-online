@@ -248,7 +248,7 @@ def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_
     t.estado = "pendiente_radicacion"
     session.commit()
     try:
-        resultado = asyncio.run(iniciar_radicacion(t.id))
+        resultado = asyncio.run(iniciar_radicacion(t.id, forzar=True))
         return resultado
     except Exception as e:
         return {"ok": False, "error": str(e)}
