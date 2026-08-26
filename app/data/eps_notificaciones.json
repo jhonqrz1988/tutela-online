@@ -1,0 +1,197 @@
+[
+  {
+    "nombre": "NUEVA EPS",
+    "alias": ["nueva eps", "nueva"],
+    "nit": "900156264-2",
+    "correo_notificacion": "secretaria.general@nuevaeps.com.co",
+    "correo_notificacion_alterno": ["notificacionestutelas@nuevaeps.com.co", "notificacionesjudiciales@nuevaeps.com.co"],
+    "telefono": "01 8000 960 020",
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "EPS SANITAS",
+    "alias": ["sanitas", "eps sanitas", "eps sanitas"],
+    "nit": "800251440-6",
+    "correo_notificacion": "notificajudiciales@keralty.com",
+    "correo_notificacion_alterno": ["notificaciontutelas@epssanitas.com", "notificaciones@colsanitas.com"],
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "EPS SURA",
+    "alias": ["sura", "eps sura", "suramericana"],
+    "nit": "800088702",
+    "correo_notificacion": "notificacionesjudiciales@suramericana.com.co",
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "COMPENSAR EPS",
+    "alias": ["compensar", "eps compensar"],
+    "nit": "860066942",
+    "correo_notificacion": "notificacionesjudiciales@compensar.com",
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "FAMISANAR EPS",
+    "alias": ["famisanar", "eps famisanar"],
+    "nit": "830003564",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "COOSALUD EPS-S",
+    "alias": ["coosalud", "eps coosalud", "eps-s coosalud"],
+    "nit": "900226715",
+    "correo_notificacion": "notificacioncoosaludeps@coosalud.com",
+    "correo_notificacion_alterno": ["notificacionjudicial@coosalud.com"],
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "ALIANSALUD EPS",
+    "alias": ["aliansalud", "eps aliansalud"],
+    "nit": "830113831",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "SALUD TOTAL EPS S.A.",
+    "alias": ["salud total", "eps salud total", "saludtotal"],
+    "nit": "800130907",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "SERVICIO OCCIDENTAL DE SALUD (SOS) EPS",
+    "alias": ["sos", "eps sos", "servicio occidental"],
+    "nit": "805001157",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "COMFENALCO VALLE EPS",
+    "alias": ["comfenalco", "comfenalco valle", "eps comfenalco"],
+    "nit": "890303093",
+    "correo_notificacion": "notificacioneseps@epsdelagente.com.co",
+    "correo_notificacion_alterno": ["notificacionesprocesosjudicialeseps@epsdelagente.com.co"],
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "SALUD MIA EPS",
+    "alias": ["salud mia", "eps salud mia", "saludmia"],
+    "nit": "900914254",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "EPM EMPRESAS PUBLICAS DE MEDELLIN",
+    "alias": ["epm", "empresas publicas", "empresas publicas de medellin"],
+    "nit": "890904996",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "FONDO DE PASIVO SOCIAL DE FERROCARRILES NACIONALES",
+    "alias": ["ferrocarriles", "pasivo social ferrocarriles"],
+    "nit": "800112806",
+    "correo_notificacion": null,
+    "regimen": "contributivo"
+  },
+  {
+    "nombre": "CAPITAL SALUD EPS-S",
+    "alias": ["capital salud", "eps capital salud"],
+    "nit": "900298372",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "SAVIA SALUD EPS",
+    "alias": ["savia salud", "savia", "eps savia"],
+    "nit": "900604350",
+    "correo_notificacion": "notificacionestutelas@saviasaludeps.com",
+    "correo_notificacion_alterno": ["notificacionesjudiciales@saviasaludeps.com"],
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "EMSSANAR E.S.S.",
+    "alias": ["emssanar", "eps emssanar"],
+    "nit": "901021565",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "ASMET SALUD",
+    "alias": ["asmet", "asmet salud"],
+    "nit": "900935126",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "EPS FAMILIAR DE COLOMBIA",
+    "alias": ["familiar", "eps familiar", "familiar de colombia"],
+    "nit": "901543761",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "COMFACHOCO",
+    "alias": ["comfachoco"],
+    "nit": "891600091",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "COMFAORIENTE",
+    "alias": ["comfaoriente"],
+    "nit": "890500675",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "CAPRESOCA EPS",
+    "alias": ["capresoca", "eps capresoca"],
+    "nit": "891856000",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "CAJACOPI ATLANTICO",
+    "alias": ["cajacopi", "cajacopi atlantico"],
+    "nit": "890102044",
+    "correo_notificacion": null,
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "DUSAKAWI EPSI",
+    "alias": ["dusakawi", "epsi dusakawi"],
+    "nit": "824001398",
+    "correo_notificacion": null,
+    "regimen": "indigena"
+  },
+  {
+    "nombre": "ASOCIACION INDIGENA DEL CAUCA EPSI",
+    "alias": ["asociacion indigena del cauca", "epsi cauca", "aico"],
+    "nit": "817001773",
+    "correo_notificacion": null,
+    "regimen": "indigena"
+  },
+  {
+    "nombre": "ANAS WAYUU EPSI",
+    "alias": ["anas wayuu", "epsi anas wayuu"],
+    "nit": "839000495",
+    "correo_notificacion": null,
+    "regimen": "indigena"
+  },
+  {
+    "nombre": "MALLAMAS EPSI",
+    "alias": ["mallamas", "epsi mallamas"],
+    "nit": "837000084",
+    "correo_notificacion": null,
+    "regimen": "indigena"
+  },
+  {
+    "nombre": "PIJAOS SALUD EPSI",
+    "alias": ["pijaos", "pijaos salud", "epsi pijaos"],
+    "nit": "809008362",
+    "correo_notificacion": null,
+    "regimen": "indigena"
+  }
+]

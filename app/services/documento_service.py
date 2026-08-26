@@ -95,6 +95,7 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     email = datos.get("accionante_email", "__________")
     accionado = datos.get("accionado", "___________")
     accionado_tipo = datos.get("accionado_tipo", "")
+    accionado_nit = datos.get("accionado_nit", "")
     accionado_email = datos.get("accionado_email", "")
     departamento = datos.get("departamento", "")
 
@@ -140,6 +141,10 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     pdf.body_text(f"Nombre: {accionado}")
     if accionado_tipo:
         pdf.body_text(f"Tipo: {accionado_tipo}")
+    if accionado_nit and accionado_nit != "desconocido":
+        pdf.body_text(f"NIT: {accionado_nit}")
+    if accionado_email and accionado_email != "desconocido":
+        pdf.body_text(f"Email notificación: {accionado_email}")
 
     # III. Hechos (usar solo los hechos del caso, NO el texto completo de la tutela)
     pdf.section_title("III. HECHOS")

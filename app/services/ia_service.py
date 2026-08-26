@@ -33,6 +33,40 @@ def _get_client() -> AsyncOpenAI | None:
     return AsyncOpenAI(**kwargs)
 
 
+# ---------------------------------------------------------------------------
+# Base de datos de EPS para auto-completar NIT y correo de notificación
+# ---------------------------------------------------------------------------
+_EPS_DB: list[dict] | None = None
+
+
+def _cargar_eps_db() -> list[dict]:
+    global _EPS_DB
+    if _EPS_DB is None:
+        try:
+            ruta = Path(__file__).parent.parent / "data" / "eps_notificaciones.json"
+            with open(ruta, encoding="utf-8") as f:
+                _EPS_DB = json.load(f)
+        except Exception:  # noqa: BLE001
+            _EPS_DB = []
+    return _EPS_DB
+
+
+def buscar_eps(nombre: str) -> dict | None:
+    """Busca una EPS por nombre y retorna {nit, correo_notificacion} o None."""
+    if not nombre:
+        return None
+    normalizado = nombre.lower().strip()
+    for eps in _cargar_eps_db():
+        for alias in eps.get("alias", []):
+            if alias in normalizado or normalizado in alias:
+                return {
+                    "nombre": eps["nombre"],
+                    "nit": eps.get("nit", ""),
+                    "correo_notificacion": eps.get("correo_notificacion", ""),
+                }
+    return None
+
+
 CAMPOS_TUTELA = [
     "tipo", "accionante_nombre", "accionante_tipo_doc", "accionante_cedula",
     "accionante_telefono", "accionante_email", "ciudad", "departamento",
@@ -75,8 +109,8 @@ I. ENCABEZADO: dirigido al juez competente (reparto), ciudad completa y
    fecha en español (día, mes en letras, año — nunca mezclar idiomas).
 II. ACCIONANTE: nombres completos, cédula, dirección, teléfono, correo —
     solo con los datos que el usuario proporcionó.
-III. ACCIONADO: solo el nombre o razón social y el tipo (natural o jurídica).
-    No incluir NIT, correo electrónico ni dirección en el documento.
+III. ACCIONADO: nombre o razón social + tipo (natural o jurídica) + NIT + correo
+    electrónico de notificación.
 IV. HECHOS: narración cronológica, numerada, clara y verificable. Usa
     ÚNICAMENTE los hechos que el usuario relató. Si falta una fecha, un
     nombre o un dato clave, usa un marcador explícito como
@@ -282,6 +316,17 @@ async def generar_tutela(datos: dict) -> str | None:
     ciudad = datos.get("ciudad", "la ciudad")
     genero = datos.get("genero", "masculino")
 
+    # Auto-completar NIT y email del accionado desde la base de datos de EPS
+    accionado_nit = datos.get("accionado_nit", "")
+    accionado_email = datos.get("accionado_email", "")
+    if not accionado_nit or not accionado_email:
+        eps_info = buscar_eps(accionado)
+        if eps_info:
+            if not accionado_nit:
+                accionado_nit = eps_info["nit"]
+            if not accionado_email:
+                accionado_email = eps_info["correo_notificacion"] or ""
+
     prompt = (
         f"Redacta una acción de tutela formal en formato legal colombiano.\n\n"
         f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes)\n\n"
@@ -294,13 +339,15 @@ async def generar_tutela(datos: dict) -> str | None:
         f"Ciudad: {ciudad}, {datos.get('departamento', '')}\n\n"
         f"ACCIONADO:\n"
         f"Nombre/Razón Social: {accionado}\n"
-        f"Tipo: {datos.get('accionado_tipo', 'jurídica')}\n\n"
+        f"Tipo: {datos.get('accionado_tipo', 'jurídica')}\n"
+        f"NIT: {accionado_nit or '[FALTA: NIT de la entidad]'}\n"
+        f"Email notificación: {accionado_email or '[FALTA: correo de notificación del accionado]'}\n\n"
         f"HECHOS:\n{datos.get('hechos', '')}\n\n"
         f"DERECHOS VULNERADOS: {', '.join(datos.get('derechos_vulnerados', []))}\n\n"
         f"PETICIÓN:\n{datos.get('peticion', '')}\n\n"
         "INSTRUCCIONES CRÍTICAS:\n"
         "- En la sección II (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
-        "- En la sección III (ACCIONADO) solo nombre o razón social y tipo. No incluir NIT ni email.\n"
+        "- En la sección III (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"
         "- En la sección IX (PRUEBAS) usa un párrafo genérico tipo 'Se adjuntan los soportes de la solicitud...'. No listar archivos.\n"
         "- Si falta algún dato usa el marcador [FALTA: descripción del dato].\n"
     )
