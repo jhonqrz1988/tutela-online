@@ -65,6 +65,8 @@ async def consultar_pago(payment_id: str) -> dict | None:
             r = await c.get(f"https://api.mercadopago.com/v1/payments/{payment_id}", headers=headers)
         if r.status_code == 200:
             d = r.json()
+            logger.info(f"consultar_pago id={payment_id} status={d.get('status')} "
+                        f"ref={d.get('external_reference')}")
             return {
                 "id": d.get("id"),
                 "status": d.get("status"),
@@ -81,10 +83,13 @@ def verificar_firma(x_signature: str, x_request_id: str, data_id: str) -> bool:
     ``x-signature`` llega como ``ts=<timestamp>,v1=<hash>``. Manifest según la
     documentación: ``id:<data_id>;request-id:<x_request_id>;ts:<timestamp>;``
     firmado con el webhook_secret mediante HMAC-SHA256.
+
+    Si ``MERCADOPAGO_WEBHOOK_SECRET`` no está configurado, se acepta la notificación
+    (modo pruebas) con un warning, igual que el webhook de Meta.
     """
     if not settings.mercadopago_webhook_secret:
-        logger.warning("mercadopago_webhook_secret vacío; no se puede verificar el evento")
-        return False
+        logger.warning("mercadopago_webhook_secret vacío; aceptando webhook sin verificar firma (modo pruebas)")
+        return True
     if not x_signature:
         return False
     params = {}

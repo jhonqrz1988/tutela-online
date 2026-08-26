@@ -110,6 +110,8 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
     """
     x_signature = request.headers.get("x-signature", "")
     x_request_id = request.headers.get("x-request-id", "")
+    logger.info(f"Webhook MP recibido — tipo={request.headers.get('x-type','?')} "
+                f"x-request-id={x_request_id} signature_presente={bool(x_signature)}")
 
     try:
         evento = await request.json()
@@ -126,6 +128,7 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
         logger.error(f"Webhook Mercado Pago rechazado: firma inválida ({payment_id})")
         return {"ok": False}
 
+    logger.info(f"Webhook MP pago={payment_id} — consultando estado...")
     txn = await consultar_pago(payment_id)
     if not txn or txn.get("status") != "approved":
         return {"ok": True}
