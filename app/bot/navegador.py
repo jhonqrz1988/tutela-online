@@ -301,29 +301,29 @@ class RadicadorBot:
                 logger.warning(f"No se pudo seleccionar derecho: {derecho}")
                 continue
 
-            # Medida provisional
             if datos.get("medida_provisional") == "si":
-                await self.page.click("#RdbSiMedida")
+                await self._js_click("#RdbSiMedida")
             else:
-                await self.page.click("#RdbNoMedida")
+                await self._js_click("#RdbNoMedida")
 
-            await self.page.click("#btnAdd")
+            await self._cerrar_jconfirm()
+            await self._js_click("#btnAdd")
             await self.page.wait_for_timeout(1000)
 
     async def _paso_archivos(self, ruta_pdf: str):
-        """Paso 7: Subir PDF de la tutela."""
+        """Paso 7: Subir PDF de la tutela como prueba."""
         if not ruta_pdf:
             return
 
         try:
-            # Seleccionar tipo archivo "Tutela"
-            await self._seleccionar_select("#DDlTipoArchivo", "Tutela")
+            await self._seleccionar_select("#DDlTipoArchivo", "PRUEBA")
             await self.page.wait_for_timeout(500)
 
             await self.page.set_input_files("#ArchivoFile0", ruta_pdf)
             await self.page.wait_for_timeout(1000)
 
-            await self.page.click("#btnAddfile")
+            await self._cerrar_jconfirm()
+            await self._js_click("#btnAddfile")
             await self.page.wait_for_timeout(2000)
         except Exception as e:
             logger.error(f"Error subiendo PDF: {e}")
@@ -455,7 +455,8 @@ class RadicadorBot:
             return {"path": ruta, "num_radicado": num}
 
         try:
-            await self.page.click("#enviar")
+            await self._cerrar_jconfirm()
+            await self._js_click("#enviar")
             await self.page.wait_for_timeout(5000)
 
             # Descargar constancia
