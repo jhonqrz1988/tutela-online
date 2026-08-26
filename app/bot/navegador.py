@@ -115,13 +115,43 @@ class RadicadorBot:
             logger.warning(f"Timeout esperando opciones en {selector}")
 
     async def _seleccionar_select(self, selector: str, label: str):
-        """Selecciona un option por texto visible en un select, manejando AJAX."""
+        """Selecciona un option por texto visible en un select, manejando AJAX y mayúsculas.
+
+        Busca primero por JS case-insensitive + alias para evitar timeouts de select_option.
+        """
         await self._esperar_select_ajax(selector)
-        try:
-            await self.page.select_option(selector, label=label)
-        except Exception:
-            logger.warning(f"No se pudo seleccionar '{label}' en {selector}, intentando por valor")
-            await self.page.select_option(selector, label=label, timeout=5000)
+
+        # Buscar el value por JS (case-insensitive / parcial / alias)
+        match_value = await self.page.evaluate(
+            """([sel, lbl]) => {
+                const ALIASES = {
+                    'cc': 'cédula de ciudadanía',
+                    'ce': 'cédula de extranjería',
+                    'ti': 'tarjeta de identidad',
+                    'pa': 'pasaporte',
+                    'pep': 'permiso especial de permanencia',
+                };
+                const s = document.querySelector(sel);
+                if (!s) return null;
+                const lower = lbl.toLowerCase().trim();
+                const expanded = ALIASES[lower] || lower;
+                for (const opt of s.options) {
+                    const txt = opt.text.trim().toLowerCase();
+                    if (txt === expanded || txt === lower ||
+                        txt.includes(expanded) || expanded.includes(txt) ||
+                        txt.includes(lower) || lower.includes(txt)) {
+                        return opt.value;
+                    }
+                }
+                return null;
+            }""",
+            [selector, label],
+        )
+
+        if match_value is not None:
+            await self.page.select_option(selector, value=match_value)
+        else:
+            logger.warning(f"No se encontró '{label}' en {selector}")
 
     async def _type(self, selector: str, texto: str):
         """Escribe texto carácter por carácter (evita restricción de paste)."""
@@ -131,6 +161,28 @@ class RadicadorBot:
         """Escribe en un campo que puede ya tener contenido (limpia primero)."""
         await self.page.fill(selector, "")
         await self.page.type(selector, texto or "", delay=TYPE_DELAY)
+
+    async def _cerrar_jconfirm(self):
+        """Cierra cualquier modal jconfirm abierto."""
+        try:
+            await self.page.evaluate("""
+                () => {
+                    const modals = document.querySelectorAll('.jconfirm');
+                    modals.forEach(m => {
+                        const btn = m.querySelector('.btn');
+                        if (btn) btn.click();
+                        else m.remove();
+                    });
+                }
+            """)
+            await self.page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+    async def _js_click(self, selector: str):
+        """Click via JS, ignora overlays tipo jconfirm."""
+        await self.page.evaluate(f"document.querySelector('{selector}')?.click()")
+        await self.page.wait_for_timeout(500)
 
     async def _modal_aceptar_terminos(self):
         """Paso 0: Aceptar modal de términos si aparece."""
@@ -201,7 +253,7 @@ class RadicadorBot:
 
         # Tipo discapacidad
         try:
-            await self._seleccionar_select("#DDlTipodiscapacidad", "Sin discapacidad")
+            await self._seleccionar_select("#DDlTipodiscapacidad", "No Aplica")
         except Exception:
             logger.warning("No se pudo seleccionar tipo discapacidad")
 
@@ -210,7 +262,8 @@ class RadicadorBot:
         await self._type("#Email", email)
 
         # Click validar correo — activa verificación
-        await self.page.click("#btnValidar")
+        await self._cerrar_jconfirm()
+        await self._js_click("#btnValidar")
         await self.page.wait_for_timeout(1000)
 
         return True  # requiere código de email
@@ -233,7 +286,8 @@ class RadicadorBot:
             await self._type("#PrimerNombreAcc", nombre["primer_nombre"])
             await self._type("#PrimerApellidoAcc", nombre["primer_apellido"])
 
-        await self.page.click("#btnAddAccionado")
+        await self._cerrar_jconfirm()
+        await self._js_click("#btnAddAccionado")
         await self.page.wait_for_timeout(1000)
 
     async def _paso_derechos(self, datos: dict):
