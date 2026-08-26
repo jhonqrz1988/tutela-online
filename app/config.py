@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     simulate_bot: bool = True
     enable_scheduler: bool = False  # radicación automática nocturna (bot) — desactivada
 
+    twocaptcha_api_key: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

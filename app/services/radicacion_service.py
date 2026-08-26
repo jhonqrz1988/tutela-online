@@ -3,23 +3,36 @@ import logging
 
 from sqlalchemy import select
 
+from app.bot.navegador import RadicadorBot
 from app.database import SessionLocal
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
+from app.services.whatsapp_service import enviar_texto, enviar_imagen
 
 logger = logging.getLogger(__name__)
+
+# Instancia global del bot (se reutiliza entre llamadas)
+_bot: RadicadorBot | None = None
+
+
+def _get_bot() -> RadicadorBot:
+    global _bot
+    if _bot is None:
+        _bot = RadicadorBot()
+    return _bot
 
 
 async def iniciar_radicacion(
     tutela_id: int,
     token_usuario: str | None = None,
 ) -> dict:
-    """
-    Inicia la radicacion MANUAL.
+    """Inicia la radicación de una tutela en el portal de Rama Judicial.
 
-    Con radicacion manual, esta funcion solo marca la tutela como
-    'pendiente_radicacion' y devuelve informacion para que el equipo
-    admin la radique en el portal de la Rama Judicial.
+    Flujo:
+    1. Abre Playwright → navega al portal
+    2. Llena el formulario (pasos 1-4)
+    3. Si el portal pide código de email → pausa, envía WhatsApp al usuario
+    4. Retorna estado pendiente para que el webhook espere el código
     """
     session = SessionLocal()
     try:
@@ -29,49 +42,197 @@ async def iniciar_radicacion(
         if not tutela:
             return {"ok": False, "error": "Tutela no encontrada"}
 
-        # Si ya estaba en estado de reintento, mantener; si no, poner pendiente
-        if tutela.estado not in ("pendiente_radicacion", "fallida"):
-            tutela.estado = "pendiente_radicacion"
-            session.commit()
+        # Verificar horario hábil
+        from datetime import datetime
+        ahora = datetime.now()
+        hora = ahora.hour
+        if not (8 <= hora < 12 or 14 <= hora < 16):
+            return {"ok": False, "error": "Fuera de horario hábil (8am-12pm, 2pm-4pm)"}
 
         datos = json.loads(tutela.datos_json or "{}")
 
-        # Crear/actualizar registro de radicacion
+        # Crear/actualizar registro de radicación
         rad = session.execute(
             select(Radicacion).where(Radicacion.tutela_id == tutela_id)
         ).scalar_one_or_none()
         if not rad:
-            rad = Radicacion(tutela_id=tutela.id, estado="pendiente_radicacion")
+            rad = Radicacion(tutela_id=tutela.id, estado="iniciando")
             session.add(rad)
         else:
-            rad.estado = "pendiente_radicacion"
+            rad.estado = "iniciando"
         session.commit()
 
-        # Preparar datos para radicacion manual
-        dr = {
-            "tipo_tutela": datos.get("tipo", "salud"),
-            "ciudad": datos.get("ciudad", ""),
-            "accionante_nombre": datos.get("accionante_nombre", ""),
-            "accionante_cedula": datos.get("accionante_cedula", ""),
-            "accionante_telefono": datos.get("accionante_telefono", ""),
-            "accionante_email": datos.get("accionante_email", ""),
-            "accionado": datos.get("accionado", ""),
-            "derechos": ", ".join(datos.get("derechos_vulnerados", [])),
-            "pdf_path": tutela.pdf_path,
-        }
+        bot = _get_bot()
 
-        logger.info(f"Radicacion manual pendiente para tutela {tutela_id}")
+        # Paso 1: Iniciar navegador y navegar al portal
+        await bot.iniciar()
+        await bot.navegar_portal()
 
-        return {
-            "ok": True,
-            "manual": True,
-            "message": "Radicacion manual pendiente. El equipo admin debe radicar en el portal y registrar el numero via /admin.",
-            "datos_para_radicar": dr,
-            "radicacion_id": rad.id,
-        }
+        # Paso 2: Llenar formulario (pasos 1-4, hasta verificación email)
+        resultado = await bot.llenar_formulario(datos)
+
+        if not resultado.get("ok"):
+            rad.estado = "fallida"
+            rad.ultimo_error = resultado.get("error", "Error desconocido en llenado")
+            session.commit()
+            await bot.cerrar()
+            return {"ok": False, "error": resultado.get("error")}
+
+        # Si requiere código de email → pausar y notificar al usuario
+        if resultado.get("requiere_codigo_email"):
+            rad.estado = "esperando_codigo_email"
+            session.commit()
+
+            # Guardar referencia al bot en la BD (para retomar después)
+            datos["radicacion_bot_active"] = True
+            tutela.datos_json = json.dumps(datos)
+            session.commit()
+
+            # Enviar WhatsApp al usuario
+            if tutela.user and tutela.user.telefono:
+                email = datos.get("accionante_email", "")
+                enviar_texto(
+                    tutela.user.telefono,
+                    f"📧 Se envió un código de verificación a tu correo *{email}*.\n\n"
+                    "Revisa tu bandeja de entrada (o spam) y envíame el código "
+                    "por aquí para continuar con la radicación."
+                )
+
+            logger.info(f"Radicación tutela {tutela_id}: esperando código de email")
+            return {"ok": True, "esperando_codigo": True, "radicacion_id": rad.id}
+
+        # Si no requiere código → continuar con pasos 5-10
+        await _completar_radicacion(bot, tutela, datos, rad, session)
+
+        return {"ok": True, "completado": True}
 
     except Exception as e:
-        logger.error(f"Error preparando radicacion manual tutela {tutela_id}: {e}")
+        logger.error(f"Error iniciando radicación tutela {tutela_id}: {e}")
+        try:
+            rad = session.execute(
+                select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+            ).scalar_one_or_none()
+            if rad:
+                rad.estado = "fallida"
+                rad.ultimo_error = str(e)[:500]
+                session.commit()
+        except Exception:
+            pass
         return {"ok": False, "error": str(e)}
     finally:
         session.close()
+
+
+async def continuar_radicacion_con_codigo(tutela_id: int, codigo: str) -> dict:
+    """Retoma la radicación después de recibir el código de verificación de email.
+
+    Llamado por webhook_whatsapp.py cuando el usuario envía el código.
+    """
+    session = SessionLocal()
+    try:
+        tutela = session.execute(
+            select(Tutela).where(Tutela.id == tutela_id)
+        ).scalar_one_or_none()
+        if not tutela:
+            return {"ok": False, "error": "Tutela no encontrada"}
+
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+        ).scalar_one_or_none()
+        if not rad or rad.estado != "esperando_codigo_email":
+            return {"ok": False, "error": "Esta tutela no está esperando código de email"}
+
+        datos = json.loads(tutela.datos_json or "{}")
+        bot = _get_bot()
+
+        # Ingresar código de verificación
+        await bot.ingresar_codigo_email(codigo)
+        logger.info(f"Código de email ingresado para tutela {tutela_id}")
+
+        # Completar pasos restantes (5-10)
+        await _completar_radicacion(bot, tutela, datos, rad, session)
+
+        return {"ok": True}
+
+    except Exception as e:
+        logger.error(f"Error continuando radicación tutela {tutela_id}: {e}")
+        try:
+            rad = session.execute(
+                select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+            ).scalar_one_or_none()
+            if rad:
+                rad.estado = "fallida"
+                rad.ultimo_error = str(e)[:500]
+                session.commit()
+        except Exception:
+            pass
+        return {"ok": False, "error": str(e)}
+    finally:
+        session.close()
+
+
+async def _completar_radicacion(bot, tutela, datos, rad, session):
+    """Completa los pasos 5-10 de la radicación y notifica al usuario."""
+    try:
+        # Pasos 5-8: accionado, derechos, archivos, juramento
+        rad.estado = "completando_formulario"
+        session.commit()
+        resultado = await bot.completar_post_codigo(datos, tutela.pdf_path)
+
+        if not resultado.get("ok"):
+            rad.estado = "fallida"
+            rad.ultimo_error = resultado.get("error", "Error completando formulario")
+            session.commit()
+            await bot.cerrar()
+            return
+
+        # Paso 10: Enviar y descargar constancia
+        rad.estado = "enviando"
+        session.commit()
+        resultado_envio = await bot.enviar_y_descargar()
+
+        if resultado_envio.get("error"):
+            rad.estado = "fallida"
+            rad.ultimo_error = resultado_envio["error"]
+            rad.intentos = (rad.intentos or 0) + 1
+            session.commit()
+            await bot.cerrar()
+            return
+
+        # Extraer número de radicado
+        num_radicado = resultado_envio.get("num_radicado", "")
+        rad.num_radicado = num_radicado
+        rad.constancia_path = resultado_envio.get("path")
+        rad.estado = "radicada"
+        rad.intentos = (rad.intentos or 0) + 1
+        session.commit()
+
+        # Screenshot de confirmación
+        screenshot_path = await bot.tomar_screenshot(f"constancia_{tutela.id}")
+
+        # Actualizar tutela
+        tutela.estado = "radicada"
+        session.commit()
+
+        # Notificar al usuario por WhatsApp
+        if tutela.user and tutela.user.telefono:
+            enviar_texto(
+                tutela.user.telefono,
+                f"✅ *¡Tu tutela fue radicada exitosamente!*\n\n"
+                f"Número de radicado: *{num_radicado}*\n\n"
+                "Tu tutela ya está en la Rama Judicial. Te enviaremos "
+                "actualizaciones sobre el caso por este chat."
+            )
+            # Enviar screenshot de la constancia
+            if screenshot_path and screenshot_path.exists():
+                enviar_imagen(tutela.user.telefono, str(screenshot_path))
+
+        logger.info(f"Radicación tutela {tutela.id} completada. Radicado: {num_radicado}")
+
+    except Exception as e:
+        logger.error(f"Error en _completar_radicacion tutela {tutela.id}: {e}")
+        rad.estado = "fallida"
+        rad.ultimo_error = str(e)[:500]
+        session.commit()
+    finally:
+        await bot.cerrar()

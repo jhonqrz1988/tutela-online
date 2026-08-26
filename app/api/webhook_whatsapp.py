@@ -265,6 +265,23 @@ async def procesar_mensaje(
 
         if tutela and tutela.estado != "completado":
             datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
+
+            # ─── CÓDIGO DE VERIFICACIÓN DE EMAIL ─────────────────────
+            if tutela.estado == "esperando_codigo_email":
+                codigo_limpio = body.strip().replace(" ", "")
+                if codigo_limpio.isdigit() and 4 <= len(codigo_limpio) <= 6:
+                    from app.services.radicacion_service import continuar_radicacion_con_codigo
+                    _r(respuestas, telefono, "⏳ *Código recibido.* Continuando con la radicación...")
+                    resultado = await continuar_radicacion_con_codigo(tutela.id, codigo_limpio)
+                    if resultado.get("ok"):
+                        _r(respuestas, telefono, "✅ *Código verificado.* Radicando tu tutela...")
+                    else:
+                        _r(respuestas, telefono, f"❌ *Error:* {resultado.get('error', 'No se pudo completar')}")
+                    return {"ok": True, "respuestas": respuestas}
+                else:
+                    _r(respuestas, telefono, "🔑 El código debe tener 4 a 6 dígitos. Revísalo en tu correo y envíamelo de nuevo.")
+                    return {"ok": True, "respuestas": respuestas}
+
             if tutela.estado == "recogiendo_datos":
                 step = datos.get("_step", 0)
                 if step < len(DATOS_PERSONALES_STEPS):
