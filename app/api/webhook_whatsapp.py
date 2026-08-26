@@ -887,4 +887,6 @@ DATOS_PERSONALES_STEPS = [
     ("accionante_telefono", "📱 Teléfono celular:"),
     ("accionante_email", "📧 Correo electrónico (para notificaciones del juzgado):"),
     ("ciudad", "🏙️ ¿En qué ciudad vives?:"),
+    ("accionante_direccion", "📍 Dirección de residencia completa (calle, número, barrio, ciudad):"),
+    ("departamento", "🗺️ Departamento (ej: Cundinamarca, Antioquia):"),
 ]

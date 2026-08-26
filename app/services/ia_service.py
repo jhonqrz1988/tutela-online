@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 
 import aiofiles
 import httpx
@@ -96,9 +97,12 @@ VIII. PRETENSIONES: numeradas (PRIMERO, SEGUNDO...), concretas y
       ejecutables. Si el accionante ya pagó de su bolsillo algo que
       debía cubrir la entidad, incluye una pretensión de reintegro de
       esos gastos.
-IX. PRUEBAS: lista solo lo que el usuario haya mencionado tener (fórmula
-    médica, respuesta de la entidad, comprobantes de pago, capturas de
-    pantalla). Si no mencionó pruebas, usa [FALTA: pruebas documentales].
+IX. PRUEBAS: lista CADA PRUEBA por su nombre de archivo y contenido específico
+    (ej: "Foto del recibo de pago del servicio de $50.000", "Respuesta de
+    la EPS con fecha 10/01/2026 negando la cita"). Si el usuario proporcionó
+    pruebas en la sección PRUEBAS ADJUNTAS del contexto, copia los nombres
+    y descripciones exactas. Si no hay pruebas, escribe [FALTA: pruebas
+    documentales].
 X. JURAMENTO: "Manifiesto bajo la gravedad de juramento que no he
    interpuesto otra acción de tutela por los mismos hechos y derechos"
    (Art. 37, Decreto 2591 de 1991).
@@ -279,6 +283,16 @@ async def generar_tutela(datos: dict) -> str | None:
     ciudad = datos.get("ciudad", "la ciudad")
     genero = datos.get("genero", "masculino")
 
+    # Construir listado de pruebas para que el AI las cite puntualmente
+    pruebas_paths = datos.get("pruebas_paths", [])
+    pruebas_analizadas = datos.get("pruebas_analizadas", [])
+    bloques_pruebas = []
+    for i, ruta in enumerate(pruebas_paths):
+        nombre = os.path.basename(ruta) if ruta else f"Prueba {i+1}"
+        desc = pruebas_analizadas[i] if i < len(pruebas_analizadas) else "Documento adjunto"
+        bloques_pruebas.append(f"- {nombre}: {desc}")
+    pruebas_texto = "\n".join(bloques_pruebas) if bloques_pruebas else "Ninguna adjunta aún"
+
     prompt = (
         f"Redacta una acción de tutela formal en formato legal colombiano.\n\n"
         f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes)\n\n"
@@ -287,17 +301,22 @@ async def generar_tutela(datos: dict) -> str | None:
         f"Documento: {datos.get('accionante_tipo_doc', 'CC')} {datos.get('accionante_cedula', '')}\n"
         f"Teléfono: {datos.get('accionante_telefono', '')}\n"
         f"Email: {datos.get('accionante_email', '')}\n"
+        f"Dirección: {datos.get('accionante_direccion', '[FALTA: dirección de residencia]')}\n"
         f"Ciudad: {ciudad}, {datos.get('departamento', '')}\n\n"
         f"ACCIONADO:\n"
-        f"Nombre: {accionado}\n"
+        f"Nombre/Razón Social: {accionado}\n"
         f"Tipo: {datos.get('accionado_tipo', 'jurídica')}\n"
-        f"NIT: {datos.get('accionado_nit', '')}\n"
-        f"Email notificación: {datos.get('accionado_email', '')}\n\n"
+        f"NIT: {datos.get('accionado_nit', '[FALTA: NIT de la entidad]')}\n"
+        f"Email notificación: {datos.get('accionado_email', '[FALTA: correo de notificación del accionado]')}\n\n"
         f"HECHOS:\n{datos.get('hechos', '')}\n\n"
         f"DERECHOS VULNERADOS: {', '.join(datos.get('derechos_vulnerados', []))}\n\n"
         f"PETICIÓN:\n{datos.get('peticion', '')}\n\n"
-        "Recuerda: si falta algún dato (fecha, dirección, NIT, correo), usa el "
-        "marcador [FALTA: descripción del dato] en lugar de inventarlo."
+        f"PRUEBAS ADJUNTAS (relaciona CADA UNA por nombre y contenido en la sección IX):\n{pruebas_texto}\n\n"
+        "INSTRUCCIONES CRÍTICAS:\n"
+        "- En la sección II (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
+        "- En la sección III (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"
+        "- En la sección IX (PRUEBAS) relacionalas UNA POR UNA con su nombre de archivo y descripción.\n"
+        "- Si falta algún dato usa el marcador [FALTA: descripción del dato].\n"
     )
 
     resp = await client.chat.completions.create(
