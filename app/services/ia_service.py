@@ -2,7 +2,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 
 import aiofiles
 import httpx
@@ -76,7 +75,8 @@ I. ENCABEZADO: dirigido al juez competente (reparto), ciudad completa y
    fecha en español (día, mes en letras, año — nunca mezclar idiomas).
 II. ACCIONANTE: nombres completos, cédula, dirección, teléfono, correo —
     solo con los datos que el usuario proporcionó.
-III. ACCIONADO: entidad o persona, con los datos disponibles.
+III. ACCIONADO: solo el nombre o razón social y el tipo (natural o jurídica).
+    No incluir NIT, correo electrónico ni dirección en el documento.
 IV. HECHOS: narración cronológica, numerada, clara y verificable. Usa
     ÚNICAMENTE los hechos que el usuario relató. Si falta una fecha, un
     nombre o un dato clave, usa un marcador explícito como
@@ -97,12 +97,11 @@ VIII. PRETENSIONES: numeradas (PRIMERO, SEGUNDO...), concretas y
       ejecutables. Si el accionante ya pagó de su bolsillo algo que
       debía cubrir la entidad, incluye una pretensión de reintegro de
       esos gastos.
-IX. PRUEBAS: lista CADA PRUEBA por su nombre de archivo y contenido específico
-    (ej: "Foto del recibo de pago del servicio de $50.000", "Respuesta de
-    la EPS con fecha 10/01/2026 negando la cita"). Si el usuario proporcionó
-    pruebas en la sección PRUEBAS ADJUNTAS del contexto, copia los nombres
-    y descripciones exactas. Si no hay pruebas, escribe [FALTA: pruebas
-    documentales].
+IX. PRUEBAS: redacta un párrafo genérico tipo "Se adjuntan los soportes de
+    la solicitud, que incluyen evidencia documental de los hechos narrados y
+    las respuestas de la entidad accionada." No listar nombres de archivo ni
+    describir contenido específico de cada prueba. Si no hay pruebas, escribe
+    [FALTA: pruebas documentales].
 X. JURAMENTO: "Manifiesto bajo la gravedad de juramento que no he
    interpuesto otra acción de tutela por los mismos hechos y derechos"
    (Art. 37, Decreto 2591 de 1991).
@@ -283,16 +282,6 @@ async def generar_tutela(datos: dict) -> str | None:
     ciudad = datos.get("ciudad", "la ciudad")
     genero = datos.get("genero", "masculino")
 
-    # Construir listado de pruebas para que el AI las cite puntualmente
-    pruebas_paths = datos.get("pruebas_paths", [])
-    pruebas_analizadas = datos.get("pruebas_analizadas", [])
-    bloques_pruebas = []
-    for i, ruta in enumerate(pruebas_paths):
-        nombre = os.path.basename(ruta) if ruta else f"Prueba {i+1}"
-        desc = pruebas_analizadas[i] if i < len(pruebas_analizadas) else "Documento adjunto"
-        bloques_pruebas.append(f"- {nombre}: {desc}")
-    pruebas_texto = "\n".join(bloques_pruebas) if bloques_pruebas else "Ninguna adjunta aún"
-
     prompt = (
         f"Redacta una acción de tutela formal en formato legal colombiano.\n\n"
         f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes)\n\n"
@@ -305,17 +294,14 @@ async def generar_tutela(datos: dict) -> str | None:
         f"Ciudad: {ciudad}, {datos.get('departamento', '')}\n\n"
         f"ACCIONADO:\n"
         f"Nombre/Razón Social: {accionado}\n"
-        f"Tipo: {datos.get('accionado_tipo', 'jurídica')}\n"
-        f"NIT: {datos.get('accionado_nit', '[FALTA: NIT de la entidad]')}\n"
-        f"Email notificación: {datos.get('accionado_email', '[FALTA: correo de notificación del accionado]')}\n\n"
+        f"Tipo: {datos.get('accionado_tipo', 'jurídica')}\n\n"
         f"HECHOS:\n{datos.get('hechos', '')}\n\n"
         f"DERECHOS VULNERADOS: {', '.join(datos.get('derechos_vulnerados', []))}\n\n"
         f"PETICIÓN:\n{datos.get('peticion', '')}\n\n"
-        f"PRUEBAS ADJUNTAS (relaciona CADA UNA por nombre y contenido en la sección IX):\n{pruebas_texto}\n\n"
         "INSTRUCCIONES CRÍTICAS:\n"
         "- En la sección II (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
-        "- En la sección III (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"
-        "- En la sección IX (PRUEBAS) relacionalas UNA POR UNA con su nombre de archivo y descripción.\n"
+        "- En la sección III (ACCIONADO) solo nombre o razón social y tipo. No incluir NIT ni email.\n"
+        "- En la sección IX (PRUEBAS) usa un párrafo genérico tipo 'Se adjuntan los soportes de la solicitud...'. No listar archivos.\n"
         "- Si falta algún dato usa el marcador [FALTA: descripción del dato].\n"
     )
 
