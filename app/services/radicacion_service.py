@@ -186,6 +186,21 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
             await bot.cerrar()
             return
 
+        # Paso 9: Resolver reCAPTCHA
+        rad.estado = "resolviendo_captcha"
+        session.commit()
+        captcha_ok = await bot.resolver_recaptcha()
+
+        if not captcha_ok:
+            rad.estado = "fallida"
+            rad.ultimo_error = "No se pudo resolver el reCAPTCHA"
+            rad.intentos = (rad.intentos or 0) + 1
+            session.commit()
+            await bot.cerrar()
+            return
+
+        logger.info(f"reCAPTCHA resuelto para tutela {tutela.id}")
+
         # Paso 10: Enviar y descargar constancia
         rad.estado = "enviando"
         session.commit()

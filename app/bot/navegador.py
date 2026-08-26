@@ -353,6 +353,44 @@ class RadicadorBot:
             logger.error(f"Error en completar_post_codigo: {e}")
             return {"ok": False, "error": str(e)}
 
+    async def resolver_recaptcha(self) -> bool:
+        """Resuelve el reCAPTCHA v2 del portal usando 2Captcha.
+
+        Retorna True si se resolvió correctamente.
+        """
+        if settings.simulate_bot:
+            return True
+
+        from app.services.captcha_service import resolver_recaptcha_v2
+
+        page_url = settings.rama_judicial_url
+        token = await resolver_recaptcha_v2(page_url)
+
+        if not token:
+            logger.error("No se pudo resolver el reCAPTCHA")
+            return False
+
+        # Insertar el token en el textarea oculto de reCAPTCHA
+        try:
+            await self.page.evaluate(f"""
+                document.getElementById('g-recaptcha-response').value = '{token}';
+                // Disparar callback de reCAPTCHA si existe
+                if (typeof ___grecaptcha_cfg !== 'undefined') {{
+                    var clients = ___grecaptcha_cfg.clients;
+                    for (var key in clients) {{
+                        var client = clients[key];
+                        if (client && client.T) {{
+                            client.T(token);
+                        }}
+                    }}
+                }}
+            """)
+            logger.info("Token reCAPTCHA insertado en el formulario")
+            return True
+        except Exception as e:
+            logger.error(f"Error insertando token reCAPTCHA: {e}")
+            return False
+
     async def enviar_y_descargar(self) -> dict:
         """Paso 10: Envía el formulario y descarga la constancia."""
         if settings.simulate_bot:
