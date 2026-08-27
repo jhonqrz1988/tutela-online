@@ -1,6 +1,11 @@
-from playwright.async_api import Browser, Page, async_playwright
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, Page
 
 
 class BrowserManager:
@@ -10,6 +15,8 @@ class BrowserManager:
     async def get_browser(cls) -> Browser:
         if cls._instance and cls._instance.is_connected():
             return cls._instance
+        from playwright.async_api import async_playwright
+
         p = await async_playwright().start()
         cls._instance = await p.chromium.launch(
             headless=settings.browser_headless,
