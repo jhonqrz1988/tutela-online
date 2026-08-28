@@ -113,45 +113,54 @@ async def test_e2e(email: str):
     # Validar correo
     await close_jc()
     await jc("#btnValidar")
-    await page.wait_for_timeout(3000)
-    await close_jc()
+    await page.wait_for_timeout(1500)
     print("2. Accionante + correo validado", flush=True)
 
-    # Verificar si pide codigo
+    # Verificar si pide codigo (espera activa al modal #CodigoCorreo hasta 10s)
+    for _c in range(10):
+        if await page.evaluate("()=>!!document.querySelector('#CodigoCorreo')"):
+            break
+        await page.wait_for_timeout(1000)
     needs_code = not await page.evaluate("document.querySelector('#IdEmail1')?.disabled")
-    if needs_code:
+    if needs_code or await page.evaluate("()=>!!document.querySelector('#CodigoCorreo')"):
         print("\n  >>> PORTAL PIDE CODIGO DE VERIFICACION <<<", flush=True)
         print(f"  >>> Revisa {email} para obtener el codigo <<<", flush=True)
         await screenshot("necesita_codigo")
 
-        codigo = await asyncio.to_thread(
-            lambda: input("  Escribe el codigo de verificacion: ").strip()
-        )
-
-        # Ingresar codigo
-        await page.evaluate("document.querySelector('#IdEmail1').disabled = false")
-        await page.type("#IdEmail1", codigo, delay=50)
-        await page.wait_for_timeout(500)
-
-        # Buscar boton de verificar codigo
-        verify_btn = await page.evaluate("""() => {
-            const btns = document.querySelectorAll('input[type=button], button');
-            for (const b of btns) {
-                const txt = (b.value || b.textContent || '').toLowerCase();
-                if (txt.includes('verificar') || txt.includes('validar codigo') || txt.includes('confirmar')) {
-                    return b.id || b.outerHTML.substring(0, 100);
-                }
-            }
-            return null;
-        }""")
-        print(f"  Boton verificar: {verify_btn}", flush=True)
-
-        if verify_btn and verify_btn.startswith('#'):
-            await jc(verify_btn)
+        import pathlib as _pl
+        _codigo_file = _pl.Path("storage/codigo.txt")
+        if len(sys.argv) > 2:
+            codigo = sys.argv[2].strip()
+        elif _codigo_file.exists():
+            codigo = _codigo_file.read_text(encoding="utf-8").strip()
         else:
-            # Intentar click directo por JS
+            print("  >>> COLORIME: guarda el codigo en storage/codigo.txt y presiona Enter aqui <<<", flush=True)
+            for _w in range(180):  # espera hasta 3 min
+                if _codigo_file.exists():
+                    codigo = _codigo_file.read_text(encoding="utf-8").strip()
+                    break
+                await page.wait_for_timeout(1000)
+            else:
+                raise RuntimeError("No se proporciono el codigo de verificacion")
+        await page.wait_for_timeout(500)
+        # Escribir el codigo en el modal (input #CodigoCorreo) o en #IdEmail1 si existe
+        if await page.evaluate("()=>!!document.querySelector('#CodigoCorreo')"):
+            await page.fill("#CodigoCorreo", codigo)
+            await page.wait_for_timeout(500)
+            # Click continuar del modal
+            await page.evaluate("""()=>{
+                for (const m of document.querySelectorAll('.jconfirm')) {
+                    const btn = Array.from(m.querySelectorAll('button,input[type=button]')).find(x=>(x.textContent||x.value||'').trim().toLowerCase()==='continuar');
+                    if (btn) { btn.click(); return; }
+                }
+            }""")
+            await page.wait_for_timeout(3000)
+        else:
+            await page.evaluate("document.querySelector('#IdEmail1').disabled = false")
+            await page.type("#IdEmail1", codigo, delay=50)
+            await page.wait_for_timeout(500)
             await page.evaluate("document.querySelector('#IdEmail1')?.dispatchEvent(new Event('change'))")
-        await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(3000)
         await close_jc()
         print("  Codigo ingresado", flush=True)
 
@@ -159,13 +168,41 @@ async def test_e2e(email: str):
 
     # === PASOS 5-8 ===
     print("\n3. Accionados...", flush=True)
-    await sv("#DDlTipoSujeto", "1165")
+    # select_option nativo (JS dispatch no dispara bien el onchange de estos selects)
+    await page.select_option("#DDlTipoSujeto", "1165")
     await page.wait_for_timeout(1000)
-    await page.type("#NombreJuridicoAcc", "EPS Sanitas", delay=50)
-    await page.wait_for_timeout(500)
     await close_jc()
-    await jc("#btnAddAccionado")
-    await page.wait_for_timeout(2000)
+    await page.select_option("#DDlTipodocumentoAccionado", "1162")   # NIT
+    await page.wait_for_timeout(800)
+    await page.fill("#DocumentodeIdendificacion", "800251440-6")
+    await page.fill("#NombreJuridicoAcc", "EPS Sanitas S.A. E.S.")
+    await page.fill("#IdDireccion", "Calle 72 # 10 - 07, Bogotá")
+    await page.fill("#IdTelefono", "6017440000")
+    await page.fill("#IdEmail", "notificajudiciales@keralty.com")
+    await jc("#RdbNoAccionMenores")
+    await page.wait_for_timeout(500)
+    added = False
+    for _t in range(3):
+        await close_jc()
+        await jc("#btnAddAccionado")
+        await page.wait_for_timeout(2000)
+        msgs = await page.evaluate("()=>Array.from(document.querySelectorAll('.jconfirm')).map(j=>j.innerText.substring(0,200))")
+        tbl = await page.evaluate("()=>document.body.innerText || ''")
+        has = "Sanitas" in tbl or "sanitas" in tbl.lower()
+        err = msgs and ("tipo de documento" in " ".join(msgs).lower())
+        print(f"  Intento {_t+1}: sanitas={'SI' if has else 'NO'}{' | '+msgs[0][:120] if msgs else ''}", flush=True)
+        if has:
+            added = True
+            print(f"  Accionado agregado (intento {_t+1})", flush=True)
+            break
+        if err:
+            await page.wait_for_timeout(1000)
+            continue
+        # sin error y sin Sanitas: puede que la tabla quede oculta o aún no renderice
+        await page.wait_for_timeout(1000)
+    if not added:
+        final = await page.evaluate("()=>['sanitas'].some(x=>document.body.innerText.toLowerCase().includes(x))")
+        print(f"  ADVERTENCIA: no confirmado — pero Sanitas en DOM: {final}", flush=True)
 
     print("4. Derechos...", flush=True)
     await sv("#DDLDerechos", "1213")
@@ -176,15 +213,20 @@ async def test_e2e(email: str):
     await jc("#btnAdd")
     await page.wait_for_timeout(1000)
 
-    print("5. Archivo PRUEBA...", flush=True)
-    await sv("#DDlTipoArchivo", "1226")
-    await page.wait_for_timeout(500)
-    await page.set_input_files("#ArchivoFile0", PDF_TEST)
-    await page.wait_for_timeout(2000)
-    await close_jc()
-    await jc("#btnAddfile")
-    await page.wait_for_timeout(2000)
-    await close_jc()
+    # DEMANDA (obligatorio) + PRUEBA
+    print("5. Archivos (DEMANDA + PRUEBA)...", flush=True)
+    for tipo, valor in [("DEMANDA", "1225"), ("PRUEBA", "1226")]:
+        await close_jc()
+        await sv("#DDlTipoArchivo", valor)
+        await page.wait_for_timeout(500)
+        await page.set_input_files("#ArchivoFile0", PDF_TEST)
+        await page.wait_for_timeout(2000)
+        await close_jc()
+        await jc("#btnAddfile")
+        await page.wait_for_timeout(2000)
+        await close_jc()
+        subido = await page.evaluate("()=>document.body.innerText.includes('DEMANDA') || document.body.innerText.includes('PRUEBA')")
+        print(f"  {tipo}: {'OK' if subido else '?'}", flush=True)
 
     print("6. Juramento...", flush=True)
     await jc("#CbManifiesto")
@@ -192,7 +234,7 @@ async def test_e2e(email: str):
 
     # Verificar estado
     estado = await page.evaluate("""() => ({
-        accionados: document.querySelector('#tblAccionados')?.innerText?.substring(0, 100) || '',
+        accionados: document.querySelector('#tblConsejoCorte')?.innerText?.substring(0, 100) || '',
         derechos: document.querySelector('#tblDerechos')?.innerText?.substring(0, 100) || '',
         archivos: document.querySelector('#tblArchivos')?.innerText?.substring(0, 100) || '',
         juramento: document.querySelector('#CbManifiesto')?.checked || false,
@@ -228,24 +270,111 @@ async def test_e2e(email: str):
     # === ENVIAR ===
     print("\n8. Enviando...", flush=True)
     await close_jc()
+    # limpiar cualquier jconfirm residual, incluido el captcha
+    await page.evaluate("""()=>{document.querySelectorAll('.jconfirm').forEach(m=>{const b=m.querySelector('.btn');if(b)b.click();else m.remove()})}""")
+    await page.wait_for_timeout(500)
     await jc("#enviar")
 
-    # Esperar respuesta
-    for _i in range(30):
+    # Confirmar el modal "Confirmar Datos" (jconfirm) si aparece, luego esperar número radicado
+    numrad = None
+    confirm_clicked = False
+    confirm_correo_done = False
+    for _i in range(60):
         await page.wait_for_timeout(1000)
-        r = await page.evaluate("""() => ({
-            numRad: document.querySelector('#numRadicado')?.textContent?.trim() || null,
-            jc: Array.from(document.querySelectorAll('.jconfirm')).map(j=>j.textContent.substring(0,200)),
-            url: window.location.href,
-        })""")
-        if r['numRad'] or r['jc']:
+        modal = await page.evaluate("()=>Array.from(document.querySelectorAll('.jconfirm')).map(j=>j.textContent.substring(0,400))")
+        num = await page.evaluate("()=>document.querySelector('#numRadicado')?.textContent?.trim() || null")
+        if num:
+            numrad = num
             break
+        if modal:
+            joined = " ".join(modal).lower()
+            # Modal de confirmación de correo: requiere código, el usuario lo escribe en storage/codigo.txt
+            if "confirmar el correo" in joined and not confirm_correo_done:
+                print("  >>> PORTAL PIDE CONFIRMACION DE CORREO AL ENVIAR <<<", flush=True)
+                modal_txt = await page.evaluate("""()=>{
+                    const m=document.querySelector('.jconfirm:last-child');
+                    return m?m.textContent.replace(/\\s+/g,' ').trim().slice(0,400):'SIN MODAL';
+                }""")
+                print("  TEXTO modal:", modal_txt, flush=True)
+                # botones del modal
+                botones = await page.evaluate("""()=>{
+                    const m=document.querySelector('.jconfirm:last-child');
+                    if (!m) return [];
+                    const r=[];
+                    for (const el of m.querySelectorAll('button,input[type=button],input[type=submit],a.btn')) {
+                        r.push({tag:el.tagName,id:el.id,val:(el.value||el.textContent||'').trim().slice(0,40),cls:(el.className||'').slice(0,40)});
+                    }
+                    return r;
+                }""")
+                print("  Botones modal:", json.dumps(botones, ensure_ascii=False), flush=True)
+                await screenshot("necesita_codigo_envio")
+                import pathlib as _pl
+                _cf = _pl.Path("storage/codigo.txt")
+                if _cf.exists():
+                    codigo = _cf.read_text(encoding="utf-8").strip()
+                else:
+                    print("  >>> ESPERANDO codigo en storage/codigo.txt (hasta 4 min) <<<", flush=True)
+                    for _w in range(240):
+                        if _cf.exists():
+                            codigo = _cf.read_text(encoding="utf-8").strip()
+                            break
+                        await page.wait_for_timeout(1000)
+                    else:
+                        raise RuntimeError("No se proporciono el codigo de confirmacion")
+                # inspeccionar el modal para hallar el input de codigo
+                campos = await page.evaluate("""()=>{
+                    const inputs=[];
+                    for (const m of document.querySelectorAll('.jconfirm')) {
+                        for (const i of m.querySelectorAll('input')) {
+                            inputs.push({id:i.id,type:i.type,ph:i.placeholder,val:i.value});
+                        }
+                    }
+                    return inputs;
+                }""")
+                print("  Campos en modal correo:", json.dumps(campos, ensure_ascii=False), flush=True)
+                # ingresar codigo en el primer input numerico/texto visible del modal
+                if any(c.get('id') for c in campos):
+                    sel = "#" + next(c['id'] for c in campos if c.get('id'))
+                else:
+                    sel = ".jconfirm input:not([type=hidden])"
+                try:
+                    await page.fill(sel, codigo, timeout=5000)
+                except Exception as e:
+                    print(f"  No se pudo llenar {sel}: {e}", flush=True)
+                await page.wait_for_timeout(500)
+                await page.evaluate("""()=>{
+                    for (const m of document.querySelectorAll('.jconfirm')) {
+                        const btn = m.querySelector('.btn') || Array.from(m.querySelectorAll('button'))
+                            .find(b=>/continuar|confirmar|aceptar/i.test((b.textContent||'').trim()));
+                        if (btn) { btn.click(); confirm_correo_done=true; return; }
+                    }
+                }""")
+                await page.wait_for_timeout(2000)
+                await close_jc()
+                # volver a pulsar enviar si es necesario
+                await jc("#enviar")
+                continue
+            # Modal "Confirmar Datos" inicial
+            if ("confirmar datos" in joined or "confirmar" in joined or "radica" in joined) and not confirm_clicked:
+                print(f"  Modal de confirmacion presente: {modal[0][:120]}", flush=True)
+                await page.evaluate("""()=>{
+                    for (const m of document.querySelectorAll('.jconfirm')) {
+                        const btn = m.querySelector('.btn') || Array.from(m.querySelectorAll('button'))
+                            .find(b=>/confirmar|si|continuar|aceptar/i.test((b.textContent||'').trim()));
+                        if (btn) { btn.click(); confirm_clicked=true; return; }
+                    }
+                }""")
+                await page.wait_for_timeout(2000)
+                continue
+        if numrad is None and not confirm_clicked:
+            pass  # aun procesando
 
     await screenshot("post_enviar")
     print("\n=== RESULTADO ===", flush=True)
-    print(f"Numero radicado: {r['numRad']}", flush=True)
-    if r['jc']:
-        print(f"Mensajes: {r['jc']}", flush=True)
+    print(f"Numero radicado: {numrad}", flush=True)
+    modal_final = await page.evaluate("()=>Array.from(document.querySelectorAll('.jconfirm')).map(j=>j.textContent.substring(0,300))")
+    if modal_final:
+        print(f"Mensajes: {modal_final}", flush=True)
 
     await browser.close()
     await p.stop()

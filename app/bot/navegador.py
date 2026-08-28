@@ -280,15 +280,28 @@ class RadicadorBot:
         await self.page.wait_for_timeout(500)
 
         if tipo == "juridica":
+            # Para persona jurídica el portal exige tipo de documento (NIT) y número
+            await self._seleccionar_select("#DDlTipodocumentoAccionado", "NIT")
+            await self.page.wait_for_timeout(500)
+            await self._type("#DocumentodeIdendificacion", datos.get("accionado_nit", ""))
             await self._type("#NombreJuridicoAcc", datos.get("accionado", ""))
+            await self._type("#IdDireccion", datos.get("accionado_direccion", "") or "-")
+            await self._type("#IdTelefono", datos.get("accionado_telefono", "") or "-")
+            await self._type("#IdEmail", datos.get("accionado_email", ""))
         else:
             nombre = _separar_nombre(datos.get("accionado", ""))
             await self._type("#PrimerNombreAcc", nombre["primer_nombre"])
             await self._type("#PrimerApellidoAcc", nombre["primer_apellido"])
 
+        # La acción no involucra menores de edad en el caso estándar
+        try:
+            await self._js_click("#RdbNoAccionMenores")
+        except Exception:
+            logger.warning("No se pudo seleccionar 'accionado no involucra menores'")
+
         await self._cerrar_jconfirm()
         await self._js_click("#btnAddAccionado")
-        await self.page.wait_for_timeout(1000)
+        await self.page.wait_for_timeout(1500)
 
     async def _paso_derechos(self, datos: dict):
         """Paso 6: Agregar derechos vulnerados y medida provisional."""
@@ -311,22 +324,27 @@ class RadicadorBot:
             await self.page.wait_for_timeout(1000)
 
     async def _paso_archivos(self, ruta_pdf: str):
-        """Paso 7: Subir PDF de la tutela como prueba."""
+        """Paso 7: Subir el PDF de la tutela como DEMANDA (obligatorio) y como PRUEBA."""
         if not ruta_pdf:
             return
 
-        try:
-            await self._seleccionar_select("#DDlTipoArchivo", "PRUEBA")
-            await self.page.wait_for_timeout(500)
+        # El portal exige el tipo de archivo DEMANDA (obligatorio) para radicar;
+        # se sube primero DEMANDA, y el mismo PDF también como PRUEBA.
+        for tipo_label in ("DEMANDA", "PRUEBA"):
+            try:
+                await self._seleccionar_select("#DDlTipoArchivo", tipo_label)
+                await self.page.wait_for_timeout(500)
 
-            await self.page.set_input_files("#ArchivoFile0", ruta_pdf)
-            await self.page.wait_for_timeout(1000)
+                # limpiar input si quedó archivo previo
+                await self.page.evaluate("document.querySelector('#ArchivoFile0').value=''")
+                await self.page.set_input_files("#ArchivoFile0", ruta_pdf)
+                await self.page.wait_for_timeout(1500)
 
-            await self._cerrar_jconfirm()
-            await self._js_click("#btnAddfile")
-            await self.page.wait_for_timeout(2000)
-        except Exception as e:
-            logger.error(f"Error subiendo PDF: {e}")
+                await self._cerrar_jconfirm()
+                await self._js_click("#btnAddfile")
+                await self.page.wait_for_timeout(2000)
+            except Exception as e:
+                logger.error(f"Error subiendo PDF ({tipo_label}): {e}")
 
     async def _paso_juramento(self):
         """Paso 8: Marcar juramento."""
