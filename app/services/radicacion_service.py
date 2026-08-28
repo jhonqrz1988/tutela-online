@@ -97,8 +97,8 @@ async def iniciar_radicacion(
                 enviar_texto(
                     tutela.user.telefono,
                     f"📧 Se envió un código de verificación a tu correo *{email}*.\n\n"
-                    "Revisa tu bandeja de entrada (o spam) y envíame el código "
-                    "por aquí para continuar con la radicación."
+                    "Por favor revisa tu bandeja de entrada (o spam) y envíame el código "
+                    "por aquí para continuar con tu trámite."
                 )
 
             logger.info(f"Radicación tutela {tutela_id}: esperando código de email")
@@ -236,10 +236,9 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
         if tutela.user and tutela.user.telefono:
             enviar_texto(
                 tutela.user.telefono,
-                f"✅ *¡Tu tutela fue radicada exitosamente!*\n\n"
-                f"Número de radicado: *{num_radicado}*\n\n"
-                "Tu tutela ya está en la Rama Judicial. Te enviaremos "
-                "actualizaciones sobre el caso por este chat."
+                f"✅ *Tu solicitud ha sido procesada exitosamente.*\n\n"
+                f"Número de seguimiento: *{num_radicado}*\n\n"
+                "Puedes consultar las actualizaciones directamente en este chat."
             )
             # Enviar screenshot de la constancia
             if screenshot_path and screenshot_path.exists():

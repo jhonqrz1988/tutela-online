@@ -270,10 +270,9 @@ def confirmar_pago(tutela_id: int, request: Request, session=Depends(get_session
     if t.user and t.user.telefono:
         enviar_texto(
             t.user.telefono,
-            "✅ *¡Pago confirmado!*\n\n"
-            "Nuestro equipo radicará tu tutela y te enviaremos el "
-            "*número de radicado* por este chat en máximo *4 horas hábiles* "
-            "(lun-vie 8am-5pm).",
+            "✅ *¡Pago verificado!*\n\n"
+            "Nuestro equipo procederá con el procesamiento "
+            "de tu solicitud. Te notificaremos cuando esté completa.",
         )
     return {"ok": True, "estado": t.estado}
 
@@ -333,9 +332,9 @@ async def registrar_radicado_manual(
     if t.user and t.user.telefono:
         enviar_texto(
             t.user.telefono,
-            f"✅ *¡Tutela radicada!*\n\n"
-            f"N° radicado: *{num_radicado}*\n\n"
-            f"Gracias por usar nuestro servicio.",
+            f"✅ *¡Tu trámite ha sido completado!*\n\n"
+            f"Número de referencia: *{num_radicado}*\n\n"
+            f"Gracias por confiar en nosotros.",
         )
         if ruta_constancia:
             enviar_imagen(
