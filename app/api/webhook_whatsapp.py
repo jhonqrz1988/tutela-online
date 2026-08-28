@@ -643,8 +643,8 @@ async def procesar_mensaje(
             _r(respuestas, telefono,
                "✅ *¡Pago recibido!*\n\n"
                "Hemos confirmado tu pago por $29.000 COP. "
-               "Nuestro equipo procesará tu solicitud y te notificaremos "
-               "cuando esté lista.\n\n"
+               "Nuestro equipo técnico ya está trabajando en la generación y radicación "
+               "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.\n\n"
                "Gracias por confiar en nosotros.")
             tutela.estado = "pago_por_confirmar"
             session.commit()
@@ -659,8 +659,8 @@ async def procesar_mensaje(
     if tutela.estado in ("pago_por_confirmar", "pago_confirmado"):
         _r(respuestas, telefono,
            "✅ *Tu pago está en proceso.*\n\n"
-           "Nuestro equipo procesará tu solicitud y te notificaremos "
-           "cuando esté lista.")
+           "Nuestro equipo técnico ya está trabajando en la generación y radicación "
+           "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.")
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════

@@ -390,27 +390,27 @@ Los mensajes marcados con ⚠️ son **iniciados por el bot** y pueden necesitar
 
 Estos mensajes son **iniciados por el bot** y pueden enviarse **fuera de la ventana de 24h** del usuario. Meta requiere Message Templates aprobados para cada uno.
 
-### Template 1: Confirmación de Pago
+### Template 1: Confirmación de Pago Automático
 
 | Campo | Contenido |
 |-------|-----------|
-| **Nombre** | `confirmacion_pago_recibido` |
+| **Nombre** | `confirmacion_pago_tutelapp` |
 | **Categoría** | TRANSACTION_UPDATE |
 | **Idioma** | es (Español) |
-| **Body** | `✅ ¡Pago recibido! Hemos confirmado tu pago por {{1}}. Nuestro equipo procesará tu solicitud y te notificaremos cuando esté lista.` |
+| **Body** | `✅ ¡Pago recibido! Hemos confirmado tu pago por {{1}}. Nuestro equipo técnico ya está trabajando en la generación y radicación de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.` |
 | **Variables** | `{{1}}` = monto del pago (ej: "$29.000 COP") |
 
-### Template 2: Código de Verificación
+### Template 2: Solicitud de Código (Verificación de Correo)
 
 | Campo | Contenido |
 |-------|-----------|
-| **Nombre** | `codigo_verificacion` |
+| **Nombre** | `instruccion_soporte_tutelapp` |
 | **Categoría** | TRANSACTION_UPDATE |
 | **Idioma** | es (Español) |
-| **Body** | `📧 Se envió un código de verificación a tu correo {{1}}. Por favor revisa tu bandeja de entrada o carpeta de spam y envíame el código por aquí para continuar con tu trámite.` |
-| **Variables** | `{{1}}` = dirección de correo electrónico |
+| **Body** | `Hola, para que nuestro equipo pueda finalizar tu trámite, necesitamos que nos proporciones el dato que el portal oficial te envió por correo electrónico. Por favor, escríbelo aquí abajo para continuar. ¡Gracias por tu colaboración!` |
+| **Variables** | Ninguna |
 
-### Template 3: Trámite Finalizado
+### Template 3: Entrega de Radicado Automático
 
 | Campo | Contenido |
 |-------|-----------|
@@ -420,7 +420,7 @@ Estos mensajes son **iniciados por el bot** y pueden enviarse **fuera de la vent
 | **Body** | `✅ Tu solicitud ha sido procesada exitosamente. El número de seguimiento asignado es {{1}}. Puedes consultar las actualizaciones directamente en este chat.` |
 | **Variables** | `{{1}}` = número de radicado |
 
-### Template 4: Pago Verificado (Manual)
+### Template 4: Confirmación de Pago Manual
 
 | Campo | Contenido |
 |-------|-----------|
@@ -430,7 +430,7 @@ Estos mensajes son **iniciados por el bot** y pueden enviarse **fuera de la vent
 | **Body** | `✅ ¡Pago verificado! Nuestro equipo procederá con el procesamiento de tu solicitud. Te notificaremos cuando esté completa.` |
 | **Variables** | Ninguna |
 
-### Template 5: Solicitud Completada (Manual)
+### Template 5: Entrega de Radicado Manual
 
 | Campo | Contenido |
 |-------|-----------|

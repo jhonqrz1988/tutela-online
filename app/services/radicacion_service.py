@@ -93,12 +93,12 @@ async def iniciar_radicacion(
 
             # Enviar WhatsApp al usuario
             if tutela.user and tutela.user.telefono:
-                email = datos.get("accionante_email", "")
                 enviar_texto(
                     tutela.user.telefono,
-                    f"📧 Se envió un código de verificación a tu correo *{email}*.\n\n"
-                    "Por favor revisa tu bandeja de entrada (o spam) y envíame el código "
-                    "por aquí para continuar con tu trámite."
+                    "Hola, para que nuestro equipo pueda finalizar tu trámite, "
+                    "necesitamos que nos proporciones el dato que el portal oficial "
+                    "te envió por correo electrónico. Por favor, escríbelo aquí abajo "
+                    "para continuar. ¡Gracias por tu colaboración!"
                 )
 
             logger.info(f"Radicación tutela {tutela_id}: esperando código de email")

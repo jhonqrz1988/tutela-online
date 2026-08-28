@@ -162,8 +162,8 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
             enviar_texto(
                 tutela.user.telefono,
                 "✅ *¡Pago recibido!* Hemos confirmado tu pago de $29.000 COP.\n\n"
-                "Nuestro equipo procesará tu solicitud y te notificaremos "
-                "cuando esté lista.",
+                "Nuestro equipo técnico ya está trabajando en la generación y radicación "
+                "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.",
             )
     return {"ok": True}
 
