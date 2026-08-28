@@ -123,13 +123,22 @@ async def verificar_webhook_meta(request: Request):
 @router.post("/webhook/meta")
 async def webhook_meta(request: Request, session=Depends(get_session)):
     try:
+        # Leer body crudo una sola vez y parsearlo manualmente
+        raw_body = await request.body()
+        
         # Verificar firma de Meta
-        body = await request.body()
         signature = request.headers.get("X-Hub-Signature-256", "")
-        if not _verify_meta_signature(body, signature):
+        if not _verify_meta_signature(raw_body, signature):
             return {"ok": False, "error": "Invalid signature"}
         
-        data = await request.json()
+        # Parsear JSON del body crudo (no usar request.json() que relee el stream)
+        import json as _json
+        try:
+            data = _json.loads(raw_body)
+        except _json.JSONDecodeError as je:
+            logger.error(f"webhook_meta: JSON decode error: {je}. Body: {raw_body[:200]}")
+            return {"ok": True}
+        
         entry = data.get("entry", [])
         respuestas = []
         for e in entry:
