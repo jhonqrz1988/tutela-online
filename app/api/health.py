@@ -77,3 +77,29 @@ async def debug_enviar_raw():
         results["enviar_botones_error"] = str(e)
         results["traceback_botones"] = traceback.format_exc()
     return results
+
+
+@router.post("/debug/simular-webhook")
+async def debug_simular_webhook(session=Depends(get_session)):
+    """Simula exactamente lo que hace webhook_meta POST pero retorna todo el detalle"""
+    import traceback
+    from app.api.webhook_whatsapp import procesar_mensaje
+    body_text = "Hola"
+    telefono = "573106386975"
+    try:
+        logger.info(f"DEBUG-SIM: llamando procesar_mensaje para {telefono}")
+        respuesta = await procesar_mensaje(session, telefono, body_text, 0, "", False)
+        logger.info(f"DEBUG-SIM: respuesta completa: {respuesta}")
+        resp = {
+            "ok": True,
+            "respuesta_type": type(respuesta).__name__,
+            "respuesta_keys": list(respuesta.keys()) if isinstance(respuesta, dict) else None,
+            "respuesta": respuesta,
+        }
+        return resp
+    except Exception as e:
+        return {"ok": False, "error": str(e), "traceback": traceback.format_exc()}
+
+
+import logging
+logger = logging.getLogger("debug")
