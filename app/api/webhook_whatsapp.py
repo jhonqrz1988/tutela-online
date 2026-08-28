@@ -217,6 +217,11 @@ async def procesar_mensaje(
         _r(respuestas, telefono, "🗑️ *Tus datos han sido eliminados.*\n\nSi necesitas ayuda en el futuro, escribe *Hola* y empezamos de nuevo.")
         return {"ok": True, "respuestas": respuestas}
 
+    # ─── OPT-OUT (pausar mensajes) ──────────────────────────────────
+    if body in ("detener", "pausar", "no me molesten", "parar", "stop", "cancelar suscripción", "no quiero más mensajes"):
+        _r(respuestas, telefono, "⏸️ *Mensajes pausados.*\n\nSi necesitas ayuda en el futuro, escribe *Hola* para reanudar.")
+        return {"ok": True, "respuestas": respuestas}
+
     # ─── CONSENTIMIENTO ──────────────────────────────────────────────
     if user.estado == "nuevo":
         if body in ("acepto", "sí", "si", "ok", "si acepto"):
@@ -832,12 +837,12 @@ AVISO_PRIVACIDAD = (
     "🔹 *Finalidad:* Gestionar, crear y radicar tu acción de tutela "
     "ante la Rama Judicial\n"
     "🔹 *Datos recolectados:* Nombre, documento, teléfono, correo, "
-    "ciudad, historia clínica y demás información relevante para tu tutela\n"
+    "ciudad y demás información relevante para tu tutela\n"
     "🔹 *Derechos del titular:* Acceder, actualizar, rectificar y "
     "solicitar la eliminación de tus datos en cualquier momento "
     "escribiendo *Eliminar mis datos*\n"
     "🔹 *Política completa:* "
-    "https://tutela-online-production.up.railway.app/privacidad\n\n"
+    "https://tutela-online.onrender.com/privacidad\n\n"
     "Al aceptar, autorizas el tratamiento de tus datos personales "
     "para los fines descritos."
 )
@@ -893,7 +898,8 @@ MENU_DEFAULT = (
     "🤖 *Asistente TutelApp*\n\n"
     "Comandos:\n"
     "• *Hola* — iniciar o continuar\n"
-    "• *Eliminar mis datos* — borrar tu información"
+    "• *Eliminar mis datos* — borrar tu información\n"
+    "• *Detener* — pausar la conversación"
 )
 
 # Orden de recolección de datos personales: (campo, mensaje)
