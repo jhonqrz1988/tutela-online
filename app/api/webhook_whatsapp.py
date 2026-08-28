@@ -171,13 +171,14 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 
                     try:
                         logger.info(f"Webhook Meta: tipo={msg_type} de={telefono} media_url={media_url[:40]} es_audio={es_audio}")
+                        logger.info(f"Webhook Meta: body_text='{body_text}' raw_len={len(raw_body)}")
                         respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
-                        logger.info(f"Webhook Meta respuesta keys={list(respuesta.keys()) if isinstance(respuesta, dict) else type(respuesta)}")
-                        if respuesta.get("respuestas"):
+                        logger.info(f"Webhook Meta respuesta={respuesta}")
+                        if isinstance(respuesta, dict) and respuesta.get("respuestas"):
                             respuestas.extend(respuesta["respuestas"])
                             logger.info(f"Webhook Meta respuestas agregadas={len(respuesta['respuestas'])}")
                         else:
-                            logger.warning(f"Webhook Meta: procesar_mensaje no devolvio respuestas. resp={respuesta}")
+                            logger.warning(f"Webhook Meta: procesar_mensaje tipo={type(respuesta)} val={respuesta}")
                     except Exception as e:
                         logger.error(f"Error procesando mensaje {msg_type} de {telefono}: {e}", exc_info=True)
         return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
