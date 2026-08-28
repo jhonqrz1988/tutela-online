@@ -122,51 +122,55 @@ async def verificar_webhook_meta(request: Request):
 
 @router.post("/webhook/meta")
 async def webhook_meta(request: Request, session=Depends(get_session)):
-    # Verificar firma de Meta
-    body = await request.body()
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    if not _verify_meta_signature(body, signature):
-        return {"ok": False, "error": "Invalid signature"}
-    
-    data = await request.json()
-    entry = data.get("entry", [])
-    respuestas = []
-    for e in entry:
-        changes = e.get("changes", [])
-        for c in changes:
-            value = c.get("value", {})
-            messages = value.get("messages", [])
-            for msg in messages:
-                telefono = msg.get("from", "").replace("whatsapp:", "")
-                msg_type = msg.get("type", "")
-                body_text = ""
-                num_media = 0
-                media_url = ""
-                es_audio = False
-
-                if msg_type == "text":
-                    body_text = msg.get("text", {}).get("body", "").strip()
-                elif msg_type == "interactive":
-                    interactive = msg.get("interactive", {})
-                    ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
-                    body_text = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
-                elif msg_type in ("image", "document"):
-                    num_media = 1
-                    media_data = msg.get(msg_type, {})
-                    media_url = media_data.get("link", "") or media_data.get("id", "")
+    try:
+        # Verificar firma de Meta
+        body = await request.body()
+        signature = request.headers.get("X-Hub-Signature-256", "")
+        if not _verify_meta_signature(body, signature):
+            return {"ok": False, "error": "Invalid signature"}
+        
+        data = await request.json()
+        entry = data.get("entry", [])
+        respuestas = []
+        for e in entry:
+            changes = e.get("changes", [])
+            for c in changes:
+                value = c.get("value", {})
+                messages = value.get("messages", [])
+                for msg in messages:
+                    telefono = msg.get("from", "").replace("whatsapp:", "")
+                    msg_type = msg.get("type", "")
+                    body_text = ""
+                    num_media = 0
+                    media_url = ""
                     es_audio = False
-                elif msg_type == "audio":
-                    es_audio = True
-                    media_url = msg.get("audio", {}).get("id", "")
 
-                try:
-                    logger.info(f"Webhook Meta: tipo={msg_type} de={telefono} media_url={media_url[:40]} es_audio={es_audio}")
-                    respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
-                    if respuesta.get("respuestas"):
-                        respuestas.extend(respuesta["respuestas"])
-                except Exception as e:
-                    logger.error(f"Error procesando mensaje {msg_type} de {telefono}: {e}")
-    return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
+                    if msg_type == "text":
+                        body_text = msg.get("text", {}).get("body", "").strip()
+                    elif msg_type == "interactive":
+                        interactive = msg.get("interactive", {})
+                        ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
+                        body_text = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
+                    elif msg_type in ("image", "document"):
+                        num_media = 1
+                        media_data = msg.get(msg_type, {})
+                        media_url = media_data.get("link", "") or media_data.get("id", "")
+                        es_audio = False
+                    elif msg_type == "audio":
+                        es_audio = True
+                        media_url = msg.get("audio", {}).get("id", "")
+
+                    try:
+                        logger.info(f"Webhook Meta: tipo={msg_type} de={telefono} media_url={media_url[:40]} es_audio={es_audio}")
+                        respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
+                        if respuesta.get("respuestas"):
+                            respuestas.extend(respuesta["respuestas"])
+                    except Exception as e:
+                        logger.error(f"Error procesando mensaje {msg_type} de {telefono}: {e}", exc_info=True)
+        return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
+    except Exception as e:
+        logger.error(f"Error general en webhook_meta: {e}", exc_info=True)
+        return {"ok": True}
 
 
 @router.post("/webhook/zapi")
