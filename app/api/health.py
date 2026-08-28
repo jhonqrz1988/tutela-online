@@ -62,20 +62,30 @@ async def debug_procesar_hola(session=Depends(get_session)):
 
 
 @router.get("/debug/enviar-raw")
-async def debug_enviar_raw():
-    from app.services.whatsapp_service import _enviar_meta_texto, enviar_texto, enviar_botones
+async def debug_enviar_raw(destino: str = "573003838218"):
+    from app.services.whatsapp_service import _enviar_meta_texto, enviar_texto, enviar_botones, _meta_headers
+    import httpx as _httpx
     import traceback
+    
     results = {}
+    
+    # Test raw Meta API call with full response body
     try:
-        results["enviar_texto_ok"] = enviar_texto("573106386975", "Test directo ok")
+        from app.config import settings
+        url = f"https://graph.facebook.com/v25.0/{settings.meta_phone_number_id}/messages"
+        r = _httpx.post(url, json={
+            "messaging_product": "whatsapp",
+            "to": destino,
+            "type": "text",
+            "text": {"body": "Test de diagnostico"}
+        }, headers=_meta_headers(), timeout=15)
+        results["meta_raw_status"] = r.status_code
+        results["meta_raw_body"] = r.text[:500]
+        results["meta_raw_ok"] = r.is_success
     except Exception as e:
-        results["enviar_texto_error"] = str(e)
-        results["traceback_enviar"] = traceback.format_exc()
-    try:
-        results["enviar_botones_ok"] = enviar_botones("573106386975", "Test botones", [("btn1", "Opcion 1")])
-    except Exception as e:
-        results["enviar_botones_error"] = str(e)
-        results["traceback_botones"] = traceback.format_exc()
+        results["meta_raw_error"] = str(e)
+        results["meta_traceback"] = traceback.format_exc()
+    
     return results
 
 
