@@ -48,3 +48,32 @@ async def debug_db_test(session=Depends(get_session)):
         return {"users_count": count}
     except Exception as e:
         return {"error": str(e)}
+
+
+@router.get("/debug/procesar-hola")
+async def debug_procesar_hola(session=Depends(get_session)):
+    import traceback
+    from app.api.webhook_whatsapp import procesar_mensaje
+    try:
+        resultado = await procesar_mensaje(session, "5511998887777", "Hola", 0, "", False)
+        return {"resultado": resultado}
+    except Exception as e:
+        return {"error": str(e), "traceback": traceback.format_exc()}
+
+
+@router.get("/debug/enviar-raw")
+async def debug_enviar_raw():
+    from app.services.whatsapp_service import _enviar_meta_texto, enviar_texto, enviar_botones
+    import traceback
+    results = {}
+    try:
+        results["enviar_texto_ok"] = enviar_texto("573106386975", "Test directo ok")
+    except Exception as e:
+        results["enviar_texto_error"] = str(e)
+        results["traceback_enviar"] = traceback.format_exc()
+    try:
+        results["enviar_botones_ok"] = enviar_botones("573106386975", "Test botones", [("btn1", "Opcion 1")])
+    except Exception as e:
+        results["enviar_botones_error"] = str(e)
+        results["traceback_botones"] = traceback.format_exc()
+    return results
