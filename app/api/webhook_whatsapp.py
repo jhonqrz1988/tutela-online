@@ -204,7 +204,7 @@ async def procesar_mensaje(
         session.add(user)
         session.commit()
         _r(respuestas, telefono, BIENVENIDA)
-        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Acepto"), ("no", "❌ No")])
+        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
         return {"ok": True, "respuestas": respuestas}
 
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
@@ -224,7 +224,7 @@ async def procesar_mensaje(
 
     # ─── CONSENTIMIENTO ──────────────────────────────────────────────
     if user.estado == "nuevo":
-        if body in ("acepto", "sí", "si", "ok", "si acepto"):
+        if body in ("acepto", "sí", "si", "ok", "si acepto", "sí acepto"):
             now = datetime.datetime.now(datetime.UTC)
             user.consentimiento = True
             user.consentimiento_version = CONSENTIMIENTO_VERSION
@@ -243,13 +243,13 @@ async def procesar_mensaje(
         elif body in ("no", "no acepto", "cancelar"):
             user.estado = "rechazado"
             session.commit()
-            _r(respuestas, telefono, "❌ *Has cancelado.*\n\nSin tu autorización no podemos procesar la tutela. Si cambias de opinión, escribe *Hola*.")
+            _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Acepto"), ("no", "❌ No")])
+        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
-        _r(respuestas, telefono, "❌ No puedes usar el servicio sin aceptar el tratamiento de datos.\n\nSi cambias de opinión, escribe *Hola*.")
+        _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
         return {"ok": True, "respuestas": respuestas}
 
     # ─── HOLA DE USUARIO EXISTENTE ─────────────────────────────────────
@@ -259,7 +259,7 @@ async def procesar_mensaje(
         tutela = session.execute(
             select(Tutela).where(
                 Tutela.user_id == user.id,
-            Tutela.estado.in_(["recogiendo_datos", "consentimiento_salud", "narracion", "confirmar_audio", "revision_datos",
+            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
                                "pruebas_pendiente",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
@@ -294,8 +294,6 @@ async def procesar_mensaje(
                     _r(respuestas, telefono, msg)
                 else:
                     _r(respuestas, telefono, NARRACION)
-            elif tutela.estado == "consentimiento_salud":
-                _b(respuestas, telefono, CONSENTIMIENTO_SALUD, [("acepto_salud", "✅ Entiendo y continúo"), ("no_salud", "❌ No deseo compartir esto")])
             elif tutela.estado == "narracion":
                 _r(respuestas, telefono, NARRACION)
             elif tutela.estado == "revision_datos":
@@ -373,30 +371,12 @@ async def procesar_mensaje(
             _, msg = DATOS_PERSONALES_STEPS[step]
             _r(respuestas, telefono, msg)
         else:
-            tutela.estado = "consentimiento_salud"
-            session.commit()
-            _r(respuestas, telefono, "✅ *Datos personales registrados.*")
-            _b(respuestas, telefono, CONSENTIMIENTO_SALUD, [("acepto_salud", "✅ Entiendo y continúo"), ("no_salud", "❌ No deseo compartir esto")])
-
-        return {"ok": True, "respuestas": respuestas}
-
-    # ══════════════════════════════════════════════════════════════════
-    #   CONSENTIMIENTO DE SALUD — aceptar tratamiento datos sensibles
-    # ══════════════════════════════════════════════════════════════════
-    if tutela.estado == "consentimiento_salud":
-        if body in ("acepto_salud", "entiendo y continúo", "si", "sí", "ok", "continuar", "1"):
             tutela.estado = "narracion"
             session.commit()
+            _r(respuestas, telefono, "✅ *Datos personales registrados.*")
             _r(respuestas, telefono, NARRACION)
-            return {"ok": True, "respuestas": respuestas}
-        elif body in ("no_salud", "no deseo compartir esto", "no", "2"):
-            tutela.estado = "borrador"
-            session.commit()
-            _r(respuestas, telefono, "❌ *Proceso cancelado.*\n\nSi cambias de opinión, escribe *Hola* para continuar.")
-            return {"ok": True, "respuestas": respuestas}
-        else:
-            _b(respuestas, telefono, CONSENTIMIENTO_SALUD, [("acepto_salud", "✅ Entiendo y continúo"), ("no_salud", "❌ No deseo compartir esto")])
-            return {"ok": True, "respuestas": respuestas}
+
+        return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
     #   NARRACIÓN — recibir el relato del usuario
@@ -852,29 +832,17 @@ BIENVENIDA = (
 )
 
 AVISO_PRIVACIDAD = (
-    "📄 *Aviso de Tratamiento de Datos Personales*\n\n"
-    "De acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013, "
-    "te informamos que:\n\n"
-    "🔹 *Responsable:* TutelApp\n"
-    "🔹 *Finalidad:* Gestionar, crear y radicar tu acción de tutela "
-    "ante la Rama Judicial\n"
-    "🔹 *Datos recolectados:* Nombre, documento, teléfono, correo, "
-    "ciudad y demás información relevante para tu tutela\n"
-    "🔹 *Derechos del titular:* Acceder, actualizar, rectificar y "
-    "solicitar la eliminación de tus datos en cualquier momento "
-    "escribiendo *Eliminar mis datos*\n"
-    "🔹 *Política completa:* "
+    "📄 *Aviso de Tratamiento de Datos*\n\n"
+    "En TutelApp protegemos tu información. Para ayudarte con tu tutela, "
+    "trataremos tus datos personales y de salud bajo la Ley 1581 de 2012.\n\n"
+    "🔹 *Finalidad:* Crear y radicar técnicamente tu acción de tutela.\n"
+    "🔹 *Datos Sensibles:* Al continuar, autorizas el procesamiento de tu caso médico "
+    "únicamente para este trámite.\n"
+    "🔹 *Tus Derechos:* Puedes actualizar o eliminar tus datos en cualquier momento "
+    "escribiendo *Eliminar mis datos*.\n\n"
+    "Consulta nuestra política completa aquí: "
     "https://tutela-online.onrender.com/privacidad\n\n"
-    "Al aceptar, autorizas el tratamiento de tus datos personales "
-    "para los fines descritos."
-)
-
-CONSENTIMIENTO_SALUD = (
-    "✍️ *Antes de continuar:*\n\n"
-    "Para ayudarte con tu tutela, necesitaremos procesar información sobre tu situación de salud.\n\n"
-    "Al compartir tu caso, audios o documentos, autorizas expresamente a TutelApp "
-    "para tratar estos datos sensibles únicamente con el fin de generar tu documento legal.\n\n"
-    "[✅ Entiendo y continúo] [❌ No deseo compartir esto]"
+    "¿Autorizas el tratamiento de tus datos para iniciar?"
 )
 
 NARRACION = (

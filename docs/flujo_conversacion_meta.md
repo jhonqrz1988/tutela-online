@@ -40,22 +40,20 @@ Los mensajes marcados con ⚠️ son **iniciados por el bot** y pueden necesitar
               que tú mismo presentarás.
               Comencemos con la autorización de datos.
 
-[BOT]      → 📄 Aviso de Tratamiento de Datos Personales
-              De acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013,
-              te informamos que:
-              🔹 Responsable: TutelApp
-              🔹 Finalidad: Gestionar, crear y radicar tu acción de tutela
-              🔹 Datos recolectados: Nombre, documento, teléfono, correo,
-                 ciudad y demás información relevante para tu tutela
-              🔹 Derechos del titular: Acceder, actualizar, rectificar y
-                 solicitar la eliminación de tus datos escribiendo
-                 "Eliminar mis datos"
-              🔹 Política completa: https://tutela-online.onrender.com/privacidad
-              Al aceptar, autorizas el tratamiento de tus datos personales
-              para los fines descritos.
-              [✅ Acepto] [❌ No]
+[BOT]      → 📄 Aviso de Tratamiento de Datos
+              En TutelApp protegemos tu información. Para ayudarte con tu tutela,
+              trataremos tus datos personales y de salud bajo la Ley 1581 de 2012.
+              🔹 Finalidad: Crear y radicar técnicamente tu acción de tutela.
+              🔹 Datos Sensibles: Al continuar, autorizas el procesamiento de tu caso médico
+                 únicamente para este trámite.
+              🔹 Tus Derechos: Puedes actualizar o eliminar tus datos en cualquier momento
+                 escribiendo "Eliminar mis datos".
+              Consulta nuestra política completa aquí:
+              https://tutela-online.onrender.com/privacidad
+              ¿Autorizas el tratamiento de tus datos para iniciar?
+              [✅ Sí, acepto] [❌ No acepto]
 
-[USUARIO]  → "✅ Acepto"
+[USUARIO]  → "✅ Sí, acepto"
 
 [BOT]      → ✅ Consentimiento registrado.
               Ahora necesito tus datos personales.
@@ -462,17 +460,18 @@ Estos mensajes son **iniciados por el bot** y pueden enviarse **fuera de la vent
 
 | Política | Cómo cumple |
 |----------|-------------|
-| Consentimiento | Aviso de privacidad con botones Acepto/No antes de recolectar datos |
-| Consentimiento datos sensibles | Consentimiento explícito para datos de salud antes de narración |
-| Derecho a eliminación | Comando "Eliminar mis datos" |
+| Consentimiento explícito | Aviso de privacidad con botones "✅ Sí, acepto" / "❌ No acepto" |
+| Consentimiento datos sensibles | Menciona "autorizas el procesamiento de tu caso médico" en el aviso |
+| Derecho a eliminación | Comando "Eliminar mis datos" recordado en el aviso |
 | Transparencia | Bot se identifica como "herramienta tecnológica", no como abogado |
 | Disclaimer | Aclara que no es representante de la Rama Judicial |
-| Link de privacidad | https://tutela-online.onrender.com/privacidad |
+| Link de privacidad | https://tutela-online.onrender.com/privacidad visible en el aviso |
 | No spam | Solo mensajes transaccionales, no promocionales |
 | No contenido prohibido | Sin violencia, odio, contenido sexual ni información falsa |
 | Opt-out | Comandos "Detener", "Pausar", "No me molesten" |
 | No automatización engañosa | Bot se presenta como bot, no como humano |
 | Lenguaje neutro | Usa "procesamiento" en vez de "radicación" para evitar alertas |
+| Consentimiento SIC | Cumple Ley 1581 de 2012 y Decreto 1377 de 2013 |
 
 ### ⚠️ PENDIENTE DE IMPLEMENTAR
 
