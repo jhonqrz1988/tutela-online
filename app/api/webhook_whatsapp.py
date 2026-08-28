@@ -170,7 +170,10 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
         return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
     except Exception as e:
         logger.error(f"Error general en webhook_meta: {e}", exc_info=True)
-        return {"ok": True}
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"Traceback completo: {tb}")
+        return {"ok": True, "_debug_error": str(e)}
 
 
 @router.post("/webhook/zapi")
