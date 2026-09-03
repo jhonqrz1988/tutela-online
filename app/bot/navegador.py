@@ -90,7 +90,8 @@ class RadicadorBot:
 
     def __init__(self):
         self.page = None
-        self._screenshot_dir = Path("storage/screenshots")
+        base = settings.storage_dir or "storage"
+        self._screenshot_dir = Path(base) / "screenshots"
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
 
     async def iniciar(self):

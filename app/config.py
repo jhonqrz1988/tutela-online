@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     secret_key: str = "dev-key-change-in-production"
     admin_password: str = ""  # si queda vacío, el panel admin exige configurarlo
     database_url: str = "sqlite:///./storage/tutelas.db"
+    storage_dir: str = "storage"
     host: str = "0.0.0.0"
     port: int = 8000
     app_url: str = "http://localhost:8000"
