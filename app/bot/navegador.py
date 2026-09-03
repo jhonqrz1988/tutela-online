@@ -251,9 +251,10 @@ class RadicadorBot:
         # Teléfono
         await self._type("#Telefono", datos.get("accionante_telefono", ""))
 
-        # Tipo discapacidad
+        # Tipo discapacidad (si el usuario declaró una, se usa; si no, "No Aplica")
+        discapacidad = datos.get("accionante_discapacidad") or "No Aplica"
         try:
-            await self._seleccionar_select("#DDlTipodiscapacidad", "No Aplica")
+            await self._seleccionar_select("#DDlTipodiscapacidad", discapacidad)
         except Exception:
             logger.warning("No se pudo seleccionar tipo discapacidad")
 
@@ -266,7 +267,20 @@ class RadicadorBot:
         await self._js_click("#btnValidar")
         await self.page.wait_for_timeout(1000)
 
-        return True  # requiere código de email
+        # Detección condicional: el portal SOLO pide código de verificación
+        # cuando el correo no está registrado. Si #IdEmail1 (input del código)
+        # no aparece, el email ya estaba verificado y se continúa directo.
+        try:
+            campo_codigo = await self.page.query_selector("#IdEmail1")
+            if campo_codigo is None:
+                logger.info("Correo ya verificado, no se requiere código de email")
+                return False
+            visible = await campo_codigo.is_visible()
+            return bool(visible)
+        except Exception:
+            # Ambiguo/error: pedir el código (mejor que radicar un email sin verificar)
+            logger.warning("No se pudo detectar campo de verificación de email; se asume que aplica")
+            return True
 
     async def ingresar_codigo_email(self, codigo: str):
         """Ingresa el código de verificación de correo en #IdEmail1."""

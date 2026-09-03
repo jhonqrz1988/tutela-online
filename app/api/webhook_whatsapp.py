@@ -1,13 +1,16 @@
 import datetime
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
+import socket
+from urllib.parse import urlparse
 
 import aiofiles
 import httpx
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import select
 
 from app.config import settings
@@ -38,8 +41,31 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _auth_webhook_legacy(request: Request) -> bool:
+    """Valida el token compartido en los webhooks legacy.
+
+    Si ``webhook_auth_token`` no está configurado, en modo simular (provider
+    ``simular``) se permite con warning; si el provider es un legacy
+    (twilio/zapi/infobip) se rechaza (fail-closed) para no dejar un webhook
+    sin autenticar en producción.
+    """
+    if settings.whatsapp_provider == "simular":
+        return True
+    if not settings.webhook_auth_token:
+        logger.error("_auth_webhook_legacy: proveedor legacy sin WEBHOOK_AUTH_TOKEN — rechazando")
+        return False
+    auth = request.headers.get("authorization", "")
+    token = request.query_params.get("token", "")
+    esperado = settings.webhook_auth_token
+    if auth.startswith("Bearer ") and hmac.compare_digest(auth[7:], esperado):
+        return True
+    return hmac.compare_digest(token, esperado)
+
+
 @router.post("/webhook/whatsapp")
 async def webhook_whatsapp(request: Request, session=Depends(get_session)):
+    if not _auth_webhook_legacy(request):
+        return JSONResponse({"ok": False, "error": "No autorizado"}, status_code=401)
     try:
         content_type = request.headers.get("content-type", "")
         if "json" in content_type or "application/json" in content_type:
@@ -175,6 +201,8 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 
 @router.post("/webhook/zapi")
 async def webhook_zapi(request: Request, session=Depends(get_session)):
+    if not _auth_webhook_legacy(request):
+        return JSONResponse({"ok": False, "error": "No autorizado"}, status_code=401)
     data = await request.json()
     telefono = data.get("from", "").replace("55", "", 1) if data.get("from", "").startswith("55") else data.get("from", "")
     body = (data.get("text", data.get("message", {}).get("text", "")) or "").strip()
@@ -264,7 +292,7 @@ async def procesar_mensaje(
             select(Tutela).where(
                 Tutela.user_id == user.id,
             Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
-                               "pruebas_pendiente",
+                               "pruebas_pendiente", "esperando_codigo_email",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
                                "hazlo_tu_mismo", "confirmar_pago", "esperando_pago", "pago_por_confirmar",
@@ -274,22 +302,6 @@ async def procesar_mensaje(
 
         if tutela and tutela.estado != "completado":
             datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
-
-            # ─── CÓDIGO DE VERIFICACIÓN DE EMAIL ─────────────────────
-            if tutela.estado == "esperando_codigo_email":
-                codigo_limpio = body.strip().replace(" ", "")
-                if codigo_limpio.isdigit() and 4 <= len(codigo_limpio) <= 6:
-                    from app.services.radicacion_service import continuar_radicacion_con_codigo
-                    _r(respuestas, telefono, "⏳ *Código recibido.* Continuando con la radicación...")
-                    resultado = await continuar_radicacion_con_codigo(tutela.id, codigo_limpio)
-                    if resultado.get("ok"):
-                        _r(respuestas, telefono, "✅ *Código verificado.* Radicando tu tutela...")
-                    else:
-                        _r(respuestas, telefono, f"❌ *Error:* {resultado.get('error', 'No se pudo completar')}")
-                    return {"ok": True, "respuestas": respuestas}
-                else:
-                    _r(respuestas, telefono, "🔑 El código debe tener 4 a 6 dígitos. Revísalo en tu correo y envíamelo de nuevo.")
-                    return {"ok": True, "respuestas": respuestas}
 
             if tutela.estado == "recogiendo_datos":
                 step = datos.get("_step", 0)
@@ -325,7 +337,7 @@ async def procesar_mensaje(
         select(Tutela).where(
             Tutela.user_id == user.id,
             Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
-                               "pruebas_pendiente",
+                               "pruebas_pendiente", "esperando_codigo_email",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
                                "hazlo_tu_mismo", "confirmar_pago", "esperando_pago", "pago_por_confirmar",
@@ -349,6 +361,24 @@ async def procesar_mensaje(
         session.commit()
 
     datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
+
+    # ─── CÓDIGO DE VERIFICACIÓN DE EMAIL ─────────────────────────────
+    # El portal pide verificación solo cuando el correo no está registrado.
+    # El usuario envía el código numérico que le llegó por correo.
+    if tutela.estado == "esperando_codigo_email":
+        codigo_limpio = body.strip().replace(" ", "")
+        if codigo_limpio.isdigit() and 4 <= len(codigo_limpio) <= 6:
+            from app.services.radicacion_service import continuar_radicacion_con_codigo
+            _r(respuestas, telefono, "⏳ *Código recibido.* Continuando con la radicación...")
+            resultado = await continuar_radicacion_con_codigo(tutela.id, codigo_limpio)
+            if resultado.get("ok"):
+                _r(respuestas, telefono, "✅ *Código verificado.* Radicando tu tutela...")
+            else:
+                _r(respuestas, telefono, f"❌ *Error:* {resultado.get('error', 'No se pudo completar')}")
+            return {"ok": True, "respuestas": respuestas}
+        else:
+            _r(respuestas, telefono, "🔑 El código debe tener 4 a 6 dígitos. Revísalo en tu correo y envíamelo de nuevo.")
+            return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
     #   RECOGIENDO DATOS PERSONALES — paso a paso
@@ -697,10 +727,86 @@ async def _mostrar_resumen_juramento(session, tutela, datos: dict, telefono: str
     _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
 
 
+# Hosts permitidos para descargar archivos adjuntos (soportes de WhatsApp).
+# Meta sirve los medios desde su CDN; Twilio desde api.twilio.com. Cualquier
+# otro host se rechaza (SSRF).
+_HOSTS_MEDIA = {
+    "graph.facebook.com",
+    "lookaside.fbsbx.com",
+    "cdn.fbsbx.com",
+    "scontent.fbcdn.net",
+    "api.twilio.com",
+    "mms-gw.twilio.com",
+}
+MAX_PRUEBA_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+def _host_permitido(url: str) -> bool:
+    """Valida el esquema y el host de una URL de descarga de soportes.
+
+    Solo HTTPS y solo hosts de Meta/Twilio conocidos. Devuelve False para
+    esquemas no https y para cualquier host que no esté en la lista blanca.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            return False
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host in _HOSTS_MEDIA:
+        return True
+    # Permite subdominios de los CDN de Meta (ej. scontent-<region>.fbcdn.net)
+    return host.endswith(".fbcdn.net") or host.endswith(".fbsbx.com")
+
+
+def _sin_ip_privada(url: str) -> bool:
+    """Rechaza URLs que resuelvan a IPs privadas/reservadas (SSRF interno).
+
+    Comprueba IPs literales; para hostnames intenta resolver todo el conjunto
+    de registros A y rechaza si alguno es loopback, link-local, privado o
+    reservado. Si el hostname no resuelve (DNS falla), no bloquea: la lista
+    blanca de hosts ya restringe a dominios de Meta/Twilio.
+    """
+    try:
+        host = urlparse(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    try:
+        ips = [i[4][0] for i in socket.getaddrinfo(host, None)]
+    except socket.gaierror:
+        return True  # no resuelve; el allowlist de hosts ya protege
+    for ip in ips:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if not addr.is_global:
+            return False
+    return True
+
+
+def _permite_descargar(url: str) -> bool:
+    """Chequeo combinado de seguridad antes de tocar la red."""
+    return _host_permitido(url) and _sin_ip_privada(url)
+
+
 async def _descargar_prueba(url: str) -> str | None:
     if not url:
         return None
     try:
+        # Meta envía un media id numérico; se resuelve primero, pero la URL
+        # final firmada debe pasar el filtro de host. Para URLs directas se
+        # valida aquí antes de cualquier petición.
+        if not url.isdigit() and not _permite_descargar(url):
+            logger.error(f"_descargar_prueba: URL rechazada por seguridad: {url[:80]}")
+            return None
         mime_type = ""
         headers = {}
         auth = None
@@ -721,6 +827,11 @@ async def _descargar_prueba(url: str) -> str | None:
             # La URL firmada de Meta SÍ requiere el token de acceso
             headers = {"Authorization": f"Bearer {settings.meta_access_token}"}
 
+        # Tras resolver el id de Meta, la URL firmada también debe pasar el filtro.
+        if not _permite_descargar(url):
+            logger.error(f"_descargar_prueba: URL firmada rechazada por seguridad: {url[:80]}")
+            return None
+
         ext = _ext_desde_mime(mime_type, url)
         ruta = path_prueba(ext)
         logger.info(f"_descargar_prueba: mime={mime_type} ext={ext} ruta={ruta}")
@@ -732,6 +843,13 @@ async def _descargar_prueba(url: str) -> str | None:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
             r = await c.get(url, headers=headers, auth=auth)
         logger.info(f"_descargar_prueba: download status={r.status_code} bytes={len(r.content)}")
+        # Tras redirects, el host final también debe ser permitido.
+        if not _permite_descargar(str(r.url)):
+            logger.error(f"_descargar_prueba: redirect final rechazado: {str(r.url)[:80]}")
+            return None
+        if len(r.content) > MAX_PRUEBA_BYTES:
+            logger.error(f"_descargar_prueba: archivo demasiado grande: {len(r.content)} bytes")
+            return None
         if r.status_code == 200:
             async with aiofiles.open(ruta, "wb") as f:
                 await f.write(r.content)

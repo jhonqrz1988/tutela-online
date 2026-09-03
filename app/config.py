@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     meta_phone_number_id: str = ""
     meta_verify_token: str = ""
     meta_app_secret: str = ""
+    # Token compartido para proteger los webhooks legacy (/webhook/whatsapp,
+    # /webhook/zapi). Si se configura, estos endpoints exigen
+    # "Authorization: Bearer <token>".
+    webhook_auth_token: str = ""
     # Temporal mientras se prueba sin META_APP_SECRET: si True exige y valida
     # la firma HMAC del webhook (rechaza si no hay secret); si False la omite.
     strict_webhook_firma: bool = False
@@ -34,6 +38,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     app_url: str = "http://localhost:8000"
+    # Orígenes CORS adicionales separados por coma (además de app_url).
+    cors_origins: str = ""
 
     # === Mercado Pago (pasarela de pagos Colombia) ===
     mercadopago_access_token: str = ""

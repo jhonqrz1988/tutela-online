@@ -71,7 +71,7 @@ CAMPOS_TUTELA = [
     "tipo", "accionante_nombre", "accionante_tipo_doc", "accionante_cedula",
     "accionante_telefono", "accionante_email", "ciudad", "departamento",
     "accionado", "accionado_tipo", "accionado_nit", "accionado_email",
-    "hechos", "derechos_vulnerados", "peticion",
+    "hechos", "derechos_vulnerados", "peticion", "accionante_discapacidad",
 ]
 
 SISTEMA_EXTRACCION_CASO = """Eres un asistente legal colombiano especializado en acciones de tutela de salud.
@@ -87,6 +87,7 @@ Campos a extraer (JSON):
 - derechos_vulnerados: lista de artículos específicos: Art. 11 CP, Art. 48 CP, Art. 49 CP, Art. 86 CP, Art. 2 CP
 - peticion: solicitud concreta y específica al juez (ej: "ordenar a EPS X que autorice cita con medicina general en 48 horas")
 - genero: "masculino" o "femenino" según el nombre del accionante
+- accionante_discapacidad: tipo de discapacidad que el accionante declara en su relato (ej: "MENTAL", "FISICA", "VISUAL"). Si no la menciona, usa ""
 
 Reglas:
 - Los datos personales ya fueron recolectados: NO los extraigas

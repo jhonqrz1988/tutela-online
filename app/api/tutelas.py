@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
 from app.api.admin import require_admin
@@ -29,7 +29,7 @@ def crear_tutela(datos: DatosTutela, session=Depends(get_session)):
 def obtener_tutela(tutela_id: int, session=Depends(get_session)):
     tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not tutela:
-        return {"error": "No encontrada"}, 404
+        raise HTTPException(status_code=404, detail="No encontrada")
     return {
         "id": tutela.id,
         "tipo": tutela.tipo,
@@ -44,7 +44,7 @@ def generar_pdf_tutela(tutela_id: int, session=Depends(get_session)):
 
     tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not tutela:
-        return {"error": "No encontrada"}, 404
+        raise HTTPException(status_code=404, detail="No encontrada")
 
     datos = json.loads(tutela.datos_json or "{}")
     contenido = datos.get("hechos", "")

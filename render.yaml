@@ -1,0 +1,65 @@
+# Configuración de Render (https://render.com) para TutelApp.
+# Deploy: https://tutela-online.onrender.com
+#
+# NOTA sobre el plan GRATIS:
+# - El servicio se duerme tras ~15 min sin tráfico entrante.
+# - Para mantenerlo despierto sin pagar, apunta un monitor externo
+#   gratuito (p. ej. UptimeRobot con intervalo <= 10 min) a
+#   https://tutela-online.onrender.com/health
+#   y asegúrate de tener "Auto-Wake" (despertar con petición entrante) activo.
+# - El plan gratis NO dispone de Persistent Disk: los archivos en storage/
+#   se pierden en cada redeploy. Antes de radicar tutelas reales, subir a
+#   Starter (~$7/mes) y montar el Persistent Disk en /data + STORAGE_DIR=/data/storage.
+services:
+  - type: web
+    name: tutela-online
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python run_server.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: WHATSAPP_PROVIDER
+        value: meta
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: AI_PROVIDER
+        value: groq
+      - key: AI_CHAT_MODEL
+        value: openai/gpt-oss-120b
+      - key: AI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: APP_URL
+        value: https://tutela-online.onrender.com
+      - key: CORS_ORIGINS
+        value: ""
+      - key: WEBHOOK_AUTH_TOKEN
+        sync: false
+      - key: STRICT_WEBHOOK_FIRMA
+        value: "true"
+      - key: MERCADOPAGO_ACCESS_TOKEN
+        sync: false
+      - key: MERCADOPAGO_WEBHOOK_SECRET
+        sync: false
+      - key: TWOCAPTCHA_API_KEY
+        sync: false
+      - key: ENABLE_SCHEDULER
+        value: "false"
+      - key: SIMULATE_BOT
+        value: "true"
+      - key: STORAGE_DIR
+        value: storage

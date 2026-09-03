@@ -26,6 +26,51 @@ env = Environment(
 
 SESSION_COOKIE = "tutela_admin"
 SESSION_TTL = 12 * 3600  # 12 horas
+CSRF_COOKIE = "tutela_admin_csrf"
+
+# Rate-limit del login: máx intentos fallidos por ventana por IP.
+_LOGIN_MAX_ATTEMPTS = 8
+_LOGIN_WINDOW_SECS = 15 * 60  # 15 minutos
+_contador_login: dict[str, list[float]] = {}
+_limite_login = _LOGIN_MAX_ATTEMPTS
+
+
+def _ip_cliente(request: Request) -> str:
+    # Render y proxies inversos; usa X-Forwarded-For si está presente.
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _secret_key_valida(key: str) -> bool:
+    # Clave segura de al menos 32 chars sin espacios, distinta del default.
+    return bool(key) and len(key) >= 32 and " " not in key
+
+
+def _validar_secret_key_prod():
+    """Advierte en el log si la SECRET_KEY es insegura en producción."""
+    if settings.app_url.lower().startswith("https") and not _secret_key_valida(settings.secret_key):
+        logger.warning(
+            "SECRET_KEY insegura en producción: defina una clave de >=32 chars "
+            "vía la variable de entorno SECRET_KEY (actual se regenera en cada arranque)."
+        )
+
+
+def _intentos_recientes(ip: str) -> int:
+    ahora = time.time()
+    lista = [t for t in _contador_login.get(ip, []) if ahora - t < _LOGIN_WINDOW_SECS]
+    _contador_login[ip] = lista
+    return len(lista)
+
+
+def _registrar_intento(ip: str):
+    _contador_login.setdefault(ip, []).append(time.time())
+
+
+def _login_bloqueado(ip: str) -> bool:
+    return _intentos_recientes(ip) >= _LOGIN_MAX_ATTEMPTS
+
 
 _LOGIN_HTML = """<!DOCTYPE html>
 <html lang="es">
@@ -46,6 +91,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <p>Panel de administración</p>
   <!--ERROR-->
   <form method="POST" action="/admin/login">
+    <!--CSRF-->
     <input type="password" name="password" placeholder="Contraseña" autofocus required>
     <button type="submit">Ingresar</button>
   </form>
@@ -92,19 +138,69 @@ def require_admin(request: Request):
 
 @router.get("/login", response_class=HTMLResponse)
 def admin_login(request: Request):
-    return HTMLResponse(_LOGIN_HTML)
+    resp = HTMLResponse(_LOGIN_HTML)
+    return _establecer_csrf(resp)
+
+
+def _establecer_csrf(resp):
+    token = secrets.token_urlsafe(32)
+    html = _LOGIN_HTML.replace(
+        "<!--CSRF-->",
+        f'<input type="hidden" name="csrf" value="{token}">',
+    )
+    resp = HTMLResponse(html)
+    resp.set_cookie(
+        CSRF_COOKIE, token, max_age=3600, httponly=True, samesite="strict", secure=_cookie_secure()
+    )
+    return resp
+
+
+def _cookie_secure() -> bool:
+    return settings.app_url.lower().startswith("https")
 
 
 @router.post("/login")
 async def admin_login_post(request: Request):
+    ip = _ip_cliente(request)
+    if _login_bloqueado(ip):
+        resp = HTMLResponse(
+            _LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Demasiados intentos. Espera unos minutos.</p>'),
+            status_code=429,
+        )
+        _establecer_csrf(resp)
+        return resp
+
     data = await request.form()
     password = data.get("password", "")
+    csrf = data.get("csrf", "")
+    csrf_esperado = request.cookies.get(CSRF_COOKIE, "")
+    if not csrf_esperado or not hmac.compare_digest(csrf_esperado, csrf):
+        resp = HTMLResponse(
+            _LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Sesión inválida, recarga la página.</p>'),
+            status_code=403,
+        )
+        _establecer_csrf(resp)
+        return resp
+
     if not settings.admin_password:
         return HTMLResponse("<h3>ADMIN_PASSWORD no está configurado en el servidor.</h3>", status_code=400)
     if password != settings.admin_password:
-        return HTMLResponse(_LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Contraseña incorrecta</p>'), status_code=401)
+        _registrar_intento(ip)
+        resp = HTMLResponse(_LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Contraseña incorrecta</p>'), status_code=401)
+        _establecer_csrf(resp)
+        return resp
+
+    _contador_login.pop(ip, None)
     resp = RedirectResponse("/admin", status_code=303)
-    resp.set_cookie(SESSION_COOKIE, _crear_sesion(), max_age=SESSION_TTL, httponly=True, samesite="lax", secure=False)
+    resp.set_cookie(
+        SESSION_COOKIE,
+        _crear_sesion(),
+        max_age=SESSION_TTL,
+        httponly=True,
+        samesite="strict",
+        secure=_cookie_secure(),
+    )
+    resp.delete_cookie(CSRF_COOKIE)
     return resp
 
 
