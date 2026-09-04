@@ -6,6 +6,7 @@ import fitz
 from fpdf import FPDF
 from PIL import Image
 
+from app.services.ia_service import normalizar_dato_obligatorio
 from app.utils.file_utils import path_tutela_pdf
 
 # Títulos de sección estilo "IV. HECHOS" / "VIII. PRETENSIONES"
@@ -14,6 +15,115 @@ _TITULO_SECCION_RE = re.compile(r"^[IVXLCDM]{1,4}\.\s+\S")
 # Glifos sin representación en documentos legales (emoji, variant selectors,
 # zero-width) y espacios no rompibles; se limpian antes de renderizar.
 _RE_GLIFOS_INVALIDOS = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200b-\u200d\ufeff]")
+
+_MESES_ES = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio",
+    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+)
+
+_VALORES_ROMANOS = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100}
+
+
+def _fecha_espanol(momento: datetime | None = None) -> str:
+    """Fecha como "4 de septiembre de 2026" (meses en español, sin depender
+    del locale del servidor; el strftime con %B daba meses en inglés)."""
+    now = momento or datetime.now(UTC)
+    return f"{now.day} de {_MESES_ES[now.month - 1]} de {now.year}"
+
+
+def _valor_romano(numeral: str) -> int | None:
+    try:
+        total = 0
+        prev = 0
+        for ch in reversed(numeral):
+            v = _VALORES_ROMANOS[ch]
+            if v < prev:
+                total -= v
+            else:
+                total += v
+                prev = v
+        return total
+    except KeyError:
+        return None
+
+
+def _cuerpo_sin_encabezado_y_partes(contenido: str) -> str:
+    """Devuelve el texto IA desde la primera sección >= III (HECHOS).
+
+    El encabezado, accionante y accionado del texto IA se descartan porque el
+    PDF los reconstruye de forma determinista desde `datos`. Si el texto IA no
+    sigue la estructura I-XI, se devuelve tal cual (fallback seguro) quitando
+    solo una línea inicial que parezca fecha, para no duplicar el encabezado.
+    """
+    lineas = contenido.splitlines() if contenido else []
+    for i, linea in enumerate(lineas):
+        limpia = linea.strip()
+        m = re.match(r"^([IVXLCDM]{1,4})\.\s+\S", limpia)
+        if m:
+            val = _valor_romano(m.group(1))
+            if val is not None and val >= 3:
+                return "\n".join(lineas[i:]).strip()
+    cuerpo = "\n".join(lineas).strip()
+    lineas2 = cuerpo.splitlines() or []
+    if lineas2:
+        primera = lineas2[0].strip()
+        es_fecha = re.match(r"^\d{1,2}\s+de\s+[a-záéíóúñ]+\s+de\s+\d{4}$", primera, re.IGNORECASE)
+        es_fecha_con_ciudad = re.match(
+            r"^[A-ZÁÉÍÓÚÑa-záéíóúñ ,.]+,?\s+\d{1,2}\s+de\s+[a-záéíóúñ]+\s+de\s+\d{4}$",
+            primera, re.IGNORECASE,
+        )
+        if es_fecha or es_fecha_con_ciudad:
+            return "\n".join(lineas2[1:]).strip()
+    return cuerpo
+
+
+def _render_encabezado(pdf, ciudad: str, fecha: str) -> None:
+    """Encabezado legal: ciudad+fecha de radicación, juez competente y E.S.D."""
+    pdf.ln(2)
+    pdf.set_font(pdf.fuente, "B", 12)
+    pdf.cell(0, 6, f"{ciudad}, {fecha}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, f"Señor JUEZ CONSTITUCIONAL DE {ciudad.upper()} (REPARTO)", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "E.S.D.", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(8)
+
+
+def _seccion_accionante(pdf, datos: dict) -> None:
+    """Sección I. ACCIONANTE construida SIEMPRE desde `datos` (fuente de verdad)."""
+    nombre = datos.get("accionante_nombre") or "___________"
+    tipo_doc = datos.get("accionante_tipo_doc") or "CC"
+    cedula = (datos.get("accionante_cedula") or "").strip()
+    direccion = (datos.get("accionante_direccion") or "").strip()
+    telefono = (datos.get("accionante_telefono") or "").strip()
+    email = (datos.get("accionante_email") or "").strip()
+    ciudad = (datos.get("ciudad") or "").strip()
+    departamento = (datos.get("departamento") or "").strip()
+
+    pdf.section_title("I. ACCIONANTE")
+    pdf.body_text(f"Nombre: {nombre}")
+    if cedula:
+        pdf.body_text(f"Documento: {tipo_doc} {cedula}")
+    if direccion:
+        pdf.body_text(f"Dirección: {direccion}")
+    pdf.body_text(f"Teléfono: {telefono or '___________'}")
+    pdf.body_text(f"Correo electrónico: {email or '___________'}")
+    if ciudad:
+        pdf.body_text(f"Ciudad: {ciudad}" + (f", {departamento}" if departamento else ""))
+
+
+def _seccion_accionado(pdf, datos: dict) -> None:
+    """Sección II. ACCIONADO: NIT y correo de notificación normalizados (nunca "no sé")."""
+    accionado = datos.get("accionado") or "___________"
+    pdf.section_title("II. ACCIONADO")
+    pdf.body_text(f"Nombre: {accionado}")
+    tipo = (datos.get("accionado_tipo") or "").strip()
+    if tipo:
+        pdf.body_text(f"Tipo: {tipo}")
+    nit = normalizar_dato_obligatorio(datos.get("accionado_nit", ""))
+    if nit:
+        pdf.body_text(f"NIT: {nit}")
+    email_accionado = normalizar_dato_obligatorio(datos.get("accionado_email", ""))
+    if email_accionado:
+        pdf.body_text(f"Email notificación: {email_accionado}")
 
 
 def _limpiar_texto(texto: str) -> str:
@@ -87,119 +197,91 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     pdf.add_page()
 
     ciudad = datos.get("ciudad", "_________")
-    accionante = datos.get("accionante_nombre", "___________")
+    nombre = datos.get("accionante_nombre") or "___________"
     tipo_doc = datos.get("accionante_tipo_doc", "CC")
-    cedula = datos.get("accionante_cedula", "____________")
-    direccion = datos.get("accionante_direccion", "")
-    telefono = datos.get("accionante_telefono", "__________")
-    email = datos.get("accionante_email", "__________")
-    accionado = datos.get("accionado", "___________")
-    accionado_tipo = datos.get("accionado_tipo", "")
-    accionado_nit = datos.get("accionado_nit", "")
-    accionado_email = datos.get("accionado_email", "")
-    departamento = datos.get("departamento", "")
+    cedula = datos.get("accionante_cedula", "")
+    telefono = datos.get("accionante_telefono") or "__________"
+    email = datos.get("accionante_email") or "__________"
 
-    now = datetime.now(UTC)
-    fecha = now.strftime("%d de %B de %Y").lower()
+    # Fecha en español (meses sin depender del locale) = fecha de radicación.
+    fecha = _fecha_espanol()
 
     pruebas_paths = datos.get("pruebas_paths", [])
     pruebas_analizadas = datos.get("pruebas_analizadas", [])
     pruebas_fotos = _filtrar_pruebas(pruebas_paths, pruebas_analizadas)
 
+    # Encabezado determinista: ciudad + fecha de radicación + juez competente.
+    _render_encabezado(pdf, ciudad, fecha)
+
+    # Secciones I/II SIEMPRE desde `datos` (fuente de verdad): garantiza que el
+    # NIT, el correo de notificación, la dirección y los datos del accionante
+    # aparezcan sin importar lo que la IA haya escrito (u omitido).
+    _seccion_accionante(pdf, datos)
+    _seccion_accionado(pdf, datos)
+
     if contenido_tutela:
-        # Modo IA: el texto generado (estructura I-XI, ya verificado) ES el documento.
-        _render_contenido_ia(pdf, contenido_tutela)
-        _anexar_pruebas(pdf, pruebas_fotos)
-        pdf.output(ruta)
-        return ruta
-
-    # Modo plantilla: respaldo si la IA no generó texto — se arma desde `datos`.
-
-    # Encabezado (formato legal colombiano)
-    pdf.set_font("Times", "B", 14)
-    pdf.cell(0, 10, "ACCION DE TUTELA", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(5)
-
-    pdf.set_font("Times", "B", 12)
-    pdf.cell(0, 6, f"{ciudad}, {fecha}", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, f"Señor JUEZ CONSTITUCIONAL DE {ciudad.upper()} (REPARTO)", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, "E.S.D.", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(10)
-
-    # I. Accionante
-    pdf.section_title("I. ACCIONANTE")
-    pdf.body_text(f"Nombre: {accionante}")
-    pdf.body_text(f"Documento: {tipo_doc} {cedula}")
-    if direccion:
-        pdf.body_text(f"Dirección: {direccion}")
-    pdf.body_text(f"Teléfono: {telefono}")
-    pdf.body_text(f"Correo electrónico: {email}")
-    pdf.body_text(f"Ciudad: {ciudad}" + (f", {departamento}" if departamento else ""))
-
-    # II. Accionado
-    pdf.section_title("II. ACCIONADO")
-    pdf.body_text(f"Nombre: {accionado}")
-    if accionado_tipo:
-        pdf.body_text(f"Tipo: {accionado_tipo}")
-    if accionado_nit and accionado_nit != "desconocido":
-        pdf.body_text(f"NIT: {accionado_nit}")
-    if accionado_email and accionado_email != "desconocido":
-        pdf.body_text(f"Email notificación: {accionado_email}")
-
-    # III. Hechos (usar solo los hechos del caso, NO el texto completo de la tutela)
-    pdf.section_title("III. HECHOS")
-    hechos = datos.get("hechos", "").strip()
-    if hechos:
-        pdf.body_text(hechos)
+        # Modo IA: el cuerpo legal (HECHOS en adelante) se toma del texto
+        # verificado; encabezado/accionante/accionado ya se imprimieron arriba.
+        _render_contenido_ia(pdf, _cuerpo_sin_encabezado_y_partes(contenido_tutela))
     else:
-        pdf.body_text("No se especificaron hechos.")
+        # Modo plantilla: respaldo si la IA no generó texto — se arma desde `datos`.
 
-    # IV. Derechos vulnerados
-    derechos = datos.get("derechos_vulnerados", [])
-    if derechos:
-        pdf.section_title("IV. DERECHOS VULNERADOS")
-        for d in derechos:
-            pdf.body_text(f"- {d}")
+        # III. Hechos (usar solo los hechos del caso, NO el texto completo de la tutela)
+        hechos = datos.get("hechos", "").strip()
+        if hechos:
+            pdf.section_title("III. HECHOS")
+            pdf.body_text(hechos)
+        else:
+            pdf.section_title("III. HECHOS")
+            pdf.body_text("No se especificaron hechos.")
 
-    # V. Petición
-    peticion = datos.get("peticion", "")
-    if peticion:
-        pdf.section_title("V. PETICIÓN")
-        pdf.body_text(peticion)
+        # IV. Derechos vulnerados
+        derechos = datos.get("derechos_vulnerados", [])
+        if derechos:
+            pdf.section_title("IV. DERECHOS VULNERADOS")
+            for d in derechos:
+                pdf.body_text(f"- {d}")
 
-    # VI. Juramento
-    pdf.section_title("VI. JURAMENTO")
-    pdf.body_text(
-        "Bajo la gravedad de juramento, afirmo que no he promovido "
-        "ni promuevo otra acción de tutela por los mismos hechos y derechos "
-        "ante ningún otro juez de la República, conforme al artículo "
-        "37 del Decreto 2591 de 1991."
-    )
+        # V. Petición
+        peticion = datos.get("peticion", "")
+        if peticion:
+            pdf.section_title("V. PETICIÓN")
+            pdf.body_text(peticion)
 
-    # VII. Pruebas
-    if pruebas_fotos:
-        pdf.section_title("VII. PRUEBAS")
+        # VI. Juramento
+        pdf.section_title("VI. JURAMENTO")
         pdf.body_text(
-            "Se adjuntan los soportes de la solicitud, que incluyen "
-            "evidencia documental de los hechos narrados y las respuestas "
-            "de la entidad accionada."
+            "Bajo la gravedad de juramento, afirmo que no he promovido "
+            "ni promuevo otra acción de tutela por los mismos hechos y derechos "
+            "ante ningún otro juez de la República, conforme al artículo "
+            "37 del Decreto 2591 de 1991."
         )
 
-    # VIII. Notificaciones
-    pdf.section_title("VIII. NOTIFICACIONES")
-    pdf.body_text("El accionante recibirá notificaciones en:")
-    pdf.body_text(f"  Email: {email}")
-    pdf.body_text(f"  Teléfono: {telefono}")
-    if accionado_email and accionado_email != "desconocido":
-        pdf.body_text(f"El accionado recibirá notificaciones en: {accionado_email}")
+        # VII. Pruebas
+        if pruebas_fotos:
+            pdf.section_title("VII. PRUEBAS")
+            pdf.body_text(
+                "Se adjuntan los soportes de la solicitud, que incluyen "
+                "evidencia documental de los hechos narrados y las respuestas "
+                "de la entidad accionada."
+            )
 
-    # IX. Firma
-    pdf.ln(15)
-    pdf.body_text("Atentamente,")
-    pdf.ln(15)
-    pdf.body_text(accionante)
-    _firma_documento(pdf, tipo_doc, cedula)
-    pdf.body_text(f"Email: {email}")
+        # VIII. Notificaciones
+        pdf.section_title("VIII. NOTIFICACIONES")
+        pdf.body_text("El accionante recibirá notificaciones en:")
+        pdf.body_text(f"  Email: {email}")
+        pdf.body_text(f"  Teléfono: {telefono}")
+        e_notif = normalizar_dato_obligatorio(datos.get("accionado_email", ""))
+        if e_notif:
+            pdf.body_text(f"El accionado recibirá notificaciones en: {e_notif}")
+
+        # IX. Firma
+        pdf.ln(15)
+        pdf.body_text("Atentamente,")
+        pdf.ln(15)
+        pdf.body_text(nombre)
+        _firma_documento(pdf, tipo_doc, cedula)
+        pdf.body_text(f"Email: {email}")
 
     # X. Anexos — imágenes de las pruebas incrustadas en el PDF
     _anexar_pruebas(pdf, pruebas_fotos)

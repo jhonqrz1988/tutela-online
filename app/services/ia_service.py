@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import logging
+import unicodedata
 
 import aiofiles
 import httpx
@@ -14,6 +15,59 @@ logger = logging.getLogger(__name__)
 
 # Base URL compatible con OpenAI del SDK nativo de Gemini (para transcribir audio)
 _GEMINI_SDK = "google-genai"
+
+
+NO_SABE_TOKENS = {
+    "no se", "no sé", "no se sabe", "nose", "ns", "n/s",
+    "no", "desconocido", "no sabe", "no aplica", "n/a", "no conozco",
+    "no la conozco", "no lo conozco", "no me se", "no me sé",
+}
+
+
+def _aplanar(texto: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFD", (texto or "").lower())
+        if unicodedata.category(ch) != "Mn"
+    ).strip()
+
+
+def normalizar_dato_obligatorio(valor: str | None) -> str:
+    """Convierte ``"no sé"``/``"desconocido"``/variantes en cadena vacía.
+
+    El flujo pide NIT/correo del accionado dejando al usuario responder
+    "no sé"; sin esta normalización esos tokens se imprimirían en el PDF
+    como datos reales.
+    """
+    if not valor:
+        return ""
+    if _aplanar(valor) in NO_SABE_TOKENS:
+        return ""
+    return valor.strip()
+
+
+# Campos de datos personales recolectados paso a paso en el flujo de WhatsApp.
+# La extracción de IA (narración) NO debe leerlos, pisarlos ni inventarlos.
+CAMPOS_PERSONALES_GUARDADOS = {
+    "accionante_nombre", "accionante_tipo_doc", "accionante_cedula",
+    "accionante_telefono", "accionante_email", "accionante_direccion",
+    "ciudad", "departamento",
+}
+
+
+def aplicar_extraccion(datos: dict, datos_ia: dict) -> dict:
+    """Fusiona la extracción de la narración en ``datos`` sin corromper los
+    datos personales ya recolectados.
+
+    Los campos de ``CAMPOS_PERSONALES_GUARDADOS`` nunca se toman de la IA
+    (ni para llenar vacíos ni para sobrescribir); los demás campos de la
+    narración (hechos, accionado, derechos, petición, etc.) se escriben tal
+    como la IA los extrajo.
+    """
+    for k, v in (datos_ia or {}).items():
+        if not v or k == "tipo" or k in CAMPOS_PERSONALES_GUARDADOS:
+            continue
+        datos[k] = v
+    return datos
 
 
 def _get_client() -> AsyncOpenAI | None:
@@ -69,7 +123,8 @@ def buscar_eps(nombre: str) -> dict | None:
 
 CAMPOS_TUTELA = [
     "tipo", "accionante_nombre", "accionante_tipo_doc", "accionante_cedula",
-    "accionante_telefono", "accionante_email", "ciudad", "departamento",
+    "accionante_telefono", "accionante_email", "accionante_direccion",
+    "ciudad", "departamento",
     "accionado", "accionado_tipo", "accionado_nit", "accionado_email",
     "hechos", "derechos_vulnerados", "peticion", "accionante_discapacidad",
 ]
@@ -307,7 +362,7 @@ MENSAJES_CAMPOS = {
 }
 
 
-async def generar_tutela(datos: dict) -> str | None:
+async def generar_tutela(datos: dict, citas: list[dict] | None = None) -> str | None:
     client = _get_client()
     if not client:
         return None
@@ -317,9 +372,17 @@ async def generar_tutela(datos: dict) -> str | None:
     ciudad = datos.get("ciudad", "la ciudad")
     genero = datos.get("genero", "masculino")
 
-    # Auto-completar NIT y email del accionado desde la base de datos de EPS
-    accionado_nit = datos.get("accionado_nit", "")
-    accionado_email = datos.get("accionado_email", "")
+    # Normalizar NIT/correo del accionado: "no sé" -> "" (nunca se eliminan si
+    # el usuario dio un valor real). Se persisten de vuelta en `datos` para que
+    # el modo plantilla del PDF y `datos_json` los conserven.
+    accionado_nit = normalizar_dato_obligatorio(datos.get("accionado_nit", ""))
+    accionado_email = normalizar_dato_obligatorio(datos.get("accionado_email", ""))
+    datos["accionado_nit"] = accionado_nit
+    datos["accionado_email"] = accionado_email
+
+    # Auto-completar NIT y email del accionado desde la base de datos de EPS;
+    # al volverlos a escribir en `datos`, el PDF en modo plantilla y el
+    # `datos_json` persistido quedan completos (antes solo alimentaban el prompt).
     if not accionado_nit or not accionado_email:
         eps_info = buscar_eps(accionado)
         if eps_info:
@@ -327,6 +390,24 @@ async def generar_tutela(datos: dict) -> str | None:
                 accionado_nit = eps_info["nit"]
             if not accionado_email:
                 accionado_email = eps_info["correo_notificacion"] or ""
+            datos["accionado_nit"] = accionado_nit
+            datos["accionado_email"] = accionado_email
+            datos["accionado"] = eps_info["nombre"]
+
+    citas_inyectadas = ""
+    if citas:
+        citas_lineas = []
+        for c in citas:
+            linea = c.get("referencia", "")
+            if c.get("texto_resumen"):
+                linea = f"{linea}: {c['texto_resumen']}"
+            citas_lineas.append(f"- {linea}")
+        citas_inyectadas = (
+            "\n\nCITAS VERIFICADAS (referencias validadas. Fundamenta los "
+            "DERECHOS VULNERADOS y los FUNDAMENTOS DE PROCEDIBILIDAD citando "
+            "la norma que respalde cada derecho vulnerado, usando SOLO estas):\n"
+            + "\n".join(citas_lineas)
+        )
 
     prompt = (
         f"Redacta una acción de tutela formal en formato legal colombiano.\n\n"
@@ -346,6 +427,7 @@ async def generar_tutela(datos: dict) -> str | None:
         f"HECHOS:\n{datos.get('hechos', '')}\n\n"
         f"DERECHOS VULNERADOS: {', '.join(datos.get('derechos_vulnerados', []))}\n\n"
         f"PETICIÓN:\n{datos.get('peticion', '')}\n\n"
+        f"{citas_inyectadas}\n"
         "INSTRUCCIONES CRÍTICAS:\n"
         "- En la sección II (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
         "- En la sección III (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"

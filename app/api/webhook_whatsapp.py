@@ -15,11 +15,13 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_session
+from app.models.cita_legal import CitaLegal
 from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.whatsapp import MensajeWhatsApp
 from app.services.documento_service import generar_pdf
 from app.services.ia_service import (
+    aplicar_extraccion,
     analizar_imagen,
     campos_faltantes,
     extraer_citas,
@@ -29,7 +31,9 @@ from app.services.ia_service import (
     transcribir_audio,
 )
 from app.services.verificacion_service import (
+    fundamentacion_juridica_extra,
     guardar_pendientes,
+    insertar_fundamentacion,
     limpiar_texto_para_pdf,
     verificar_citas,
 )
@@ -435,9 +439,7 @@ async def procesar_mensaje(
 
         try:
             datos_ia = await extraer_datos_caso(raw_body)
-            for k, v in datos_ia.items():
-                if v and k not in ("tipo",):
-                    datos[k] = v
+            aplicar_extraccion(datos, datos_ia)
         except Exception as e:
             logger.error(f"Error extrayendo datos caso: {e}")
             _r(respuestas, telefono, "Hubo un error procesando tu caso. Intenta de nuevo.")
@@ -466,9 +468,7 @@ async def procesar_mensaje(
                 session.commit()
                 _r(respuestas, telefono, "Hubo un error procesando tu caso con la IA. Escribe *reintentar* en un momento.")
                 return {"ok": True, "respuestas": respuestas}
-            for k, v in datos_ia.items():
-                if v and k not in ("tipo",):
-                    datos[k] = v
+            aplicar_extraccion(datos, datos_ia)
             tutela.datos_json = json.dumps(datos)
             tutela.estado = "revision_datos"
             session.commit()
@@ -892,6 +892,29 @@ def _ext_desde_mime(mime_type: str, url: str = "") -> str:
     return ".jpg"
 
 
+def _citas_verificadas_para_prompt(session, vertical: str = "salud") -> list[dict]:
+    """Citas legales verificadas (whitelist) para inyectar en el prompt de la IA.
+
+    Así la argumentación jurídica siempre se apoya en normativa real
+    (Constitución, leyes, decretos y jurisprudencia) verificada por el equipo.
+    """
+    filas = (
+        session.execute(
+            select(CitaLegal).where(CitaLegal.aplica_a == vertical, CitaLegal.vigente.is_(True))
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "referencia": c.referencia,
+            "texto_resumen": c.texto_resumen or "",
+            "titulo_corto": c.titulo_corto or "",
+        }
+        for c in filas
+    ]
+
+
 async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> str | None:
     _r(respuestas, telefono, "⏳ *Generando tu tutela...* Esto puede tardar unos segundos.")
 
@@ -899,20 +922,25 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
     # si falla, generar_pdf cae al modo plantilla construido desde `datos`.
     contenido_final: str | None = None
     try:
-        texto = await generar_tutela(datos)
+        texto = await generar_tutela(datos, citas=_citas_verificadas_para_prompt(session))
         if not texto:
             raise ValueError("la IA no devolvió texto")
 
         citas = await extraer_citas(texto)
+        validas: list[dict] = []
         if citas:
             resultado = verificar_citas(citas, session)
+            validas = resultado["validas"]
             if resultado["pendientes_revision"]:
                 tutela.estado_verificacion = "verificada_con_pendientes"
                 guardar_pendientes(tutela.id, resultado["pendientes_revision"], session)
                 texto = limpiar_texto_para_pdf(texto, resultado["pendientes_revision"])
             else:
                 tutela.estado_verificacion = "verificada"
-        contenido_final = texto
+
+        # Fundamentación jurídica garantizada: aunque la IA no haya desarrollado
+        # los fundamentos, el escrito cita la normativa verificada de la whitelist.
+        contenido_final = insertar_fundamentacion(texto, fundamentacion_juridica_extra(validas))
     except Exception as e:
         logger.error(f"IA/verificación falló (se genera PDF en modo plantilla): {e}")
         tutela.estado_verificacion = "pendiente_revision"

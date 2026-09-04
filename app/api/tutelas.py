@@ -47,7 +47,7 @@ def generar_pdf_tutela(tutela_id: int, session=Depends(get_session)):
         raise HTTPException(status_code=404, detail="No encontrada")
 
     datos = json.loads(tutela.datos_json or "{}")
-    contenido = datos.get("hechos", "")
+    contenido = datos.get("contenido_tutela") or None
     ruta = generar_pdf(datos, contenido)
     tutela.pdf_path = ruta
     tutela.estado = "pdf_generado"

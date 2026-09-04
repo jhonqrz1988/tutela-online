@@ -213,7 +213,7 @@ def enviar_documento(telefono: str, ruta_pdf: str, filename: str = "tutela.pdf")
 def _enviar_documento_meta(telefono: str, ruta_pdf: str, filename: str) -> bool:
     try:
         # 1. Subir el PDF como media en Meta → devuelve un media ID
-        upload_url = f"https://graph.facebook.com/v22.0/{settings.meta_phone_number_id}/media"
+        upload_url = f"https://graph.facebook.com/v25.0/{settings.meta_phone_number_id}/media"
         with open(ruta_pdf, "rb") as f:
             r_up = httpx.post(
                 upload_url,
@@ -309,7 +309,7 @@ def _enviar_imagen_meta(telefono: str, ruta_imagen: str, caption: str) -> bool:
         mime = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}.get(ext, "image/png")
         filename = ruta_imagen.rsplit("/", 1)[-1]
 
-        upload_url = f"https://graph.facebook.com/v22.0/{settings.meta_phone_number_id}/media"
+        upload_url = f"https://graph.facebook.com/v25.0/{settings.meta_phone_number_id}/media"
         with open(ruta_imagen, "rb") as f:
             r_up = httpx.post(
                 upload_url,
