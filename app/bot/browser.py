@@ -35,6 +35,7 @@ class BrowserManager:
             viewport={"width": 1366, "height": 768},
             locale="es-CO",
             timezone_id="America/Bogota",
+            accept_downloads=True,
         )
         await context.add_init_script("""
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });

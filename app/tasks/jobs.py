@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 
 BOGOTA_TZ = ZoneInfo("America/Bogota")
 
+# Estados de tutela que el scheduler radica automáticamente:
+# - pago_confirmado: pagada (webhook MP o confirmación manual) → radicar sin intervención.
+# - pendiente_radicacion: solicitada a través del bot/admin.
+# - fallida / pendiente: reintentos.
+ESTADOS_EN_COLA = ("pendiente_radicacion", "fallida", "pendiente", "pago_confirmado")
+
 
 def es_horario_habil(ahora: datetime | None = None) -> bool:
     """Verifica si la hora actual (zona Bogotá) está dentro del horario hábil.
@@ -43,9 +49,7 @@ def procesar_cola_radicacion():
     session = SessionLocal()
     try:
         tutelas = session.execute(
-            select(Tutela).where(
-                Tutela.estado.in_(["pendiente_radicacion", "fallida", "pendiente"])
-            )
+            select(Tutela).where(Tutela.estado.in_(ESTADOS_EN_COLA))
         ).scalars().all()
         ids_tutelas = [t.id for t in tutelas]
     finally:

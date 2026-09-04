@@ -10,6 +10,12 @@
 # - El plan gratis NO dispone de Persistent Disk: los archivos en storage/
 #   se pierden en cada redeploy. Antes de radicar tutelas reales, subir a
 #   Starter (~$7/mes) y montar el Persistent Disk en /data + STORAGE_DIR=/data/storage.
+#
+# MODO TEST RADICACIÓN (bot Rama Judicial): cuando vayan a hacer el test final,
+# setear en el dashboard de Render (toma precedencia sobre este archivo):
+#   SIMULATE_BOT=false, ENABLE_SCHEDULER=true,
+#   TWOCAPTCHA_API_KEY=<clave 2Captcha>, STORAGE_DIR=/data/storage,
+#   y contar con Persistent Disk montado en /data.
 services:
   - type: web
     name: tutela-online
@@ -55,6 +61,8 @@ services:
         sync: false
       - key: MERCADOPAGO_WEBHOOK_SECRET
         sync: false
+      - key: MERCADOPAGO_ENV
+        value: "production"
       - key: TWOCAPTCHA_API_KEY
         sync: false
       - key: ENABLE_SCHEDULER
