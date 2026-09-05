@@ -144,6 +144,85 @@ class TestGenerarTutelaUsaNuevoPrompt(unittest.TestCase):
     def test_system_prompt_omite_no_marca_pendiente_masivo(self):
         self.assertIn("OMÍTELO", SYSTEM_PROMPT)
         self.assertIn("NUNCA entregas una plantilla", SYSTEM_PROMPT)
+        self.assertIn("FORMATO DE SALIDA", SYSTEM_PROMPT)
+        self.assertIn("SIN marcado de Markdown", SYSTEM_PROMPT)
+
+    def test_system_prompt_prohibe_marcas_pendientes(self):
+        self.assertIn("NUNCA dejes marcas tipo", SYSTEM_PROMPT)
+        self.assertIn("[DATO PENDIENTE: ...]", SYSTEM_PROMPT)
+        self.assertNotIn("Solo escribe explícitamente", SYSTEM_PROMPT)
+
+    def test_instrucciones_criticas_prohiben_markdown(self):
+        fake = _FakeClient("TEXTO")
+        with mock.patch.object(ia_service, "_get_client", return_value=fake):
+            asyncio.run(generar_tutela(dict(DATOS_BASE)))
+        kwargs = fake.chat.completions.last_kwargs
+        user = "\n".join(m["content"] for m in kwargs["messages"] if m["role"] == "user")
+        self.assertIn("NUNCA escribas '[DATO PENDIENTE...]'", user)
+        self.assertIn("Prohibido el Markdown", user)
+
+
+class TestLimpiezaMarkdownEnPdf(unittest.TestCase):
+    """El texto IA viene en Markdown (### / ** / ---); el PDF debe
+    limpiarlo y aplicar el corte de secciones antes de renderizar."""
+
+    def test_limpiar_markdown_quita_titulos_negritas_y_hr(self):
+        from app.services.documento_service import _quitar_markdown
+        texto = "**Señor Juez del Circuito**\n### III. Hechos\n**Negrita:** hola\n---\nTexto."
+        limpio = _quitar_markdown(texto)
+        self.assertNotIn("#", limpio)
+        self.assertNotIn("**", limpio)
+        self.assertNotIn("---", limpio)
+        self.assertIn("Señor Juez del Circuito", limpio)
+        self.assertIn("III. Hechos", limpio)
+        self.assertIn("Negrita: hola", limpio)
+
+    def test_eliminar_pendientes_quita_marcas_y_frases_vacias(self):
+        from app.services.documento_service import _quitar_marcadores_pendientes
+        texto = (
+            "Radicación: [pendiente]\n"
+            "**[DATO PENDIENTE: fecha exacta]**, la entidad respondió mal.\n"
+            "Normal."
+        )
+        limpio = _quitar_marcadores_pendientes(texto)
+        self.assertNotIn("[pendiente]", limpio)
+        self.assertNotIn("DATO PENDIENTE", limpio)
+        self.assertIn("la entidad respondió mal", limpio)
+        self.assertNotIn("Radicación:", limpio)
+        self.assertIn("Normal.", limpio)
+
+    def test_pendiente_en_numeral_queda_el_texto_sin_numeral(self):
+        from app.services.documento_service import _quitar_marcadores_pendientes
+        texto = "3. **[DATO PENDIENTE: fecha exacta]**, la EPS respondió mal."
+        limpio = _quitar_marcadores_pendientes(texto)
+        self.assertNotIn("DATO PENDIENTE", limpio)
+        self.assertNotIn("3.", limpio)
+        self.assertEqual(limpio.strip(), "la EPS respondió mal.")
+
+    def test_sanear_contenido_no_filtra_direcciones_con_numeral(self):
+        from app.services.documento_service import _sanear_contenido_ia
+        texto = "### I. Accionante\n**Dirección:** Calle 30a #32b-14, Torre B\n**Contacto:** 300 383 8276"
+        saneado = _sanear_contenido_ia(texto)
+        self.assertIn("#32b-14", saneado)
+        self.assertNotIn("###", saneado)
+        self.assertNotIn("**", saneado)
+
+    def test_corte_reconoce_seccion_iii_con_markdown(self):
+        from app.services.documento_service import _cuerpo_sin_encabezado_y_partes, _quitar_markdown
+        texto = (
+            "**Señor Juez**\n"
+            "### I. Accionante\n"
+            "María\n"
+            "### II. Accionado\n"
+            "EPS\n"
+            "### III. Hechos\n"
+            "1. Sucedió todo."
+        )
+        cuerpo = _cuerpo_sin_encabezado_y_partes(_quitar_markdown(texto))
+        self.assertNotIn("María", cuerpo)
+        self.assertNotIn("EPS", cuerpo)
+        self.assertIn("III. Hechos", cuerpo)
+        self.assertIn("Sucedió todo", cuerpo)
 
     def test_eps_autocompletado_persiste(self):
         datos = dict(DATOS_BASE)

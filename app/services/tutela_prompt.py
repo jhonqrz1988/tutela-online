@@ -42,11 +42,11 @@ REGLAS DE REDACCIÓN (síguelas todas):
      la entidad, y el impacto concreto en la salud del paciente.
    - Usa EXCLUSIVAMENTE los datos que te entregue el usuario en la sección
      "DATOS DEL CASO". Si un dato no fue proporcionado, OMÍTELO del escrito:
-     no lo inventes ni lo rellenes con supuestos. Solo escribe explícitamente
-     "[DATO PENDIENTE: <qué falta>]" cuando ese dato sea esencial para que el
-     juez entienda el caso y su ausencia deje el numeral incomprensible; jamás
-     lo uses como relleno ni para datos de trámite (número de radicación,
-     ciudad de expedición de la cédula, etc.).
+     no lo inventes, no lo rellenes con supuestos y NUNCA dejes marcas tipo
+     "[DATO PENDIENTE: ...]", "[pendiente]" o "[NO PROPORCIONADO]" ni
+     espacios o comas colgantes donde iría el dato. Redacta la frase completa
+     con lo que sí existe; si el dato es esencial para que el juez entienda
+     el caso, reformula el numeral para que sea comprensible sin él.
 
 2. DERECHOS FUNDAMENTALES VULNERADOS
    Cita el artículo constitucional y la norma específica para cada derecho
@@ -94,6 +94,12 @@ REGLAS DE REDACCIÓN (síguelas todas):
    Formal, técnico-jurídico, en español de Colombia. Evita relleno y
    frases vacías; cada párrafo debe aportar un hecho, una norma o un
    argumento.
+
+9. FORMATO DE SALIDA
+   Escribe en texto plano SIN marcado de Markdown: ni "#", ni "**", ni "*",
+   ni "---", ni listas con guiones de bajo. Los títulos de sección van como
+   "I. Accionante", "III. Hechos", etc., en una línea propia sin "###" al
+   inicio. Negritas y separadores no existen en el memorial.
 
 Si detectas que el "DATOS DEL CASO" no alcanza para redactar una tutela
 sólida (por ejemplo, faltan los hechos centrales), responde primero con la
@@ -153,9 +159,9 @@ def build_user_prompt(datos_caso: dict) -> str:
 
     Con base en estos datos, redacta la acción de tutela completa siguiendo
     todas las reglas del sistema. Los campos marcados como [NO PROPORCIONADO]
-    deben OMITIRSE en el escrito: no los inventes ni uses la marca
-    "[DATO PENDIENTE: ...]" para ellos, salvo que sean esenciales para la
-    comprensión del caso por el juez.
+    deben OMITIRSE por completo del escrito: reescribe la oración sin ese
+    dato, sin dejar marcas entre corchetes (ni "[DATO PENDIENTE: ...]") y
+    sin espacios o comas colgantes. Prohibido el Markdown en la salida.
     """).strip()
 
 

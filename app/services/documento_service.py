@@ -131,6 +131,65 @@ def _limpiar_texto(texto: str) -> str:
     return _RE_GLIFOS_INVALIDOS.sub("", texto.replace("\u00a0", " "))
 
 
+# Markdown que la IA deja en el texto (títulos "###", negrita, itálica y HR).
+# `#` literal a mitad de texto (direcciones tipo "Calle 30a #32b-14") se preserva.
+_RE_TITULO_MD = re.compile(r"^\s*#{1,6}\s*")
+_RE_HR_MD = re.compile(r"^\s*([-*_])\1{2,}\s*$")
+_RE_CURSIVA_MD = re.compile(r"(^|[\s])\*(\S.*?\S)\*([\s]$|[\s.,;:!?)]|$)")
+
+
+def _quitar_markdown(texto: str) -> str:
+    """Convierte el texto IA de Markdown a texto plano para el PDF.
+
+    Lo que no se limpie aquí saldría literal en el documento (###, **, ---),
+    y rompería además la detección de secciones en `_cuerpo_sin_encabezado_y_partes`.
+    """
+    lineas = []
+    for raw in (texto or "").splitlines():
+        linea = _RE_TITULO_MD.sub("", raw)
+        linea = linea.replace("**", "").replace("__", "")
+        linea = _RE_CURSIVA_MD.sub(r"\1\2\3", linea)
+        if _RE_HR_MD.match(linea):
+            continue
+        if not linea.strip():
+            continue
+        lineas.append(linea.rstrip())
+    return "\n".join(lineas)
+
+
+# Marcadores que la IA deja cuando falta un dato: "3. **[DATO PENDIENTE: X]**, ..."
+_RE_PENDIENTE = re.compile(r"\[\s*(?:DATO\s+PENDIENTE[^\]]*|NO\s+PROPORCIONADO[^\]]*|pendiente[^\]]*)\s*\]", re.IGNORECASE)
+_RE_RESTOS_PENDIENTE = re.compile(r"^\s*(?:[-•]|\d{1,2}\.)\s*\**\s*,?\s*")
+
+
+def _quitar_marcadores_pendientes(texto: str) -> str:
+    """Elimina "[DATO PENDIENTE: X]", "[NO PROPORCIONADO]" y "[pendiente]".
+
+    Si al quitar el marcador la línea queda como etiqueta sin valor
+    (p. ej. "Radicación: [pendiente]", "Fecha: [DATO PENDIENTE]"), se elimina
+    completa; si el marcador encabezaba un numeral o ítem, se retira el
+    numeral/bullet ya vaciado ("3. [DATO PENDIENTE] ..." queda el texto).
+    """
+    lineas = []
+    for raw in (texto or "").splitlines():
+        tenia_marcador = bool(_RE_PENDIENTE.search(raw))
+        linea = _RE_PENDIENTE.sub("", raw)
+        if tenia_marcador:
+            linea = _RE_RESTOS_PENDIENTE.sub("", linea)
+        if not linea.strip():
+            continue
+        if re.search(r":\s*$", linea):
+            continue
+        lineas.append(linea.rstrip())
+    return "\n".join(lineas)
+
+
+def _sanear_contenido_ia(texto: str) -> str:
+    """Pipeline previo a renderizar el cuerpo IA: quita markdown y pendientes,
+    en ese orden para que el corte de secciones funcione sobre texto plano."""
+    return _quitar_markdown(_quitar_marcadores_pendientes(texto))
+
+
 def _render_contenido_ia(pdf: FPDF, contenido: str) -> None:
     """Renderiza el texto generado por la IA (ya verificado) como cuerpo del PDF.
 
@@ -222,7 +281,8 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     if contenido_tutela:
         # Modo IA: el cuerpo legal (HECHOS en adelante) se toma del texto
         # verificado; encabezado/accionante/accionado ya se imprimieron arriba.
-        _render_contenido_ia(pdf, _cuerpo_sin_encabezado_y_partes(contenido_tutela))
+        cuerpo = _sanear_contenido_ia(contenido_tutela)
+        _render_contenido_ia(pdf, _cuerpo_sin_encabezado_y_partes(cuerpo))
     else:
         # Modo plantilla: respaldo si la IA no generó texto — se arma desde `datos`.
 

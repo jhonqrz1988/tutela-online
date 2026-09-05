@@ -391,10 +391,10 @@ async def generar_tutela(datos: dict, citas: list[dict] | None = None) -> str | 
         "- En la sección I (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
         "- En la sección II (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"
         "- En la sección IX (PRUEBAS Y ANEXOS) usa un párrafo genérico tipo 'Se adjuntan los soportes de la solicitud...'. No listar archivos.\n"
-        "- Los campos [NO PROPORCIONADO] se OMITEN del escrito: no los inventes ni uses "
-        "[DATO PENDIENTE] para datos de trámite (número de radicación, ciudad de "
-        "expedición de la cédula). Solo marca [DATO PENDIENTE] cuando el dato sea "
-        "esencial para la comprensión del caso y su ausencia deje el numeral incomprensible.\n"
+        "- Los campos [NO PROPORCIONADO] se OMITEN por completo del escrito: reescribe "
+        "la oración sin el dato, sin marcas entre corchetes ni espacios/comas colgantes. "
+        "NUNCA escribas '[DATO PENDIENTE...]' ni '[...]' ni '[pendiente]'. Prohibido el "
+        "Markdown: nada de '#', '*', '---' en la salida.\n"
     )
 
     resp = await client.chat.completions.create(
