@@ -26,6 +26,8 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    from seed_citas import seed_citas
+    seed_citas()
     from app.api.admin import _validar_secret_key_prod
     _validar_secret_key_prod()
     from app.tasks.scheduler import iniciar_scheduler
