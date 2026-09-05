@@ -10,6 +10,7 @@ from anyio import Path
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.services.tutela_prompt import SYSTEM_PROMPT, build_user_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,35 @@ CAMPOS_TUTELA = [
     "hechos", "derechos_vulnerados", "peticion", "accionante_discapacidad",
 ]
 
+
+def mapear_datos_caso(datos: dict) -> dict:
+    """Traduce el dict interno del flujo al esquema que espera build_user_prompt.
+
+    Los campos que el flujo no recolecta por separado (tipo de afiliación,
+    diagnóstico, fechas, riesgo) van vacíos: el builder los marca como
+    [NO PROPORCIONADO] y el SYSTEM_PROMPT obliga a usar [DATO PENDIENTE]
+    en vez de inventarlos.
+    """
+    return {
+        "nombre": datos.get("accionante_nombre", ""),
+        "cedula": datos.get("accionante_cedula", ""),
+        "ciudad_expedicion": "",
+        "direccion": datos.get("accionante_direccion", ""),
+        "telefono": datos.get("accionante_telefono", ""),
+        "correo": datos.get("accionante_email", ""),
+        "entidad_accionada": datos.get("accionado", ""),
+        "nit_entidad": datos.get("accionado_nit", ""),
+        "correo_notificacion_entidad": datos.get("accionado_email", ""),
+        "tipo_afiliacion": "",
+        "diagnostico": "",
+        "medicamentos_o_servicio": "",
+        "fecha_solicitud": "",
+        "fecha_negativa": "",
+        "descripcion_negativa": datos.get("hechos", ""),
+        "riesgo_para_salud": "",
+        "ciudad_radicacion": datos.get("ciudad", ""),
+    }
+
 SISTEMA_EXTRACCION_CASO = """Eres un asistente legal colombiano especializado en acciones de tutela de salud.
 
 Tarea: Extrae información estructurada del relato del usuario para generar una tutela completa.
@@ -154,62 +184,9 @@ Reglas:
 
 Respuesta SOLO JSON, sin explicaciones."""
 
-# Prompt de sistema anti-alucinación: estructura rígida I-XI y marcadores [FALTA: ...]
-SISTEMA_TUTELA = """Eres un asistente especializado en redactar acciones de tutela conforme al
-ordenamiento jurídico colombiano (Artículo 86 de la Constitución Política
-y Decreto 2591 de 1991). Con la información que te entregue el usuario,
-genera el escrito siguiendo esta estructura exacta, en este orden, con
-numeración romana I a XI sin saltos:
-
-I. ENCABEZADO: dirigido al juez competente (reparto), ciudad completa y
-   fecha en español (día, mes en letras, año — nunca mezclar idiomas).
-II. ACCIONANTE: nombres completos, cédula, dirección, teléfono, correo —
-    solo con los datos que el usuario proporcionó.
-III. ACCIONADO: nombre o razón social + tipo (natural o jurídica) + NIT + correo
-    electrónico de notificación.
-IV. HECHOS: narración cronológica, numerada, clara y verificable. Usa
-    ÚNICAMENTE los hechos que el usuario relató. Si falta una fecha, un
-    nombre o un dato clave, usa un marcador explícito como
-    [FALTA: fecha de la negativa] en vez de inventarlo.
-V. DERECHOS FUNDAMENTALES VULNERADOS: identifica el o los derechos
-   concretos. Cada derecho debe ir con 1-2 frases que lo conecten
-   directamente con los hechos narrados — nunca solo el artículo
-   constitucional sin explicación.
-VI. FUNDAMENTOS DE PROCEDIBILIDAD: explica por qué procede la tutela
-    (subsidiariedad e inmediatez). Si el derecho vulnerado es la salud,
-    menciona que es un derecho fundamental autónomo (Ley Estatutaria
-    1751 de 2015), sin necesidad de demostrar conexidad con la vida.
-VII. MEDIDA PROVISIONAL: si los hechos muestran urgencia (el accionante
-     ya asumió gastos propios, hay riesgo de agravamiento, o se
-     interrumpió un tratamiento en curso), solicita explícitamente una
-     medida provisional mientras se decide el fondo.
-VIII. PRETENSIONES: numeradas (PRIMERO, SEGUNDO...), concretas y
-      ejecutables. Si el accionante ya pagó de su bolsillo algo que
-      debía cubrir la entidad, incluye una pretensión de reintegro de
-      esos gastos.
-IX. PRUEBAS: redacta un párrafo genérico tipo "Se adjuntan los soportes de
-    la solicitud, que incluyen evidencia documental de los hechos narrados y
-    las respuestas de la entidad accionada." No listar nombres de archivo ni
-    describir contenido específico de cada prueba. Si no hay pruebas, escribe
-    [FALTA: pruebas documentales].
-X. JURAMENTO: "Manifiesto bajo la gravedad de juramento que no he
-   interpuesto otra acción de tutela por los mismos hechos y derechos"
-   (Art. 37, Decreto 2591 de 1991).
-XI. NOTIFICACIONES: datos de contacto para recibir la respuesta, seguido
-    de espacio para firma, nombre y número de cédula.
-
-REGLAS ESTRICTAS:
-- Nunca inventes hechos, fechas, nombres, cifras o direcciones de correo
-  que el usuario no haya proporcionado exactamente. Usa [FALTA: ...] en
-  vez de rellenar con supuestos.
-- Si un dato parece inválido (ej. un correo con dominio inexistente),
-  no lo corrijas por tu cuenta: repórtalo como [VERIFICAR: dato dudoso].
-- Lenguaje formal jurídico pero comprensible, sin adornos innecesarios.
-- No emitas opiniones sobre el resultado del caso ni cites jurisprudencia
-  que no te haya sido dada como contexto verificado.
-- La fecha del encabezado siempre en español, sin mezclar idiomas.
-- Responde solo con el texto de la tutela en el formato anterior, sin
-  explicaciones adicionales."""
+# Prompt de sistema y builder de prompt de usuario: ahora viven en
+# `app/services/tutela_prompt.py` (módulo externo integrado). `generar_tutela`
+# usa SYSTEM_PROMPT + build_user_prompt con datos mapeados por mapear_datos_caso.
 
 
 def _transcribir_con_gemini_sync(ruta_audio: str) -> str | None:
@@ -368,9 +345,6 @@ async def generar_tutela(datos: dict, citas: list[dict] | None = None) -> str | 
         return None
 
     accionado = datos.get("accionado", "la entidad")
-    accionante = datos.get("accionante_nombre", "el accionante")
-    ciudad = datos.get("ciudad", "la ciudad")
-    genero = datos.get("genero", "masculino")
 
     # Normalizar NIT/correo del accionado: "no sé" -> "" (nunca se eliminan si
     # el usuario dio un valor real). Se persisten de vuelta en `datos` para que
@@ -409,38 +383,27 @@ async def generar_tutela(datos: dict, citas: list[dict] | None = None) -> str | 
             + "\n".join(citas_lineas)
         )
 
-    prompt = (
-        f"Redacta una acción de tutela formal en formato legal colombiano.\n\n"
-        f"GÉNERO DEL ACCIONANTE: {genero} (usa pronombres concordantes)\n\n"
-        f"DATOS DEL ACCIONANTE:\n"
-        f"Nombre: {accionante}\n"
-        f"Documento: {datos.get('accionante_tipo_doc', 'CC')} {datos.get('accionante_cedula', '')}\n"
-        f"Teléfono: {datos.get('accionante_telefono', '')}\n"
-        f"Email: {datos.get('accionante_email', '')}\n"
-        f"Dirección: {datos.get('accionante_direccion', '[FALTA: dirección de residencia]')}\n"
-        f"Ciudad: {ciudad}, {datos.get('departamento', '')}\n\n"
-        f"ACCIONADO:\n"
-        f"Nombre/Razón Social: {accionado}\n"
-        f"Tipo: {datos.get('accionado_tipo', 'jurídica')}\n"
-        f"NIT: {accionado_nit or '[FALTA: NIT de la entidad]'}\n"
-        f"Email notificación: {accionado_email or '[FALTA: correo de notificación del accionado]'}\n\n"
-        f"HECHOS:\n{datos.get('hechos', '')}\n\n"
-        f"DERECHOS VULNERADOS: {', '.join(datos.get('derechos_vulnerados', []))}\n\n"
-        f"PETICIÓN:\n{datos.get('peticion', '')}\n\n"
-        f"{citas_inyectadas}\n"
-        "INSTRUCCIONES CRÍTICAS:\n"
-        "- En la sección II (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
-        "- En la sección III (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"
-        "- En la sección IX (PRUEBAS) usa un párrafo genérico tipo 'Se adjuntan los soportes de la solicitud...'. No listar archivos.\n"
-        "- Si falta algún dato usa el marcador [FALTA: descripción del dato].\n"
+    prompt = build_user_prompt(mapear_datos_caso(datos))
+    if citas_inyectadas:
+        prompt += citas_inyectadas
+    prompt += (
+        "\n\nINSTRUCCIONES CRÍTICAS:\n"
+        "- En la sección I (ACCIONANTE) incluye SIEMPRE la dirección completa del accionante.\n"
+        "- En la sección II (ACCIONADO) incluye SIEMPRE el NIT y el email de notificación.\n"
+        "- En la sección IX (PRUEBAS Y ANEXOS) usa un párrafo genérico tipo 'Se adjuntan los soportes de la solicitud...'. No listar archivos.\n"
+        "- Los campos [NO PROPORCIONADO] se OMITEN del escrito: no los inventes ni uses "
+        "[DATO PENDIENTE] para datos de trámite (número de radicación, ciudad de "
+        "expedición de la cédula). Solo marca [DATO PENDIENTE] cuando el dato sea "
+        "esencial para la comprensión del caso y su ausencia deje el numeral incomprensible.\n"
     )
 
     resp = await client.chat.completions.create(
         model=settings.ai_chat_model,
         messages=[
-            {"role": "system", "content": SISTEMA_TUTELA},
+            {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ],
+        temperature=0.3,
     )
     return resp.choices[0].message.content
 
