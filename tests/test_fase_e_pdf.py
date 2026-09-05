@@ -230,11 +230,63 @@ class TestAplicarExtraccion(unittest.TestCase):
         self.assertNotIn("accionante_nombre", resultado)
 
 
+class TestNormalizarReferenciaRobusta(unittest.TestCase):
+    """La IA escribe variantes ("Art. 49 de la Constitución Política") que deben
+    matchear la whitelist normalizada ("art 49 constitucion politica de colombia")."""
+
+    def test_constitucion_sin_de_colombia_matchea(self):
+        self.assertEqual(
+            verificacion_service.normalizar_referencia("Art. 49 de la Constitución Política"),
+            "art 49 constitucion politica de colombia",
+        )
+        self.assertEqual(
+            verificacion_service.normalizar_referencia("Artículo 49 de la Constitución Política de Colombia"),
+            "art 49 constitucion politica de colombia",
+        )
+
+    def test_verificar_citas_matchea_multiple_variantes_constitucion(self):
+        session = SessionLocal()
+        cita = CitaLegal(
+            tipo="constitucion",
+            referencia="Test Normalizar Art. 49",
+            referencia_normalizada="art 49 constitucion politica de colombia",
+            titulo_corto="Art. 49 C.P.",
+            texto_resumen="La atencion de la salud es un servicio publico.",
+            url_fuente="https://x",
+            aplica_a="salud",
+            vigente=True,
+        )
+        try:
+            session.add(cita)
+            session.commit()
+            for variante in [
+                "Art. 49 de la Constitución Política",
+                "Artículo 49 de la Constitución Política de Colombia",
+                "Art. 49 C.P.",
+            ]:
+                resultado = verificacion_service.verificar_citas(
+                    [{"referencia_textual": variante, "contexto": ""}], session
+                )
+                self.assertEqual(
+                    len(resultado["validas"]), 1,
+                    f"la variante '{variante}' no matcheó la whitelist",
+                )
+            cita_id = cita.id
+        finally:
+            session.close()
+        session = SessionLocal()
+        try:
+            session.query(CitaLegal).filter(CitaLegal.id == cita_id).delete()
+            session.commit()
+        finally:
+            session.close()
+
+
 class TestVerificarCitasFundamentacion(unittest.TestCase):
     def test_validas_incluyen_texto_resumen(self):
         cita = CitaLegal(
-            tipo="ley", referencia="Ley 1751 de 2015", referencia_normalizada="ley 1751 de 2015",
-            titulo_corto="Ley 1751/2015", texto_resumen="La salud es un derecho fundamental autónomo.",
+            tipo="ley", referencia="Ley 9999 de 2099 Test", referencia_normalizada="ley 9999 de 2099 test",
+            titulo_corto="Ley 9999 Test", texto_resumen="La salud es un derecho fundamental autónomo.",
             url_fuente="https://x", aplica_a="salud", vigente=True,
         )
         session = SessionLocal()
@@ -242,11 +294,11 @@ class TestVerificarCitasFundamentacion(unittest.TestCase):
             session.add(cita)
             session.commit()
             resultado = verificacion_service.verificar_citas(
-                [{"referencia_textual": "Ley 1751 de 2015", "contexto": "con texto"}], session
+                [{"referencia_textual": "Ley 9999 de 2099 Test", "contexto": "con texto"}], session
             )
             self.assertEqual(len(resultado["validas"]), 1)
             self.assertEqual(resultado["validas"][0]["texto_resumen"], "La salud es un derecho fundamental autónomo.")
-            self.assertEqual(resultado["validas"][0]["titulo_corto"], "Ley 1751/2015")
+            self.assertEqual(resultado["validas"][0]["titulo_corto"], "Ley 9999 Test")
             cita_id = cita.id
         finally:
             session.close()
@@ -292,8 +344,8 @@ class TestIntegracionGenerarConVerificacion(unittest.TestCase):
         self.session.add(usuario)
         self.session.flush()
         cita = CitaLegal(
-            tipo="ley", referencia="Ley 1751 de 2015", referencia_normalizada="ley 1751 de 2015",
-            titulo_corto="Ley 1751/2015", texto_resumen="La salud es un derecho fundamental autónomo.",
+            tipo="ley", referencia="Ley 9999 de 2099 Test", referencia_normalizada="ley 9999 de 2099 test",
+            titulo_corto="Ley 9999 Test", texto_resumen="La salud es un derecho fundamental autónomo.",
             aplica_a="salud", vigente=True,
         )
         self.session.add(cita)
@@ -307,7 +359,7 @@ class TestIntegracionGenerarConVerificacion(unittest.TestCase):
                  mock.patch.object(webhook_whatsapp, "generar_tutela",
                                    AsyncMock(return_value=TEXTO_IA)), \
                  mock.patch.object(webhook_whatsapp, "extraer_citas",
-                                   AsyncMock(return_value=[{"referencia_textual": "Ley 1751 de 2015",
+                                   AsyncMock(return_value=[{"referencia_textual": "Ley 9999 de 2099 Test",
                                                             "tipo": "ley", "contexto": "sin enfermedad"}])) as ex_citas, \
                  mock.patch.object(webhook_whatsapp, "enviar_documento", return_value=True) as env_doc:
 
@@ -321,7 +373,7 @@ class TestIntegracionGenerarConVerificacion(unittest.TestCase):
                 ex_citas.assert_awaited_once()
                 texto = _texto_pdf(ruta)
                 self.assertIn("FUNDAMENTACIÓN JURÍDICA", texto)
-                self.assertIn("Ley 1751 de 2015", texto)
+                self.assertIn("Ley 9999 de 2099 Test", texto)
                 self.assertIn("derecho fundamental autónomo", texto)
                 self.assertIn("JUEZ CONSTITUCIONAL DE BOGOTÁ", texto)
                 self.assertNotIn("1 de enero de 2026", texto)
