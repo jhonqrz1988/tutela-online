@@ -22,6 +22,6 @@ class Tutela(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship(back_populates="tutelas")  # noqa: F821
-    radicacion: Mapped[list["Radicacion"]] = relationship(back_populates="tutela")  # noqa: F821
-    mensajes: Mapped[list["MensajeWhatsApp"]] = relationship(back_populates="tutela")  # noqa: F821
-    citas_pendientes: Mapped[list["CitaPendiente"]] = relationship(back_populates="tutela")  # noqa: F821
+    radicacion: Mapped[list["Radicacion"]] = relationship(back_populates="tutela", cascade="all, delete-orphan")  # noqa: F821
+    mensajes: Mapped[list["MensajeWhatsApp"]] = relationship(back_populates="tutela", cascade="all, delete-orphan")  # noqa: F821
+    citas_pendientes: Mapped[list["CitaPendiente"]] = relationship(back_populates="tutela", cascade="all, delete-orphan")  # noqa: F821

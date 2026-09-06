@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
+from app.models.cita_legal import CitaPendiente
 from app.models.tutela import Tutela
 from app.models.user import User
 
@@ -260,6 +261,24 @@ class TestSalirReiniciar(_FlujoMixin):
         tutelas = session.execute(select(Tutela)).scalars().all()
         self.assertEqual(len(tutelas), 1)
         self.assertEqual(tutelas[0].estado, "recogiendo_datos")
+
+    def test_salir_borra_citas_pendientes_asociadas(self):
+        """'salir' con una tutela que tiene CitaPendiente no debe fallar ni dejarlas huérfanas."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "narracion", {**_datos_personales_completos(), "tipo": "salud"}
+        )
+        session.add(CitaPendiente(
+            tutela_id=tutela.id,
+            referencia_textual="Art. 49 CP",
+            contexto="derecho a la salud",
+        ))
+        session.commit()
+        asyncio.run(self._procesar(session, user.telefono, "salir"))
+        pendientes = session.execute(select(CitaPendiente)).scalars().all()
+        self.assertEqual(len(pendientes), 0)
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 0)
 
 
 class TestMapeoClinicosAlPrompt(unittest.TestCase):
