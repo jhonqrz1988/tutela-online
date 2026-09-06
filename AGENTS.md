@@ -36,23 +36,26 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 ## Critical State Machine (Tutela.estado)
 1. `borrador` - Initial state on creation
 2. `recogiendo_datos` - Collect personal info (8 steps)
-3. `narracion` - User tells their case
-4. `confirmar_audio` - Confirm transcribed audio
-5. `revision_datos` - Review AI-extracted data before proceeding
-6. `pruebas_pendiente` - Ask to attach evidence
-7. `recibiendo_pruebas` - Receive attachments
-8. `datos_listos` - Show summary + get juramento
-9. `pdf_generado` - PDF generated (transient, goes to next)
-10. `esperando_decision_radicacion` - Awaiting radicacion result
-11. `confirmar_pago` - Payment flow
-12. `esperando_pago` - Payment link sent, awaiting user confirmation
-13. `pago_por_confirmar` - User reported payment, human verifies in admin
-14. `pago_confirmado` - Payment confirmed, awaiting manual radicacion by team
-15. `radicada` - Radicado number registered from admin panel
-16. `completado` - Done
-17. `hazlo_tu_mismo` - User chose to radicate it themselves; can switch back to `confirmar_pago` (writes "Quiero que la radiquen") without restarting the flow
-18. `pendiente_radicacion` - Retry queued (Reintentar or nightly job)
-19. `fallida` - Radicacion attempt failed
+3. `confirmar_datos_personales` - Summary of personal data + confirm/correct buttons
+4. `corrigiendo_datos_personales` - Pick field by number (1-8) and write new value; writes REAL value to `datos`
+5. `narracion` - User tells their case
+6. `confirmar_audio` - Confirm transcribed audio
+7. `revision_datos` - Review AI-extracted data before proceeding
+8. `preguntas_clinicas` - Collect case-specific clinical data (afiliación, servicio negado, fechas) so IA doesn't invent them
+9. `pruebas_pendiente` - Ask to attach evidence
+10. `recibiendo_pruebas` - Receive attachments
+11. `datos_listos` - Show summary + get juramento
+12. `pdf_generado` - PDF generated (transient, goes to next)
+13. `esperando_decision_radicacion` - Awaiting radicacion result
+14. `confirmar_pago` - Payment flow
+15. `esperando_pago` - Payment link sent, awaiting user confirmation
+16. `pago_por_confirmar` - User reported payment, human verifies in admin
+17. `pago_confirmado` - Payment confirmed, awaiting manual radicacion by team
+18. `radicada` - Radicado number registered from admin panel
+19. `completado` - Done
+20. `hazlo_tu_mismo` - User chose to radicate it themselves; can switch back to `confirmar_pago` (writes "Quiero que la radiquen") without restarting the flow
+21. `pendiente_radicacion` - Retry queued (Reintentar or nightly job)
+22. `fallida` - Radicacion attempt failed
 
 ## Payment Flow (Mercado Pago Checkout Pro + manual radicacion)
 - Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` creates a Mercado Pago preference via `crear_preferencia_checkout()` in `app/services/mercadopago_service.py` (reference `TUT-{id}`, `notification_url` = `{app_url}/webhook/mercadopago`) and redirects (302) to the returned `init_point`.

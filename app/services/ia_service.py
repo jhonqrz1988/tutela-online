@@ -134,10 +134,9 @@ CAMPOS_TUTELA = [
 def mapear_datos_caso(datos: dict) -> dict:
     """Traduce el dict interno del flujo al esquema que espera build_user_prompt.
 
-    Los campos que el flujo no recolecta por separado (tipo de afiliación,
-    diagnóstico, fechas, riesgo) van vacíos: el builder los marca como
-    [NO PROPORCIONADO] y el SYSTEM_PROMPT obliga a usar [DATO PENDIENTE]
-    en vez de inventarlos.
+    Los campos clínicos son recolectados por el bot (estado preguntas_clinicas)
+    para que la IA no los invente; los que no aplican van vacíos tras remover
+    marcadores de "no sabe".
     """
     return {
         "nombre": datos.get("accionante_nombre", ""),
@@ -149,13 +148,13 @@ def mapear_datos_caso(datos: dict) -> dict:
         "entidad_accionada": datos.get("accionado", ""),
         "nit_entidad": datos.get("accionado_nit", ""),
         "correo_notificacion_entidad": datos.get("accionado_email", ""),
-        "tipo_afiliacion": "",
-        "diagnostico": "",
-        "medicamentos_o_servicio": "",
-        "fecha_solicitud": "",
-        "fecha_negativa": "",
+        "tipo_afiliacion": datos.get("tipo_afiliacion", ""),
+        "diagnostico": datos.get("diagnostico", ""),
+        "medicamentos_o_servicio": datos.get("medicamentos_o_servicio", ""),
+        "fecha_solicitud": datos.get("fecha_solicitud", ""),
+        "fecha_negativa": datos.get("fecha_negativa", ""),
         "descripcion_negativa": datos.get("hechos", ""),
-        "riesgo_para_salud": "",
+        "riesgo_para_salud": datos.get("riesgo_para_salud", ""),
         "ciudad_radicacion": datos.get("ciudad", ""),
     }
 

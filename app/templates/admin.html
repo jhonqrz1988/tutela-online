@@ -95,6 +95,9 @@
       <option value="narracion">Narraci&oacute;n</option>
       <option value="confirmar_audio">Confirmar audio</option>
       <option value="revision_datos">Revisi&oacute;n datos</option>
+      <option value="confirmar_datos_personales">Confirmar datos personales</option>
+      <option value="corrigiendo_datos_personales">Corrigiendo datos personales</option>
+      <option value="preguntas_clinicas">Preguntas cl&iacute;nicas</option>
       <option value="pruebas_pendiente">Pruebas pendiente</option>
       <option value="recibiendo_pruebas">Recibiendo pruebas</option>
       <option value="datos_listos">Datos listos</option>
@@ -133,7 +136,9 @@
         <td>{{ t.tipo }}</td>
         <td>
           {% set cls = {'borrador': 'badge-default', 'recogiendo_datos': 'badge-info', 'narracion': 'badge-info', 'confirmar_audio': 'badge-info',
-                        'revision_datos': 'badge-info', 'pruebas_pendiente': 'badge-info',
+                        'revision_datos': 'badge-info', 'confirmar_datos_personales': 'badge-info',
+                        'corrigiendo_datos_personales': 'badge-info', 'preguntas_clinicas': 'badge-info',
+                        'pruebas_pendiente': 'badge-info',
                         'recibiendo_pruebas': 'badge-info', 'datos_listos': 'badge-warning',
                         'pdf_generado': 'badge-warning', 'hazlo_tu_mismo': 'badge-default',
                         'pendiente_radicacion': 'badge-warning',

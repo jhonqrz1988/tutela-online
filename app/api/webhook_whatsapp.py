@@ -295,7 +295,8 @@ async def procesar_mensaje(
         tutela = session.execute(
             select(Tutela).where(
                 Tutela.user_id == user.id,
-            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+                               "preguntas_clinicas", "confirmar_datos_personales", "corrigiendo_datos_personales",
                                "pruebas_pendiente", "esperando_codigo_email",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
@@ -313,7 +314,7 @@ async def procesar_mensaje(
                     _, msg = DATOS_PERSONALES_STEPS[step]
                     _r(respuestas, telefono, msg)
                 else:
-                    _r(respuestas, telefono, NARRACION)
+                    _mostrar_confirmacion_datos(telefono, respuestas, datos)
             elif tutela.estado == "narracion":
                 _r(respuestas, telefono, NARRACION)
             elif tutela.estado == "revision_datos":
@@ -341,6 +342,7 @@ async def procesar_mensaje(
         select(Tutela).where(
             Tutela.user_id == user.id,
             Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+                               "preguntas_clinicas", "confirmar_datos_personales", "corrigiendo_datos_personales",
                                "pruebas_pendiente", "esperando_codigo_email",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
@@ -409,11 +411,59 @@ async def procesar_mensaje(
             _, msg = DATOS_PERSONALES_STEPS[step]
             _r(respuestas, telefono, msg)
         else:
-            tutela.estado = "narracion"
+            tutela.estado = "confirmar_datos_personales"
             session.commit()
             _r(respuestas, telefono, "✅ *Datos personales registrados.*")
-            _r(respuestas, telefono, NARRACION)
+            _mostrar_confirmacion_datos(telefono, respuestas, datos)
+            return {"ok": True, "respuestas": respuestas}
+        return {"ok": True, "respuestas": respuestas}
 
+    # ══════════════════════════════════════════════════════════════════
+    #   CONFIRMAR DATOS PERSONALES — el cliente confirma o corrige
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "confirmar_datos_personales":
+        if body in ("1", "si", "sí", "correcto", "correctos", "confirmar"):
+            tutela.estado = "narracion"
+            session.commit()
+            _r(respuestas, telefono, "✅ *¡Datos confirmados!*\n\nAhora cuéntame tu caso.")
+            _r(respuestas, telefono, NARRACION)
+            return {"ok": True, "respuestas": respuestas}
+        elif body in ("2", "corregir", "modificar", "no"):
+            tutela.estado = "corrigiendo_datos_personales"
+            session.commit()
+            _r(respuestas, telefono,
+               "✏️ *¿Qué dato quieres corregir?*\n\n"
+               "Responde el número del dato:\n\n"
+               + _menu_campos_personales())
+            return {"ok": True, "respuestas": respuestas}
+        _mostrar_confirmacion_datos(telefono, respuestas, datos)
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   CORRIGIENDO DATOS PERSONALES — elige campo y escribe nuevo valor
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "corrigiendo_datos_personales":
+        campo = datos.get("_campo_corregir")
+        if not campo:
+            if body.isdigit() and 1 <= int(body) <= len(DATOS_PERSONALES_STEPS):
+                idx = int(body) - 1
+                campo, msg = DATOS_PERSONALES_STEPS[idx]
+                datos["_campo_corregir"] = campo
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono, msg)
+            else:
+                _r(respuestas, telefono,
+                   "Escribe el número del dato que quieres corregir:\n\n"
+                   + _menu_campos_personales())
+        else:
+            datos[campo] = raw_body or ""
+            datos.pop("_campo_corregir", None)
+            tutela.datos_json = json.dumps(datos)
+            tutela.estado = "confirmar_datos_personales"
+            session.commit()
+            _r(respuestas, telefono, "✅ *Dato actualizado.*")
+            _mostrar_confirmacion_datos(telefono, respuestas, datos)
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -498,9 +548,12 @@ async def procesar_mensaje(
                 session.commit()
                 _r(respuestas, telefono, NARRACION)
                 return {"ok": True, "respuestas": respuestas}
-            tutela.estado = "pruebas_pendiente"
+            tutela.estado = "preguntas_clinicas"
+            datos["_step_clinico"] = 1
+            tutela.datos_json = json.dumps(datos)
             session.commit()
-            _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+            _r(respuestas, telefono, "📋 *Para completar tu caso, responde estas preguntas:*")
+            _r(respuestas, telefono, DATOS_CLINICOS_STEPS[0][1])
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "corregir", "no", "editar"):
             _r(respuestas, telefono, "✍️ *Escribe tu caso de nuevo con más detalles o correcciones:*")
@@ -509,6 +562,31 @@ async def procesar_mensaje(
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
+    #   PREGUNTAS CLINICAS — datos específicos del caso (afiliación, fechas)
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado == "preguntas_clinicas":
+        step = datos.get("_step_clinico", 1)
+        if step < len(DATOS_CLINICOS_STEPS):
+            campo, _ = DATOS_CLINICOS_STEPS[step - 1]
+            datos[campo] = raw_body or ""
+        else:
+            campo, _ = DATOS_CLINICOS_STEPS[-1]
+            datos[campo] = raw_body or ""
+        datos["_step_clinico"] = step + 1
+        tutela.datos_json = json.dumps(datos)
+        session.commit()
+        if step < len(DATOS_CLINICOS_STEPS):
+            _, msg = DATOS_CLINICOS_STEPS[step]
+            _r(respuestas, telefono, msg)
+        else:
+            datos.pop("_step_clinico", None)
+            tutela.datos_json = json.dumps(datos)
+            tutela.estado = "pruebas_pendiente"
+            session.commit()
+            _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -725,6 +803,39 @@ async def _mostrar_resumen_juramento(session, tutela, datos: dict, telefono: str
     tutela.estado = "datos_listos"
     session.commit()
     _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
+
+
+_PERSONALES_LABEL = {
+    "accionante_nombre": "👤 Nombre",
+    "accionante_tipo_doc": "🪪 Tipo documento",
+    "accionante_cedula": "🆔 Documento",
+    "accionante_telefono": "📱 Teléfono",
+    "accionante_email": "📧 Correo",
+    "ciudad": "🏙️ Ciudad",
+    "accionante_direccion": "📍 Dirección",
+    "departamento": "🗺️ Departamento",
+}
+
+
+def _resumen_datos_personales(datos: dict) -> str:
+    lineas = []
+    for campo, label in _PERSONALES_LABEL.items():
+        valor = datos.get(campo, "")
+        lineas.append(f"{label}: {valor or '_____'}")
+    return "📋 *Tus datos personales:*\n\n" + "\n".join(lineas)
+
+
+def _menu_campos_personales() -> str:
+    lineas = []
+    for i, (_, msg) in enumerate(DATOS_PERSONALES_STEPS, start=1):
+        label = msg.replace("Escribe tu ", "").replace(":", "").strip()
+        lineas.append(f"{i}. {label}")
+    return "\n".join(lineas)
+
+
+def _mostrar_confirmacion_datos(telefono: str, respuestas: list[str], datos: dict) -> None:
+    _r(respuestas, telefono, _resumen_datos_personales(datos))
+    _b(respuestas, telefono, "¿Tus datos personales son correctos?", [("1", "✅ Sí, correctos"), ("2", "✏️ Corregir")])
 
 
 # Hosts permitidos para descargar archivos adjuntos (soportes de WhatsApp).
@@ -1060,4 +1171,12 @@ DATOS_PERSONALES_STEPS = [
     ("ciudad", "🏙️ ¿En qué ciudad vives?:"),
     ("accionante_direccion", "📍 Dirección de residencia completa (calle, número, barrio, ciudad):"),
     ("departamento", "🗺️ Departamento (ej: Cundinamarca, Antioquia):"),
+]
+
+# Datos clínicos del caso que pregunta el bot (evita que la IA los invente): (campo, mensaje)
+DATOS_CLINICOS_STEPS = [
+    ("tipo_afiliacion", "🏥 ¿Estás afiliado al *régimen contributivo* o al *subsidiado*?"),
+    ("medicamentos_o_servicio", "💉 ¿Qué *tratamiento, medicamento o servicio* te negaron o no autorizaron?"),
+    ("fecha_solicitud", "📅 ¿En qué *fecha* lo solicitaste? (ej: 10/01/2026)"),
+    ("fecha_negativa", "🚫 ¿En qué *fecha* te negaron o no dieron respuesta? (ej: 15/01/2026 o *no recuerdo*)"),
 ]
