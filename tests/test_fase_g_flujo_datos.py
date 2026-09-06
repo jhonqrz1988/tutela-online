@@ -192,6 +192,76 @@ class TestPreguntasClinicas(_FlujoMixin):
         self.assertNotIn("_step_clinico", guardados)
 
 
+class TestSalirReiniciar(_FlujoMixin):
+    def test_salir_resetea_usuario_y_muestra_bienvenida(self):
+        """'salir' borra la tutela, resetea a nuevo y muestra aviso de privacidad."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "narracion", {**_datos_personales_completos(), "tipo": "salud"}
+        )
+        resp, mock_b, _ = asyncio.run(self._procesar(session, user.telefono, "salir"))
+        # Tutela eliminada
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 0)
+        # Usuario vuelve a estado nuevo sin consentimiento
+        user = session.execute(select(User)).scalars().first()
+        self.assertEqual(user.estado, "nuevo")
+        self.assertFalse(user.consentimiento)
+        # Se mostró el aviso de privacidad (botón de aceptar/no aceptar)
+        self.assertTrue(mock_b.called)
+
+    def test_reiniciar_funciona_igual_que_salir(self):
+        """'reiniciar' tiene el mismo efecto que 'salir'."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "recogiendo_datos",
+            {"tipo": "salud", "_step": 3, **{CAMPOS[i]: f"v_{i}" for i in range(3)}}
+        )
+        asyncio.run(self._procesar(session, user.telefono, "reiniciar"))
+        user = session.execute(select(User)).scalars().first()
+        self.assertEqual(user.estado, "nuevo")
+        self.assertFalse(user.consentimiento)
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 0)
+
+    def test_empezar_de_nuevo_funciona_igual_que_salir(self):
+        """'empezar de nuevo' tiene el mismo efecto que 'salir'."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "confirmar_datos_personales", _datos_personales_completos()
+        )
+        asyncio.run(self._procesar(session, user.telefono, "empezar de nuevo"))
+        user = session.execute(select(User)).scalars().first()
+        self.assertEqual(user.estado, "nuevo")
+        self.assertFalse(user.consentimiento)
+
+    def test_nuevo_proceso_funciona_igual_que_salir(self):
+        """'nuevo proceso' tiene el mismo efecto que 'salir'."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "datos_listos", _datos_personales_completos()
+        )
+        asyncio.run(self._procesar(session, user.telefono, "nuevo proceso"))
+        user = session.execute(select(User)).scalars().first()
+        self.assertEqual(user.estado, "nuevo")
+
+    def test_despues_de_salir_se_puede_aceptar_y_empezar(self):
+        """Tras 'salir', al aceptar privacidad se crea una tutela nueva."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "narracion", {**_datos_personales_completos(), "tipo": "salud"}
+        )
+        asyncio.run(self._procesar(session, user.telefono, "salir"))
+        # Ahora acepta el consentimiento
+        resp, mock_b, _ = asyncio.run(self._procesar(session, user.telefono, "acepto"))
+        user = session.execute(select(User)).scalars().first()
+        self.assertEqual(user.estado, "activo")
+        self.assertTrue(user.consentimiento)
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 1)
+        self.assertEqual(tutelas[0].estado, "recogiendo_datos")
+
+
 class TestMapeoClinicosAlPrompt(unittest.TestCase):
     def test_mapear_datos_caso_incluye_campos_clinicos(self):
         from app.services.ia_service import mapear_datos_caso

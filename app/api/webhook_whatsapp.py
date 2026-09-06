@@ -243,6 +243,21 @@ async def procesar_mensaje(
         _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
         return {"ok": True, "respuestas": respuestas}
 
+    # ─── SALIR / REINICIAR — borra datos y empieza de cero como nuevo usuario ──
+    if body in ("salir", "reiniciar", "empezar de nuevo", "nuevo proceso", "nueva tutela", "cancelar tutela", "dejar la tutela"):
+        session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
+        for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
+            session.delete(t)
+        user.estado = "nuevo"
+        user.consentimiento = False
+        user.consentimiento_version = None
+        user.consentimiento_timestamp = None
+        session.commit()
+        _r(respuestas, telefono, "🔄 *Flujo reiniciado.*\n\nSe borraron los datos anteriores y empiezas de cero.")
+        _r(respuestas, telefono, BIENVENIDA)
+        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+        return {"ok": True, "respuestas": respuestas}
+
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
     if body in ("eliminar", "eliminar mis datos", "borrar", "borrar mis datos"):
         session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
@@ -1157,6 +1172,7 @@ MENU_DEFAULT = (
     "🤖 *Asistente TutelApp*\n\n"
     "Comandos:\n"
     "• *Hola* — iniciar o continuar\n"
+    "• *Salir* — borrar datos y reiniciar el proceso\n"
     "• *Eliminar mis datos* — borrar tu información\n"
     "• *Detener* — pausar la conversación"
 )
