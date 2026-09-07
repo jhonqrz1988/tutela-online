@@ -347,6 +347,9 @@ def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     _anexar_pruebas(pdf, pruebas_fotos)
 
     pdf.output(ruta)
+    # Los PDFs de soporte se unen intactos al final (el texto sigue siendo
+    # seleccionable; no se rasterizan ni se "interpretan").
+    _fusionar_pdfs_anexos(ruta, pruebas_fotos)
     return ruta
 
 
@@ -396,31 +399,48 @@ def _filtrar_pruebas(pruebas_paths: list[str], pruebas_analizadas: list[str]) ->
 
 
 def _anexar_pruebas(pdf, pruebas: list[tuple[str, str, str]]) -> int:
-    """Incrusta las fotos y las páginas de los PDFs como anexos al final del PDF."""
+    """Incrusta las fotos como anexos (los PDFs de soporte se saltan aqui:
+    se fusionan intactos al final en _fusionar_pdfs_anexos)."""
     count = 0
     for i, (ruta, _, analisis) in enumerate(pruebas):
         ext = os.path.splitext(ruta)[1].lower()
+        if ext in PDF_EXT:
+            continue
         count += 1
         pdf.add_page()
         pdf.section_title(f"ANEXO {count} - PRUEBA {i + 1}")
         if analisis:
             pdf.body_text(analisis[:200])
         pdf.ln(3)
-        if ext in PDF_EXT:
-            try:
-                with fitz.open(ruta) as doc:
-                    for pagina in doc:
-                        pix = pagina.get_pixmap(matrix=fitz.Matrix(2, 2))
-                        temp = os.path.join(os.path.dirname(ruta), f"_pagina_{count}_{pagina.number}.png")
-                        pix.save(temp)
-                        _insertar_imagen(pdf, temp)
-                        os.remove(temp)
-            except (fitz.FileDataError, OSError, ValueError):
-                count -= 1
-                continue
-        else:
-            _insertar_imagen(pdf, ruta)
+        _insertar_imagen(pdf, ruta)
     return count
+
+
+def _fusionar_pdfs_anexos(ruta_tutela: str, pruebas: list[tuple[str, str, str]]) -> None:
+    """Anexa los PDFs de soporte al Cál final del documento generado, intactos.
+
+    `ruta_tutela` ya contiene el PDF generado por fpdf; lo abrimos con PyMuPDF
+    y le insertamos las páginas de cada PDF de prueba sin rasterizar (el texto
+    sigue siendo seleccionable). Se graba en un archivo temporal y se reemplaza
+    para no dejar un PDF corrupto si algo falla a mitad de camino.
+    """
+    pdfs = [p for p in pruebas if os.path.splitext(p[0])[1].lower() in PDF_EXT]
+    if not pdfs:
+        return
+    ruta_tmp = ruta_tutela + ".tmp.pdf"
+    doc = fitz.open(ruta_tutela)
+    try:
+        for ruta, _, _ in pdfs:
+            try:
+                src = fitz.open(ruta)
+            except (fitz.FileDataError, OSError, ValueError):
+                continue
+            doc.insert_pdf(src)
+            src.close()
+        doc.save(ruta_tmp)
+    finally:
+        doc.close()
+    os.replace(ruta_tmp, ruta_tutela)
 
 
 def _insertar_imagen(pdf, ruta: str) -> None:

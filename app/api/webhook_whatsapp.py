@@ -636,10 +636,16 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             ruta_local = await _descargar_prueba(media_url)
             if ruta_local:
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
-                try:
-                    analisis = await analizar_imagen(ruta_local)
-                except Exception as e:
-                    logger.error(f"Error analizando imagen: {e}")
+                # Los PDFs de soporte NO se interpretan: solo se guardan para
+                # fusionarse intactos al final del PDF de la tutela. La vision
+                # solo aplica a fotos (imagenes).
+                if not ruta_local.lower().endswith(".pdf"):
+                    try:
+                        analisis = await analizar_imagen(ruta_local)
+                    except Exception as e:
+                        logger.error(f"Error analizando imagen: {e}")
+                        analisis = ""
+                else:
                     analisis = ""
                 if analisis:
                     datos.setdefault("pruebas_analizadas", []).append(analisis)

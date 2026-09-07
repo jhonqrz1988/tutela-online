@@ -26,37 +26,44 @@
   {
     "nombre": "COMPENSAR EPS",
     "alias": ["compensar", "eps compensar"],
-    "nit": "860066942",
+    "nit": "860066942-7",
     "correo_notificacion": "notificacionesjudiciales@compensar.com",
     "regimen": "contributivo"
   },
   {
     "nombre": "FAMISANAR EPS",
     "alias": ["famisanar", "eps famisanar"],
-    "nit": "830003564",
-    "correo_notificacion": null,
+    "nit": "830003564-7",
+    "correo_notificacion": "notificaciones@famisanar.com.co",
     "regimen": "contributivo"
   },
   {
     "nombre": "COOSALUD EPS-S",
     "alias": ["coosalud", "eps coosalud", "eps-s coosalud"],
-    "nit": "900226715",
+    "nit": "900226715-3",
     "correo_notificacion": "notificacioncoosaludeps@coosalud.com",
     "correo_notificacion_alterno": ["notificacionjudicial@coosalud.com"],
+    "regimen": "subsidiado"
+  },
+  {
+    "nombre": "MUTUAL SER EPS-S",
+    "alias": ["mutual ser", "eps mutual ser", "mutualser", "asociacion mutual ser"],
+    "nit": "806008394-7",
+    "correo_notificacion": "notificacionesjudiciales@mutualser.org",
     "regimen": "subsidiado"
   },
   {
     "nombre": "ALIANSALUD EPS",
     "alias": ["aliansalud", "eps aliansalud"],
     "nit": "830113831",
-    "correo_notificacion": null,
+    "correo_notificacion": "notificacionesjudiciales@aliansalud.com.co",
     "regimen": "contributivo"
   },
   {
     "nombre": "SALUD TOTAL EPS S.A.",
     "alias": ["salud total", "eps salud total", "saludtotal"],
-    "nit": "800130907",
-    "correo_notificacion": null,
+    "nit": "800130907-4",
+    "correo_notificacion": "notificacionesjud@saludtotal.com.co",
     "regimen": "contributivo"
   },
   {
@@ -98,14 +105,14 @@
   {
     "nombre": "CAPITAL SALUD EPS-S",
     "alias": ["capital salud", "eps capital salud"],
-    "nit": "900298372",
-    "correo_notificacion": null,
+    "nit": "900298372-9",
+    "correo_notificacion": "notificacion.tutelas@capitalsalud.gov.co",
     "regimen": "subsidiado"
   },
   {
     "nombre": "SAVIA SALUD EPS",
     "alias": ["savia salud", "savia", "eps savia"],
-    "nit": "900604350",
+    "nit": "900604350-0",
     "correo_notificacion": "notificacionestutelas@saviasaludeps.com",
     "correo_notificacion_alterno": ["notificacionesjudiciales@saviasaludeps.com"],
     "regimen": "subsidiado"
