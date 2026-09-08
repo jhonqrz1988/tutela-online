@@ -194,17 +194,34 @@
 
 <script>
 let tutelaActual = null;
+const ESTADOS_MONITOREO_EN_VIVO = ['pdf_generado', 'pendiente_radicacion', 'esperando_decision_radicacion', 'fallida', 'esperando_codigo_email'];
 
-async function abrirDetalle(id) {
-  document.getElementById('modal').classList.add('show');
-  document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:40px 0;color:#999;">Cargando...</div>';
+async function abrirDetalle(id, silencioso) {
+  const modal = document.getElementById('modal');
+  if (!silencioso) {
+    modal.classList.add('show');
+    document.getElementById('modal-body').innerHTML = '<div style="text-align:center;padding:40px 0;color:#999;">Cargando...</div>';
+  }
   try {
     const r = await fetch('/admin/api/tutelas/' + id);
     tutelaActual = await r.json();
+    if (silencioso) {
+      document.getElementById('modal-titulo').textContent = 'Tutela #' + tutelaActual.id + ' - ' + tutelaActual.tipo;
+    }
     renderDetalle();
   } catch(e) {
-    document.getElementById('modal-body').innerHTML = '<div class="error-box">Error al cargar: ' + e.message + '</div>';
+    if (!silencioso) {
+      document.getElementById('modal-body').innerHTML = '<div class="error-box">Error al cargar: ' + e.message + '</div>';
+    }
   }
+}
+
+async function monitorizarModal() {
+  if (!tutelaActual) return;
+  const inputActivo = document.activeElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+  if (inputActivo) return;
+  if (!ESTADOS_MONITOREO_EN_VIVO.includes(tutelaActual.estado)) return;
+  await abrirDetalle(tutelaActual.id, true);
 }
 
 function renderDetalle() {
@@ -219,7 +236,7 @@ function renderDetalle() {
 
   const puedeReintentar = false; // radicación manual desde el panel; bot desactivado
   const puedeConfirmarPago = t.estado === 'esperando_pago' || t.estado === 'pago_por_confirmar' || t.estado === 'confirmar_pago';
-  const puedeRegistrarRadicado = t.estado === 'pago_confirmado' || t.estado === 'pago_por_confirmar';
+  const puedeRegistrarRadicado = ['pago_confirmado', 'pago_por_confirmar', 'pdf_generado', 'pendiente_radicacion', 'fallida'].includes(t.estado);
 
   document.getElementById('modal-body').innerHTML = `
     <div class="modal-section">
@@ -260,6 +277,20 @@ function renderDetalle() {
         <div class="detail-item"><label>Radicado</label><span>${r.created_at || '&mdash;'}</span></div>
       </div>
       ${errores}
+    </div>
+    ` : ''}
+
+    ${r.pasos && r.pasos.length ? `
+    <div class="modal-section">
+      <h3>Secuencia de Radicaci&oacute;n</h3>
+      ${r.pasos.map(p => `
+        <div class="msg-item">
+          <span class="badge ${p.estado === 'ok' ? 'badge-success' : 'badge-error'}">${p.estado}</span>
+          <span>${escapeHtml(p.paso)}</span>
+          ${p.detalle ? `<small style="color:#666;">${escapeHtml(p.detalle)}</small>` : ''}
+          <small style="color:#aaa; margin-left:auto; white-space:nowrap;">${escapeHtml(p.created_at)}</small>
+        </div>
+      `).join('')}
     </div>
     ` : ''}
 
@@ -411,7 +442,9 @@ document.onkeydown = function(e) { if (e.key === 'Escape') cerrarModal(); };
 
 setInterval(function() {
   const modal = document.getElementById('modal');
-  if (!modal.classList.contains('show') && !document.hidden) {
+  if (modal.classList.contains('show')) {
+    monitorizarModal();
+  } else if (!document.hidden) {
     location.reload();
   }
 }, 30000);

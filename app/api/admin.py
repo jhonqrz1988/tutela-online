@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import get_session
-from app.models.radicacion import Radicacion
+from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 
 router = APIRouter(prefix="/admin")
@@ -286,6 +286,11 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
     rad = None
     if t.radicacion:
         r = t.radicacion[0]
+        pasos = session.execute(
+            select(PasoRadicacion)
+            .where(PasoRadicacion.radicacion_id == r.id)
+            .order_by(PasoRadicacion.created_at.asc())
+        ).scalars().all()
         rad = {
             "id": r.id,
             "estado": r.estado,
@@ -296,6 +301,15 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
             "token_verificacion": r.token_verificacion,
             "created_at": str(r.created_at) if r.created_at else "",
             "updated_at": str(r.updated_at) if r.updated_at else "",
+            "pasos": [
+                {
+                    "paso": p.paso,
+                    "estado": p.estado,
+                    "detalle": p.detalle,
+                    "created_at": str(p.created_at) if p.created_at else "",
+                }
+                for p in pasos
+            ],
         }
 
     mensajes = []

@@ -21,3 +21,14 @@ class Radicacion(Base):
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
     tutela: Mapped["Tutela"] = relationship(back_populates="radicacion")  # noqa: F821
+
+
+class PasoRadicacion(Base):
+    __tablename__ = "pasos_radicacion"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    radicacion_id: Mapped[int] = mapped_column(ForeignKey("radicaciones.id"))
+    paso: Mapped[str] = mapped_column(String(80))
+    estado: Mapped[str] = mapped_column(String(20), default="ok")  # ok | error
+    detalle: Mapped[str] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from app.bot.navegador import RadicadorBot
 from app.database import SessionLocal
-from app.models.radicacion import Radicacion
+from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 from app.services.whatsapp_service import enviar_texto, enviar_imagen
 
@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 
 # Instancia global del bot (se reutiliza entre llamadas)
 _bot: RadicadorBot | None = None
+
+
+def _registrar_paso(session, rad_id: int, paso: str, estado: str, detalle: str = ""):
+    """Persiste un paso del monitoreo de radicación."""
+    try:
+        session.add(PasoRadicacion(radicacion_id=rad_id, paso=paso, estado=estado, detalle=detalle or None))
+        session.commit()
+    except Exception as e:  # noqa: BLE001 - el monitoreo nunca debe romper el flujo
+        logger.warning(f"No se pudo registrar paso {paso}: {e}")
 
 
 def _get_bot() -> RadicadorBot:
@@ -66,10 +75,13 @@ async def iniciar_radicacion(
         session.commit()
 
         bot = _get_bot()
+        bot.on_paso = lambda paso, estado, detalle="": _registrar_paso(session, rad.id, paso, estado, detalle)
 
         # Paso 1: Iniciar navegador y navegar al portal
         await bot.iniciar()
+        _registrar_paso(session, rad.id, "iniciar_bot", "ok")
         await bot.navegar_portal()
+        _registrar_paso(session, rad.id, "navegar_portal", "ok")
 
         # Paso 2: Llenar formulario (pasos 1-4, hasta verificación email)
         resultado = await bot.llenar_formulario(datos)
@@ -77,9 +89,12 @@ async def iniciar_radicacion(
         if not resultado.get("ok"):
             rad.estado = "fallida"
             rad.ultimo_error = resultado.get("error", "Error desconocido en llenado")
+            _registrar_paso(session, rad.id, "llenar_formulario", "error", rad.ultimo_error)
             session.commit()
             await bot.cerrar()
             return {"ok": False, "error": resultado.get("error")}
+
+        _registrar_paso(session, rad.id, "llenar_formulario", "ok")
 
         # Si requiere código de email → pausar y notificar al usuario
         if resultado.get("requiere_codigo_email"):
@@ -102,6 +117,7 @@ async def iniciar_radicacion(
                 )
 
             logger.info(f"Radicación tutela {tutela_id}: esperando código de email")
+            _registrar_paso(session, rad.id, "esperando_codigo_email", "ok")
             return {"ok": True, "esperando_codigo": True, "radicacion_id": rad.id}
 
         # Si no requiere código → continuar con pasos 5-10
@@ -118,6 +134,7 @@ async def iniciar_radicacion(
             if rad:
                 rad.estado = "fallida"
                 rad.ultimo_error = str(e)[:500]
+                _registrar_paso(session, rad.id, "iniciar_radicacion", "error", str(e)[:500])
                 session.commit()
         except Exception:
             pass
@@ -185,9 +202,12 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
         if not resultado.get("ok"):
             rad.estado = "fallida"
             rad.ultimo_error = resultado.get("error", "Error completando formulario")
+            _registrar_paso(session, rad.id, "completar_formulario", "error", rad.ultimo_error)
             session.commit()
             await bot.cerrar()
             return
+
+        _registrar_paso(session, rad.id, "completar_formulario", "ok")
 
         # Paso 9: Resolver reCAPTCHA
         rad.estado = "resolviendo_captcha"
@@ -198,10 +218,12 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
             rad.estado = "fallida"
             rad.ultimo_error = "No se pudo resolver el reCAPTCHA"
             rad.intentos = (rad.intentos or 0) + 1
+            _registrar_paso(session, rad.id, "resolver_captcha", "error", rad.ultimo_error)
             session.commit()
             await bot.cerrar()
             return
 
+        _registrar_paso(session, rad.id, "resolver_captcha", "ok")
         logger.info(f"reCAPTCHA resuelto para tutela {tutela.id}")
 
         # Paso 10: Enviar y descargar constancia
@@ -213,9 +235,12 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
             rad.estado = "fallida"
             rad.ultimo_error = resultado_envio["error"]
             rad.intentos = (rad.intentos or 0) + 1
+            _registrar_paso(session, rad.id, "enviar_y_descargar", "error", rad.ultimo_error)
             session.commit()
             await bot.cerrar()
             return
+
+        _registrar_paso(session, rad.id, "enviar_y_descargar", "ok")
 
         # Extraer número de radicado
         num_radicado = resultado_envio.get("num_radicado", "")
@@ -223,6 +248,7 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
         rad.constancia_path = resultado_envio.get("path")
         rad.estado = "radicada"
         rad.intentos = (rad.intentos or 0) + 1
+        _registrar_paso(session, rad.id, "radicada", "ok", num_radicado)
         session.commit()
 
         # Screenshot de confirmación
@@ -250,6 +276,7 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
         logger.error(f"Error en _completar_radicacion tutela {tutela.id}: {e}")
         rad.estado = "fallida"
         rad.ultimo_error = str(e)[:500]
+        _registrar_paso(session, rad.id, "completar_radicacion", "error", str(e)[:500])
         session.commit()
     finally:
         await bot.cerrar()

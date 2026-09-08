@@ -93,6 +93,16 @@ class RadicadorBot:
         base = settings.storage_dir or "storage"
         self._screenshot_dir = Path(base) / "screenshots"
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
+        # Callback opcional on_paso(paso, estado, detalle="") para monitoreo.
+        self.on_paso = None
+
+    def _reportar_paso(self, paso: str, estado: str, detalle: str = ""):
+        """Emite el estado de un paso al callback de monitoreo si está configurado."""
+        if self.on_paso:
+            try:
+                self.on_paso(paso, estado, detalle)
+            except Exception as e:  # noqa: BLE001 - el monitoreo nunca debe romper el flujo
+                logger.warning(f"No se pudo reportar paso {paso}: {e}")
 
     async def iniciar(self):
         if settings.simulate_bot:
@@ -383,28 +393,39 @@ class RadicadorBot:
             logger.info("Iniciando llenado del formulario del portal...")
 
             # Paso 0: Modal de términos
+            self._paso_actual = "paso_0_terminos"
             await self._modal_aceptar_terminos()
+            self._reportar_paso("paso_0_terminos", "ok")
 
             # Paso 1: Lugar de envío
+            self._paso_actual = "paso_1_lugar_envio"
             await self._paso_lugar_envio(datos)
+            self._reportar_paso("paso_1_lugar_envio", "ok")
             logger.info("Paso 1 completado: lugar de envío")
 
             # Paso 2: Tipo registro
+            self._paso_actual = "paso_2_tipo_registro"
             await self._paso_tipo_registro()
+            self._reportar_paso("paso_2_tipo_registro", "ok")
             logger.info("Paso 2 completado: tipo tutela")
 
             # Paso 3: Lugar de hechos
+            self._paso_actual = "paso_3_lugar_hechos"
             await self._paso_lugar_hechos(datos)
+            self._reportar_paso("paso_3_lugar_hechos", "ok")
             logger.info("Paso 3 completado: lugar de hechos")
 
             # Paso 4: Accionante + trigger verificación email
+            self._paso_actual = "paso_4_accionante"
             requiere_codigo = await self._paso_accionante(datos)
+            self._reportar_paso("paso_4_accionante", "ok")
             logger.info("Paso 4 completado: accionante + verificación email activada")
 
             return {"ok": True, "requiere_codigo_email": requiere_codigo}
 
         except Exception as e:
             logger.error(f"Error en llenar_formulario: {e}")
+            self._reportar_paso(getattr(self, "_paso_actual", "llenar_formulario"), "error", str(e))
             return {"ok": False, "error": str(e)}
 
     async def completar_post_codigo(self, datos: dict, ruta_pdf: str) -> dict:
@@ -419,25 +440,34 @@ class RadicadorBot:
             logger.info("Retomando formulario post-verificación email...")
 
             # Paso 5: Accionado
+            self._paso_actual = "paso_5_accionado"
             await self._paso_accionado(datos)
+            self._reportar_paso("paso_5_accionado", "ok")
             logger.info("Paso 5 completado: accionado")
 
             # Paso 6: Derechos
+            self._paso_actual = "paso_6_derechos"
             await self._paso_derechos(datos)
+            self._reportar_paso("paso_6_derechos", "ok")
             logger.info("Paso 6 completado: derechos")
 
             # Paso 7: Archivos
+            self._paso_actual = "paso_7_archivos"
             await self._paso_archivos(ruta_pdf)
+            self._reportar_paso("paso_7_archivos", "ok")
             logger.info("Paso 7 completado: archivos")
 
             # Paso 8: Juramento
+            self._paso_actual = "paso_8_juramento"
             await self._paso_juramento()
+            self._reportar_paso("paso_8_juramento", "ok")
             logger.info("Paso 8 completado: juramento")
 
             return {"ok": True}
 
         except Exception as e:
             logger.error(f"Error en completar_post_codigo: {e}")
+            self._reportar_paso(getattr(self, "_paso_actual", "completar_post_codigo"), "error", str(e))
             return {"ok": False, "error": str(e)}
 
     async def resolver_recaptcha(self) -> bool:
@@ -455,6 +485,7 @@ class RadicadorBot:
 
         if not token:
             logger.error("No se pudo resolver el reCAPTCHA")
+            self._reportar_paso("paso_9_captcha", "error", "No se pudo resolver el reCAPTCHA")
             return False
 
         # Insertar el token en el textarea oculto de reCAPTCHA
@@ -473,9 +504,11 @@ class RadicadorBot:
                 }}
             """)
             logger.info("Token reCAPTCHA insertado en el formulario")
+            self._reportar_paso("paso_9_captcha", "ok")
             return True
         except Exception as e:
             logger.error(f"Error insertando token reCAPTCHA: {e}")
+            self._reportar_paso("paso_9_captcha", "error", str(e))
             return False
 
     async def enviar_y_descargar(self) -> dict:
@@ -512,10 +545,12 @@ class RadicadorBot:
             except Exception as e:
                 logger.error(f"Error obteniendo num_radicado: {e}")
 
+            self._reportar_paso("paso_10_enviar", "ok", num_radicado or "")
             return {"path": ruta_constancia, "num_radicado": num_radicado}
 
         except Exception as e:
             logger.error(f"Error en enviar_y_descargar: {e}")
+            self._reportar_paso("paso_10_enviar", "error", str(e))
             return {"path": None, "num_radicado": None, "error": str(e)}
 
     async def tomar_screenshot(self, nombre: str = "radicacion") -> Path:
