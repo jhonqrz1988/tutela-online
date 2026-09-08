@@ -2,7 +2,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -16,10 +16,31 @@ from app.services.mercadopago_service import (
     verificar_firma,
 )
 from app.services.whatsapp_service import enviar_texto
+from app.tasks.jobs import es_horario_habil
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def texto_aviso_horario(habile: bool) -> str:
+    """Texto del aviso de horario hábil de la Rama Judicial mostrado antes de radicar.
+
+    Args:
+        habile: True si ahora es horario hábil (se radica de inmediato).
+    """
+    if habile:
+        return (
+            "Horario de radicación de la Rama Judicial: lun a vie 8:00 am - 12:00 m y "
+            "2:00 pm - 4:00 pm (hora de Bogotá). Estamos *en horario*, radicaremos tu "
+            "tutela de inmediato y te pediremos el código de verificación aquí mismo."
+        )
+    return (
+        "Horario de radicación de la Rama Judicial: lun a vie 8:00 am - 12:00 m y "
+        "2:00 pm - 4:00 pm (hora de Bogotá). Ahora estamos *fuera de horario*: tu pago "
+        "quedará en cola y se procesará el próximo día hábil, cuando te pediremos el "
+        "código de verificación aquí mismo."
+    )
 
 
 @router.get("/pago/resultado")
@@ -75,9 +96,37 @@ async def iniciar_pago(
             datos["mercadopago_reference"] = reference
             tutela.datos_json = json.dumps(datos)
             session.commit()
-            return RedirectResponse(init_point, status_code=302)
+
+            aviso = texto_aviso_horario(es_horario_habil())
+            html = f"""
+            <!DOCTYPE html>
+            <html lang="es">
+            <head><meta charset="utf-8"><title>Pago - Tutela</title>
+            <style>
+              body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px; color:#222; }}
+              h1 {{ color:#1a5fb4; }} .card {{ border:1px solid #ddd; border-radius:10px; padding:24px; }}
+              .aviso {{ background:#fff3cd; border:1px solid #ffe08a; border-radius:8px; padding:12px 14px;
+                        font-size:13px; color:#7a5c00; margin:16px 0; }}
+              .btn {{ display:block; text-align:center; background:#1a5fb4; color:#fff; text-decoration:none;
+                      padding:12px; border-radius:8px; font-weight:600; }}
+              .small {{ font-size:13px; color:#666; }}
+            </style></head>
+            <body>
+              <div class="card">
+                <h1>Radicación de tutela</h1>
+                <p>Radicamos tu tutela ante la Rama Judicial por <b>$29.000 COP</b>.</p>
+                <div class="aviso"><b>&#128197; Horario de radicación</b><br>{aviso}</div>
+                <a class="btn" href="{init_point}">Continuar al pago</a>
+                <p class="small" style="margin-top:12px;">Referencia: <code>{reference}</code></p>
+                <p class="small">Si lo prefieres, paga por Nequi o transferencia y escríbenos
+                   por WhatsApp la palabra <b>Pagado</b> con esta referencia.</p>
+              </div>
+            </body></html>
+            """
+            return HTMLResponse(html)
 
     # Sin Mercado Pago configurado: página informativa + opción de confirmar manualmente
+    aviso = texto_aviso_horario(es_horario_habil())
     html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -85,12 +134,15 @@ async def iniciar_pago(
     <style>
       body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px; color:#222; }}
       h1 {{ color:#1a5fb4; }} .card {{ border:1px solid #ddd; border-radius:10px; padding:24px; }}
+      .aviso {{ background:#fff3cd; border:1px solid #ffe08a; border-radius:8px; padding:12px 14px;
+                font-size:13px; color:#7a5c00; margin:16px 0; }}
       .small {{ font-size:13px; color:#666; }}
     </style></head>
     <body>
       <div class="card">
         <h1>Radicación de tutela</h1>
         <p>Radicamos tu tutela ante la Rama Judicial por <b>$29.000 COP</b>.</p>
+        <div class="aviso"><b>&#128197; Horario de radicación</b><br>{aviso}</div>
         <p><b>Importante:</b> Radicamos tu tutela y te entregamos el número de radicado.</p>
         <p class="small">Para pagar por Nequi o transferencia, escríbenos por WhatsApp
            con la palabra <b>Pagado</b> y el número de referencia
