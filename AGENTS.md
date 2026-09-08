@@ -58,7 +58,7 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 22. `fallida` - Radicacion attempt failed
 
 ## Payment Flow (Mercado Pago Checkout Pro + manual radicacion)
-- Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` creates a Mercado Pago preference via `crear_preferencia_checkout()` in `app/services/mercadopago_service.py` (reference `TUT-{id}`, `notification_url` = `{app_url}/webhook/mercadopago`) and redirects (302) to the returned `init_point`.
+- Bot sends `{app_url}/pago/{tutela_id}` → endpoint `app/api/pagos.py` creates a Mercado Pago preference via `crear_preferencia_checkout()` in `app/services/mercadopago_service.py` (reference `TUT-{id}`, `notification_url` = `{app_url}/webhook/mercadopago`) and renders an intermediate page with a **horario de radicación aviso** (via `texto_aviso_horario()` + `es_horario_habil()` from `app/tasks/jobs.py`) and a link/button to the returned `init_point` (no longer a direct 302 redirect).
 - Mercado Pago notifies webhook `POST /webhook/mercadopago` (body `{"type":"payment","data":{"id":...}}`, header `x-signature: ts=<ts>,v1=<hash>`) → `verificar_firma()` validates HMAC-SHA256 with `MERCADOPAGO_WEBHOOK_SECRET` → `consultar_pago()` fetches the payment (status must be `approved`) → resolves `external_reference` `TUT-{id}` → sets `pago_confirmado`.
 - Movement back-redirect `/pago/resultado` (Mercado Pago `back_urls.success`) is informational only; real confirmation arrives via webhook.
 - If no Mercado Pago configured, `/pago/{id}` shows informational page; user reports "Pagado" → state `pago_por_confirmar`.

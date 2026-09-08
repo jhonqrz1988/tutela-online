@@ -28,6 +28,19 @@ SESSION_COOKIE = "tutela_admin"
 SESSION_TTL = 12 * 3600  # 12 horas
 CSRF_COOKIE = "tutela_admin_csrf"
 
+# Etiquetas cortas para el resumen de pasos del bot en la tabla del panel.
+_ETIQUETA_PASO = {
+    "iniciar_bot": "Inicio",
+    "navegar_portal": "Portal",
+    "llenar_formulario": "Formulario",
+    "esperando_codigo_email": "Código email",
+    "completar_formulario": "Pasos 5-8",
+    "resolver_captcha": "reCAPTCHA",
+    "enviar_y_descargar": "Enviar",
+    "radicada": "Radicada",
+    "completar_radicacion": "Completar",
+}
+
 # Rate-limit del login: máx intentos fallidos por ventana por IP.
 _LOGIN_MAX_ATTEMPTS = 8
 _LOGIN_WINDOW_SECS = 15 * 60  # 15 minutos
@@ -241,6 +254,25 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         else:
             stats["pendientes"] += 1
 
+    # Mini-resumen de pasos del bot para el indicador en la tabla
+    # (últimos 3 pasos de cada tutela de la página actual).
+    rad_ids = []
+    rad_por_tutela: dict[int, int] = {}
+    for t in tutelas:
+        if t.radicacion:
+            rad_por_tutela[t.id] = t.radicacion[0].id
+            rad_ids.append(t.radicacion[0].id)
+    pasos_por_rad: dict[int, list] = {}
+    if rad_ids:
+        recientes = session.execute(
+            select(PasoRadicacion)
+            .where(PasoRadicacion.radicacion_id.in_(rad_ids))
+            .order_by(PasoRadicacion.created_at.desc())
+        ).scalars().all()
+        for p in recientes:
+            pasos_por_rad.setdefault(p.radicacion_id, []).append(p)
+
+    rows = []
     for t in tutelas:
         num_rad = ""
         constancia = ""
@@ -248,6 +280,19 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
             r = t.radicacion[0]
             num_rad = r.num_radicado or ""
             constancia = r.constancia_path or ""
+
+        pasos_row = []
+        rad_id = rad_por_tutela.get(t.id)
+        if rad_id and rad_id in pasos_por_rad:
+            pasos_row = [
+                {
+                    "paso": p.paso,
+                    "estado": p.estado,
+                    "detalle": p.detalle or "",
+                    "label": _ETIQUETA_PASO.get(p.paso, p.paso),
+                }
+                for p in pasos_por_rad[rad_id][:3]
+            ]
 
         user_nombre = t.user.nombre if t.user else ""
         user_telefono = t.user.telefono.replace("whatsapp:", "") if t.user and t.user.telefono else ""
@@ -261,6 +306,7 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
             "user_nombre": user_nombre,
             "user_telefono": user_telefono,
             "created_at": str(t.created_at) if t.created_at else "",
+            "pasos": pasos_row,
         })
 
     template = env.get_template("admin.html")
@@ -345,10 +391,12 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
 
 @router.post("/tutelas/{tutela_id}/reintentar")
 def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    from app.tasks.scheduler import automatico_activo
+
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not t:
         return {"error": "No encontrada"}
-    if t.estado not in ("fallida", "pdf_generado", "pendiente_radicacion"):
+    if t.estado not in ("fallida", "pdf_generado", "pendiente_radicacion", "pago_confirmado", "esperando_codigo_email"):
         return {"error": f"No se puede reintentar (estado: {t.estado})"}
 
     import asyncio
@@ -359,9 +407,31 @@ def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_
     session.commit()
     try:
         resultado = asyncio.run(iniciar_radicacion(t.id, forzar=True))
+        resultado["scheduler_automatico"] = automatico_activo()
         return resultado
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@router.get("/api/scheduler")
+def estado_scheduler(request: Request, _=Depends(require_admin)):
+    """Estado actual del scheduler de radicación automática."""
+    from app.tasks.scheduler import automatico_activo, scheduler_en_ejecucion
+
+    return {
+        "automatico": automatico_activo(),
+        "ejecutandose": scheduler_en_ejecucion(),
+        "horario": "lun a vie 8:00-12:00 y 14:00-16:00 (hora de Bogotá)",
+    }
+
+
+@router.post("/api/scheduler/toggle")
+def toggle_scheduler(request: Request, _=Depends(require_admin)):
+    """Activa/desactiva en caliente la radicación automática."""
+    from app.tasks.scheduler import automatico_activo, set_scheduler_automatico
+
+    habilitado = set_scheduler_automatico(not automatico_activo())
+    return {"automatico": habilitado}
 
 
 @router.post("/tutelas/{tutela_id}/confirmar-pago")

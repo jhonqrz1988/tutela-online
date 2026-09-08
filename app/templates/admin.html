@@ -59,12 +59,21 @@
   .acciones { display: flex; gap: 10px; margin-top: 15px; }
   .spinner { display: none; width: 16px; height: 16px; border: 2px solid #fff; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; margin: 0 auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .paso-dot { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; margin-right: 6px; padding: 1px 6px; border-radius: 10px; }
+  .paso-dot.ok { background: #e8f5e9; color: #2e7d32; }
+  .paso-dot.err { background: #fce4ec; color: #c62828; }
+  .toggle-sched { cursor: pointer; color: #fff; font-size: 13px; padding: 4px 10px; border: 1px solid rgba(255,255,255,.5); border-radius: 12px; text-decoration: none; }
+  .toggle-sched.on { background: #2e7d32; }
+  .toggle-sched.off { background: #c62828; }
 </style>
 </head>
 <body>
 <div class="header">
   <h1>&#x2696;&#xFE0F; TutelApp</h1>
-  <div><span>{{ total_tutelas }} tutelas</span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a></div>
+  <div>
+    <a href="#" class="toggle-sched" id="scheduler-toggle" onclick="toggleScheduler(event)" title="Activa o desactiva la radicaci&oacute;n autom&aacute;tica (bot)">Cargando...</a>
+    &nbsp; <span>{{ total_tutelas }} tutelas</span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a>
+  </div>
 </div>
 
 <div class="container">
@@ -126,6 +135,7 @@
         <th>N&deg; Radicado</th>
         <th>Usuario</th>
         <th>Creada</th>
+        <th>Progreso bot</th>
         <th>Acciones</th>
       </tr>
     </thead>
@@ -151,6 +161,18 @@
         <td>{{ t.num_radicado or '—' }}</td>
         <td>{{ t.user_nombre or '—' }}<br><small>{{ t.user_telefono or '' }}</small></td>
         <td>{{ (t.created_at[:16] if t.created_at else '—') }}</td>
+        <td>
+          {% if t.pasos %}
+            {% for p in t.pasos %}
+              <span class="paso-dot {{ 'ok' if p.estado == 'ok' else 'err' }}"
+                    title="{{ p.paso }}: {{ p.estado }}{% if p.detalle %} - {{ p.detalle }}{% endif %}">
+                {{ '✓' if p.estado == 'ok' else '✗' }} {{ p.label }}
+              </span>
+            {% endfor %}
+          {% else %}
+            <span style="color:#bbb;">—</span>
+          {% endif %}
+        </td>
         <td>
           {% if t.pdf_path %}
             <a href="/admin/tutelas/{{ t.id }}/pdf" class="btn btn-small" target="_blank">PDF</a>
@@ -234,9 +256,9 @@ function renderDetalle() {
   const errores = r.ultimo_error ? '<div class="error-box">' + escapeHtml(r.ultimo_error) + '</div>' : '';
   const datosStr = Object.keys(d).length ? escapeHtml(JSON.stringify(d, null, 2)) : '<span style="color:#999;">Sin datos</span>';
 
-  const puedeReintentar = false; // radicación manual desde el panel; bot desactivado
+  const puedeReintentar = ['fallida', 'pdf_generado', 'pendiente_radicacion', 'pago_confirmado', 'esperando_codigo_email', 'pago_por_confirmar'].includes(t.estado);
   const puedeConfirmarPago = t.estado === 'esperando_pago' || t.estado === 'pago_por_confirmar' || t.estado === 'confirmar_pago';
-  const puedeRegistrarRadicado = ['pago_confirmado', 'pago_por_confirmar', 'pdf_generado', 'pendiente_radicacion', 'fallida'].includes(t.estado);
+  const puedeRegistrarRadicado = true; // Radicación manual siempre disponible como respaldo si el bot falla
 
   document.getElementById('modal-body').innerHTML = `
     <div class="modal-section">
@@ -308,7 +330,7 @@ function renderDetalle() {
 
     ${puedeReintentar ? `
     <div class="acciones">
-      <button class="btn btn-danger" onclick="reintentar(${t.id})" id="btn-reintentar">Reintentar Radicaci&oacute;n</button>
+      <button class="btn btn-danger" onclick="reintentar(${t.id})" id="btn-reintentar">Ejecutar bot (reintentar)</button>
     </div>
     ` : ''}
 
@@ -347,12 +369,12 @@ function renderDetalle() {
 async function reintentar(id) {
   const btn = document.getElementById('btn-reintentar');
   btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="display:inline-block;"></div> Reintentando...';
+  btn.innerHTML = '<div class="spinner" style="display:inline-block;"></div> Ejecutando bot...';
   try {
     const r = await fetch('/admin/tutelas/' + id + '/reintentar', { method: 'POST' });
     const res = await r.json();
     if (res.ok) {
-      alert('Radicaci\u00f3n exitosa. N\u00famero: ' + (res.num_radicado || 'N/A'));
+      alert('Bot ejecutado. Resultado: ' + JSON.stringify(res));
       location.reload();
     } else {
       alert('Error: ' + (res.error || 'desconocido'));
@@ -361,6 +383,40 @@ async function reintentar(id) {
   } catch(e) {
     alert('Error de conexi\u00f3n: ' + e.message);
     abrirDetalle(id);
+  }
+}
+
+function actualizarToggleScheduler(state) {
+  const btn = document.getElementById('scheduler-toggle');
+  if (!btn) return;
+  const on = !!state.automatico;
+  btn.textContent = (on ? 'Radicaci\u00f3n autom\u00e1tica: ON' : 'Radicaci\u00f3n autom\u00e1tica: OFF');
+  btn.className = 'toggle-sched ' + (on ? 'on' : 'off');
+  btn.title = on ? 'Clic para apagar la radicaci\u00f3n autom\u00e1tica' : 'Clic para encender la radicaci\u00f3n autom\u00e1tica';
+}
+
+async function cargarEstadoScheduler() {
+  try {
+    const r = await fetch('/admin/api/scheduler');
+    if (!r.ok) return;
+    actualizarToggleScheduler(await r.json());
+  } catch(e) { /* silencioso */ }
+}
+
+async function toggleScheduler(e) {
+  e.preventDefault();
+  const btn = document.getElementById('scheduler-toggle');
+  btn.textContent = 'Cambiando...';
+  try {
+    const r = await fetch('/admin/api/scheduler/toggle', { method: 'POST' });
+    const res = await r.json();
+    if (res && typeof res.automatico !== 'undefined') {
+      alert('Radicaci\u00f3n autom\u00e1tica: ' + (res.automatico ? 'ACTIVADA' : 'DESACTIVADA'));
+    }
+    cargarEstadoScheduler();
+  } catch(e) {
+    alert('Error de conexi\u00f3n: ' + e.message);
+    cargarEstadoScheduler();
   }
 }
 
@@ -439,6 +495,8 @@ document.getElementById('modal').onclick = function(e) {
   if (e.target === this) cerrarModal();
 };
 document.onkeydown = function(e) { if (e.key === 'Escape') cerrarModal(); };
+
+cargarEstadoScheduler();
 
 setInterval(function() {
   const modal = document.getElementById('modal');
