@@ -6,7 +6,11 @@ Cubre:
 - Con Mercado Pago configurado NO se redirige en seco: se muestra una página
   intermedia con el aviso y el enlace al checkout.
 - El texto del aviso cambia según si ahora es horario hábil o no.
+- La página avisa sobre el posible código de verificación por correo, muestra
+  el correo del usuario y NO menciona pagos por Nequi/transferencia (solo
+  Mercado Pago).
 """
+import json
 import unittest
 from unittest import mock
 
@@ -96,6 +100,43 @@ class TestPaginaPagoHorario(unittest.TestCase):
         self.assertIn("próximo día hábil", html, "Si no hay horario hábil debe avisar la espera")
         self.assertIn("checkout.mercadopago.com/pago/abc123", html.lower(),
                       "Debe ofrecer el enlace para continuar al checkout")
+
+    def test_con_mp_incluye_aviso_codigo_correo_y_solo_mercadopago(self):
+        """La página pide compartir el código de verificación del correo tras pagar
+        y NO menciona Nequi ni transferencia (canales inactivos)."""
+        from app.api import pagos as pagos_mod
+
+        session = _nueva_sesion()
+        user = User(telefono="573009990002", nombre="Lina Mora", consentimiento=True)
+        session.add(user)
+        session.flush()
+        tutela = Tutela(
+            user_id=user.id, tipo="salud", estado="esperando_pago",
+            datos_json=json.dumps({"accionante_email": "ana@correo.com"}),
+        )
+        session.add(tutela)
+        session.commit()
+
+        with mock.patch.object(settings, "mercadopago_access_token", "TEST-TOKEN"), \
+             mock.patch.object(
+                 pagos_mod, "crear_preferencia_checkout",
+                 return_value={"init_point": "https://checkout.mercadopago.com/pago/XYZ"},
+             ), \
+             mock.patch.object(pagos_mod, "es_horario_habil", return_value=True):
+            resp = self._abrir(session, tutela.id)
+
+        self.assertEqual(resp.status_code, 200)
+        html = resp.text
+        self.assertIn("Código de verificación por correo", html,
+                      "Debe avisar del posible código que llega al correo")
+        self.assertIn("compártenos ese", html,
+                      "Debe pedir que compartan el código por WhatsApp")
+        self.assertIn("ana@correo.com", html, "Debe mostrar el correo del usuario")
+        self.assertIn("únicamente", html, "Debe indicar que el pago es solo por MP")
+        self.assertNotIn("Nequi", html, "Nequi no está activo y no debe mencionarse")
+        self.assertNotIn("transferencia", html,
+                         "Transferencia no está activa y no debe mencionarse")
+        self.assertIn("font-size:16px", html, "La leyenda de pago debe verse más grande")
 
 
 class TestTextoAvisoHorario(unittest.TestCase):
