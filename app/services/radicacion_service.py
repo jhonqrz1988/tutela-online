@@ -99,6 +99,7 @@ async def iniciar_radicacion(
         # Si requiere código de email → pausar y notificar al usuario
         if resultado.get("requiere_codigo_email"):
             rad.estado = "esperando_codigo_email"
+            tutela.estado = "esperando_codigo_email"
             session.commit()
 
             # Guardar referencia al bot en la BD (para retomar después)

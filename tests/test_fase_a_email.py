@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
+from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
 from app.models.user import User
 
@@ -85,6 +86,66 @@ class TestCodigoEmail(unittest.TestCase):
         # No debe crear nueva tutela tampoco
         tutelas = session.execute(select(Tutela)).scalars().all()
         self.assertEqual(len(tutelas), 1)
+
+    def _crear_tutela_esperando_codigo(self, session, usuario_telefono):
+        """Escenario real de producción: el admin reintenta (tutela queda en
+        'pendiente_radicacion') y la Radicacion queda esperando el código de email."""
+        user = User(telefono=usuario_telefono, estado="activo", consentimiento=True)
+        session.add(user)
+        session.flush()
+        tutela = Tutela(
+            user_id=user.id,
+            tipo="salud",
+            estado="pendiente_radicacion",
+            datos_json=json.dumps({"tipo": "salud", "_step": 0}),
+        )
+        session.add(tutela)
+        session.flush()
+        session.add(Radicacion(tutela_id=tutela.id, estado="esperando_codigo_email"))
+        session.commit()
+        return user, tutela
+
+    def test_codigo_continua_cuando_tutela_queda_en_pendiente_radicacion(self):
+        """Bug reportado en producción: tutela en 'pendiente_radicacion' con radicación
+        esperando código. Enviar el código NO debe reiniciar creando tutela nueva."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_tutela_esperando_codigo(session, "573009991122")
+
+        resp, mock_cont = asyncio.run(self._procesar(session, user.telefono, "582913"))
+
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 1)
+        self.assertEqual(tutelas[0].id, tutela.id)
+        self.assertTrue(mock_cont.called, "Debe continuar la radicación con el código")
+
+    def test_codigo_invalido_en_pendiente_radicacion_no_reinicia(self):
+        """Código inválido mientras la tutela espera el código tampoco reinicia."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_tutela_esperando_codigo(session, "573009993344")
+
+        resp, mock_cont = asyncio.run(self._procesar(session, user.telefono, "abc"))
+
+        self.assertFalse(mock_cont.called, "Código inválido no debe continuar la radicación")
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 1)
+
+    def test_mensaje_en_pendiente_radicacion_sin_rad_no_reinicia(self):
+        """Mensaje durante 'pendiente_radicacion' sin rad esperando código no crea
+        tutela nueva (cae al menú)."""
+        session = _nueva_sesion()
+        user = User(telefono="573009995566", estado="activo", consentimiento=True)
+        session.add(user)
+        session.flush()
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="pendiente_radicacion", datos_json="{}")
+        session.add(tutela)
+        session.commit()
+
+        resp, mock_cont = asyncio.run(self._procesar(session, user.telefono, "paralelepipedo"))
+
+        self.assertFalse(mock_cont.called)
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 1)
+        self.assertEqual(tutelas[0].id, tutela.id)
 
 
 if __name__ == "__main__":

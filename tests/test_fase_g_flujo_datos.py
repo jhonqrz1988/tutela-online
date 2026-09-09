@@ -280,6 +280,56 @@ class TestSalirReiniciar(_FlujoMixin):
         tutelas = session.execute(select(Tutela)).scalars().all()
         self.assertEqual(len(tutelas), 0)
 
+    def _crear_historial_con_pendientes(self):
+        """Varias tutelas con CitaPendiente creadas en una sesión cerrada (como en producción)."""
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        S = sessionmaker(bind=engine, expire_on_commit=False)
+
+        s1 = S()
+        user = User(telefono="573009876543", nombre="Historial", estado="activo", consentimiento=True)
+        s1.add(user)
+        s1.flush()
+        for i in range(3):
+            tutela = Tutela(user_id=user.id, tipo="salud", estado="narracion", datos_json='{"tipo":"salud"}')
+            s1.add(tutela)
+            s1.flush()
+            s1.add(CitaPendiente(
+                tutela_id=tutela.id,
+                referencia_textual=f"Art. ref {i}",
+                contexto="contexto",
+            ))
+        s1.commit()
+        s1.close()
+        return engine, user.telefono
+
+    def test_salir_borra_pendientes_de_sesion_anterior(self):
+        """Regresión Postgres: `salir` no debe emitir UPDATE citas_pendientes SET tutela_id=NULL
+        sobre una columna NOT NULL (children nunca cargados en la sesión)."""
+        engine, telefono = self._crear_historial_con_pendientes()
+        S = sessionmaker(bind=engine, expire_on_commit=False)
+        s2 = S()
+        resp, _, _ = asyncio.run(self._procesar(s2, telefono, "salir"))
+        self.assertEqual(len(s2.execute(select(CitaPendiente)).scalars().all()), 0)
+        self.assertEqual(len(s2.execute(select(Tutela)).scalars().all()), 0)
+        self.assertIn("nuevo", s2.execute(select(User)).scalars().all()[0].estado)
+        s2.close()
+
+    def test_eliminar_borra_pendientes_de_sesion_anterior(self):
+        """Regresión Postgres: `eliminar` borra tutelas con CitaPendiente sin dejar huérfanas."""
+        engine, telefono = self._crear_historial_con_pendientes()
+        S = sessionmaker(bind=engine, expire_on_commit=False)
+        s2 = S()
+        resp, _, _ = asyncio.run(self._procesar(s2, telefono, "eliminar"))
+        self.assertEqual(len(s2.execute(select(CitaPendiente)).scalars().all()), 0)
+        self.assertEqual(len(s2.execute(select(Tutela)).scalars().all()), 0)
+        self.assertEqual(len(s2.execute(select(User)).scalars().all()), 0)
+        s2.close()
+
 
 class TestMapeoClinicosAlPrompt(unittest.TestCase):
     def test_mapear_datos_caso_incluye_campos_clinicos(self):

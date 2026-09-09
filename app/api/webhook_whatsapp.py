@@ -11,11 +11,12 @@ import aiofiles
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.config import settings
 from app.database import get_session
-from app.models.cita_legal import CitaLegal
+from app.models.cita_legal import CitaLegal, CitaPendiente
+from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.whatsapp import MensajeWhatsApp
@@ -246,6 +247,9 @@ async def procesar_mensaje(
     # ─── SALIR / REINICIAR — borra datos y empieza de cero como nuevo usuario ──
     if body in ("salir", "reiniciar", "empezar de nuevo", "nuevo proceso", "nueva tutela", "cancelar tutela", "dejar la tutela"):
         session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
+        tutela_ids = session.execute(select(Tutela.id).where(Tutela.user_id == user.id)).scalars().all()
+        if tutela_ids:
+            session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
         for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
             session.delete(t)
         user.estado = "nuevo"
@@ -261,6 +265,9 @@ async def procesar_mensaje(
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
     if body in ("eliminar", "eliminar mis datos", "borrar", "borrar mis datos"):
         session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
+        tutela_ids = session.execute(select(Tutela.id).where(Tutela.user_id == user.id)).scalars().all()
+        if tutela_ids:
+            session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
         for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
             session.delete(t)
         session.delete(user)
@@ -316,7 +323,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
                                "hazlo_tu_mismo", "confirmar_pago", "esperando_pago", "pago_por_confirmar",
-                               "pago_confirmado", "completado"]),
+                               "pago_confirmado", "pendiente_radicacion", "fallida", "completado"]),
             ).order_by(Tutela.created_at.desc()).limit(1)
         ).scalar_one_or_none()
 
@@ -356,13 +363,13 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     tutela = session.execute(
         select(Tutela).where(
             Tutela.user_id == user.id,
-            Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
+Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision_datos",
                                "preguntas_clinicas", "confirmar_datos_personales", "corrigiendo_datos_personales",
                                "pruebas_pendiente", "esperando_codigo_email",
                                "recibiendo_pruebas", "datos_listos", "pdf_generado",
                                "esperando_decision_radicacion",
                                "hazlo_tu_mismo", "confirmar_pago", "esperando_pago", "pago_por_confirmar",
-                               "pago_confirmado", "completado"]),
+                               "pago_confirmado", "pendiente_radicacion", "fallida", "completado"]),
         ).order_by(Tutela.created_at.desc()).limit(1)
     ).scalar_one_or_none()
 
@@ -386,7 +393,15 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     # ─── CÓDIGO DE VERIFICACIÓN DE EMAIL ─────────────────────────────
     # El portal pide verificación solo cuando el correo no está registrado.
     # El usuario envía el código numérico que le llegó por correo.
-    if tutela.estado == "esperando_codigo_email":
+    # La tutela suele quedar en 'pendiente_radicacion' mientras la Radicacion
+    # espera el código (ver también radicacion_service iniciar_radicacion).
+    esperando_codigo = tutela.estado == "esperando_codigo_email"
+    if not esperando_codigo and tutela.estado == "pendiente_radicacion":
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela.id)
+        ).scalar_one_or_none()
+        esperando_codigo = bool(rad and rad.estado == "esperando_codigo_email")
+    if esperando_codigo:
         codigo_limpio = body.strip().replace(" ", "")
         if codigo_limpio.isdigit() and 4 <= len(codigo_limpio) <= 6:
             from app.services.radicacion_service import continuar_radicacion_con_codigo
