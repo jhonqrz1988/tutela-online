@@ -221,3 +221,78 @@ class TestGenerarPdfConImagen(unittest.TestCase):
             self.assertGreaterEqual(doc.page_count, 2)
             texto = "".join(page.get_text() for page in doc)
         self.assertIn("Historia", texto)
+
+
+class TestLimiteTamanioPrueba(unittest.TestCase):
+    def test_prueba_demasiado_grande_recibe_mensaje_con_limite(self):
+        """Al rechazar un PDF > límite, el bot dice cuánto es el máximo, no solo
+        'No pude descargar' (soporte: PDFs de 7+ MB quedaban sin explicación)."""
+        from app.api import webhook_whatsapp
+
+        session = _nueva_sesion()
+        user = User(telefono="573001115566", estado="activo", consentimiento=True)
+        session.add(user)
+        session.flush()
+        tutela = Tutela(user_id=user.id, tipo="salud", estado="recibiendo_pruebas", datos_json=json.dumps({"tipo": "salud"}))
+        session.add(tutela)
+        session.commit()
+
+        async def _rechaza_por_tamanio(url):
+            webhook_whatsapp._ultimo_error_descarga = (
+                "El archivo pesa más de 15 MB, y WhatsApp no acepta "
+                "documentos más grandes. Comprímelo o reduce su tamaño y envíalo de nuevo."
+            )
+            return None
+
+        async def _procesar_():
+            with mock.patch.object(webhook_whatsapp, "enviar_texto", return_value=True), \
+                 mock.patch.object(webhook_whatsapp, "enviar_botones", return_value=True), \
+                 mock.patch.object(
+                     webhook_whatsapp, "_descargar_prueba",
+                     new=mock.AsyncMock(side_effect=_rechaza_por_tamanio),
+                 ):
+                return await webhook_whatsapp.procesar_mensaje(
+                    session, user.telefono, "", 1, "https://cdn.x/big.pdf", False
+                )
+
+        resp = asyncio.run(_procesar_())
+
+        cuerpo = "\n".join(resp.get("respuestas", []))
+        self.assertIn("15 MB", cuerpo, "El mensaje debe decir el límite máximo")
+        self.assertIn("envíalo de nuevo", cuerpo)
+        tutela_guardada = session.execute(select(Tutela)).scalars().all()[0]
+        self.assertNotIn("pruebas_paths", json.loads(tutela_guardada.datos_json))
+
+    def test_descarga_rechaza_archivo_mayor_a_15_megas(self):
+        """_descargar_prueba rechaza un archivo > MAX_PRUEBA_BYTES y deja el motivo."""
+        from types import SimpleNamespace
+
+        from app.api import webhook_whatsapp
+
+        async def _fake_get(self, url, headers=None, auth=None):
+            return SimpleNamespace(
+                status_code=200,
+                content=b"x" * (webhook_whatsapp.MAX_PRUEBA_BYTES + 1),
+                url=url,
+                text="",
+            )
+
+        class _FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return False
+
+            get = _fake_get
+
+        with mock.patch.object(webhook_whatsapp, "_permite_descargar", return_value=True), \
+             mock.patch.object(webhook_whatsapp, "path_prueba", return_value="soporte.pdf"), \
+             mock.patch.object(webhook_whatsapp.httpx, "AsyncClient", _FakeClient):
+            ruta = asyncio.run(webhook_whatsapp._descargar_prueba("https://px.gob.co/doc.pdf"))
+
+        self.assertIsNone(ruta, "El archivo mayor al límite no debe descargarse")
+        self.assertIn("15 MB", webhook_whatsapp._ultimo_error_descarga)

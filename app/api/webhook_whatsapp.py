@@ -692,7 +692,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
                 _r(respuestas, telefono, f"✅ *Soporte {num_soportes} recibido.*")
                 _b(respuestas, telefono, "¿Tienes más soportes o generamos la tutela con los que hay?", [("enviar_otro", "📎 Enviar otro"), ("listo", "✅ No tengo más")])
                 return {"ok": True, "respuestas": respuestas}
-            _r(respuestas, telefono, "No pude descargar el archivo. Presiona *No tengo más* para continuar.")
+            _r(respuestas, telefono, _ultimo_error_descarga or "No pude descargar el archivo.")
             _b(respuestas, telefono, "¿Qué deseas hacer?", [("enviar_otro", "📎 Intentar otro"), ("listo", "✅ No tengo más")])
             return {"ok": True, "respuestas": respuestas}
 
@@ -907,7 +907,11 @@ _HOSTS_MEDIA = {
     "api.twilio.com",
     "mms-gw.twilio.com",
 }
-MAX_PRUEBA_BYTES = 5 * 1024 * 1024  # 5 MB
+MAX_PRUEBA_BYTES = 15 * 1024 * 1024  # 15 MB (Meta acepta documentos hasta 16 MB; dejamos margen)
+
+# Motivo de la última prueba no descargada ("" si no aplica). Lo usa el webhook
+# para avisar al usuario cuándo su archivo supera el límite de tamaño.
+_ultimo_error_descarga = ""
 
 
 def _host_permitido(url: str) -> bool:
@@ -967,6 +971,10 @@ def _permite_descargar(url: str) -> bool:
 
 
 async def _descargar_prueba(url: str) -> str | None:
+    # Se limpia en cada llamada: guarda el motivo por el que una prueba NO pudo
+    # descargarse, para que el webhook pueda dar un mensaje claro al usuario.
+    global _ultimo_error_descarga
+    _ultimo_error_descarga = ""
     if not url:
         return None
     try:
@@ -1017,6 +1025,11 @@ async def _descargar_prueba(url: str) -> str | None:
             logger.error(f"_descargar_prueba: redirect final rechazado: {str(r.url)[:80]}")
             return None
         if len(r.content) > MAX_PRUEBA_BYTES:
+            pesos_mb = MAX_PRUEBA_BYTES // (1024 * 1024)
+            _ultimo_error_descarga = (
+                f"El archivo pesa más de {pesos_mb} MB, y WhatsApp no acepta "
+                "documentos más grandes. Comprímelo o reduce su tamaño y envíalo de nuevo."
+            )
             logger.error(f"_descargar_prueba: archivo demasiado grande: {len(r.content)} bytes")
             return None
         if r.status_code == 200:
