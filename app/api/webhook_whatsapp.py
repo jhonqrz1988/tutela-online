@@ -392,29 +392,39 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
 
     # ─── CÓDIGO DE VERIFICACIÓN DE EMAIL ─────────────────────────────
     # El portal pide verificación solo cuando el correo no está registrado.
-    # El usuario envía el código numérico que le llegó por correo.
-    # La tutela suele quedar en 'pendiente_radicacion' mientras la Radicacion
-    # espera el código (ver también radicacion_service iniciar_radicacion).
-    esperando_codigo = tutela.estado == "esperando_codigo_email"
-    if not esperando_codigo and tutela.estado == "pendiente_radicacion":
-        rad = session.execute(
-            select(Radicacion).where(Radicacion.tutela_id == tutela.id)
+    # El código debe ir SIEMPRE a la tutela cuya Radicación espera el código,
+    # aunque exista una tutela más nueva (huérfana de un flujo previo).
+    codigo_limpio = body.strip().replace(" ", "")
+    es_codigo = codigo_limpio.isdigit() and 4 <= len(codigo_limpio) <= 6
+    tutela_con_codigo = None
+    if es_codigo:
+        tutela_con_codigo = session.execute(
+            select(Tutela).where(
+                Tutela.user_id == user.id,
+                Tutela.id.in_(
+                    select(Radicacion.tutela_id).where(
+                        Radicacion.estado == "esperando_codigo_email"
+                    )
+                ),
+            ).order_by(Tutela.created_at.desc()).limit(1)
         ).scalar_one_or_none()
-        esperando_codigo = bool(rad and rad.estado == "esperando_codigo_email")
-    if esperando_codigo:
-        codigo_limpio = body.strip().replace(" ", "")
-        if codigo_limpio.isdigit() and 4 <= len(codigo_limpio) <= 6:
-            from app.services.radicacion_service import continuar_radicacion_con_codigo
-            _r(respuestas, telefono, "⏳ *Código recibido.* Continuando con la radicación...")
-            resultado = await continuar_radicacion_con_codigo(tutela.id, codigo_limpio)
-            if resultado.get("ok"):
-                _r(respuestas, telefono, "✅ *Código verificado.* Radicando tu tutela...")
-            else:
-                _r(respuestas, telefono, f"❌ *Error:* {resultado.get('error', 'No se pudo completar')}")
-            return {"ok": True, "respuestas": respuestas}
-        else:
+    if tutela_con_codigo is not None or tutela.estado == "esperando_codigo_email":
+        if tutela_con_codigo is not None and tutela_con_codigo.id != tutela.id:
+            tutela = tutela_con_codigo
+            datos = json.loads(tutela.datos_json) if tutela.datos_json else {}
+            msg_orm.tutela_id = tutela.id
+            session.commit()
+        if not es_codigo:
             _r(respuestas, telefono, "🔑 El código debe tener 4 a 6 dígitos. Revísalo en tu correo y envíamelo de nuevo.")
             return {"ok": True, "respuestas": respuestas}
+        from app.services.radicacion_service import continuar_radicacion_con_codigo
+        _r(respuestas, telefono, "⏳ *Código recibido.* Continuando con la radicación...")
+        resultado = await continuar_radicacion_con_codigo(tutela.id, codigo_limpio)
+        if resultado.get("ok"):
+            _r(respuestas, telefono, "✅ *Código verificado.* Radicando tu tutela...")
+        else:
+            _r(respuestas, telefono, f"❌ *Error:* {resultado.get('error', 'No se pudo completar')}")
+        return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
     #   RECOGIENDO DATOS PERSONALES — paso a paso

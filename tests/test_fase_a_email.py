@@ -147,6 +147,42 @@ class TestCodigoEmail(unittest.TestCase):
         self.assertEqual(len(tutelas), 1)
         self.assertEqual(tutelas[0].id, tutela.id)
 
+    def test_codigo_prioriza_tutela_con_radicacion_esperando_codigo(self):
+        """Si existe una tutela más nueva (huérfana de un flujo previo que creó
+        el bug A1/A2), el código del correo debe ir a la tutela cuya Radicación
+        espera el código y NO alimentar ni crear la tutela nueva."""
+        session = _nueva_sesion()
+        user = User(telefono="573009997744", estado="activo", consentimiento=True)
+        session.add(user)
+        session.flush()
+        tutela_rad = Tutela(
+            user_id=user.id,
+            tipo="salud",
+            estado="pendiente_radicacion",
+            datos_json=json.dumps({"tipo": "salud"}),
+        )
+        session.add(tutela_rad)
+        session.flush()
+        session.add(Radicacion(tutela_id=tutela_rad.id, estado="esperando_codigo_email"))
+        tutela_nueva = Tutela(
+            user_id=user.id,
+            tipo="salud",
+            estado="recogiendo_datos",
+            datos_json=json.dumps({"tipo": "salud", "_step": 0}),
+        )
+        session.add(tutela_nueva)
+        session.commit()
+
+        resp, mock_cont = asyncio.run(self._procesar(session, user.telefono, "582913"))
+
+        tutelas = session.execute(select(Tutela)).scalars().all()
+        self.assertEqual(len(tutelas), 2, "No se debe crear una tercera tutela")
+        self.assertTrue(mock_cont.called, "Debe continuar la radicación con el código")
+        self.assertEqual(mock_cont.call_args[0][0], tutela_rad.id,
+                         "El código debe ir a la tutela cuya Radicación espera el código")
+        datos_nueva = json.loads(tutela_nueva.datos_json)
+        self.assertEqual(datos_nueva.get("_step"), 0, "La tutela huérfana no debe avanzar")
+
 
 if __name__ == "__main__":
     unittest.main()
