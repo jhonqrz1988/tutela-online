@@ -96,6 +96,47 @@
     </div>
   </div>
 
+  <div style="margin-bottom: 30px;">
+    <h2 style="font-size:15px;color:#333;margin-bottom:10px;">Visitas a la p&aacute;gina (pauta)</h2>
+    <div class="stats" style="margin-bottom:10px;">
+      <div class="stat-card">
+        <div class="num">{{ visitas.total }}</div>
+        <div class="label">Total visitas</div>
+      </div>
+      <div class="stat-card">
+        <div class="num">{{ visitas.ultimas_24h }}</div>
+        <div class="label">&Uacute;ltimas 24 h</div>
+      </div>
+      <div class="stat-card">
+        <div class="num">{{ visitas.pauta }}</div>
+        <div class="label">De pauta (fbclid/utm)</div>
+      </div>
+    </div>
+    {% if visitas.por_fuente or visitas.ultimas %}
+    <div style="display:flex; gap:15px; flex-wrap:wrap;">
+      <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:1; min-width:200px;">
+        <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">Por fuente</h3>
+        {% for f in visitas.por_fuente %}
+        <div style="display:flex; justify-content:space-between; font-size:13px; padding:3px 0; border-bottom:1px solid #f0f0f0;">
+          <span>{{ f.fuente }}</span><strong>{{ f.n }}</strong>
+        </div>
+        {% else %}
+        <span style="color:#bbb; font-size:13px;">Sin visitas a&uacute;n.</span>
+        {% endfor %}
+      </div>
+      <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:2; min-width:260px;">
+        <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">&Uacute;ltimas visitas</h3>
+        {% for v in visitas.ultimas %}
+        <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:4px 0; border-bottom:1px solid #f0f0f0;">
+          <span>{{ v.fuente }}{% if v.campania %} <small style="color:#666;">({{ v.campania }})</small>{% endif %}</span>
+          <span style="color:#aaa; white-space:nowrap;">{{ v.created_at[:19] }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
   <div class="filtros">
     <label>Filtrar:</label>
     <select id="filtro-estado" onchange="filtrar()">

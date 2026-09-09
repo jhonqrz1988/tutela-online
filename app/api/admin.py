@@ -5,16 +5,18 @@ import logging
 import os
 import secrets
 import time
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.config import settings
 from app.database import get_session
 from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
+from app.models.visita import VisitaLanding
 
 router = APIRouter(prefix="/admin")
 logger = logging.getLogger(__name__)
@@ -309,11 +311,47 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
             "pasos": pasos_row,
         })
 
+    # Visitas a la landing (tráfico de pauta Facebook/UTM)
+    hace_24h = datetime.utcnow() - timedelta(hours=24)
+    visitas_total = session.execute(select(func.count()).select_from(VisitaLanding)).scalar() or 0
+    visitas_24h = session.execute(
+        select(func.count()).select_from(VisitaLanding).where(VisitaLanding.created_at >= hace_24h)
+    ).scalar() or 0
+    visitas_pauta = session.execute(
+        select(func.count()).select_from(VisitaLanding).where(VisitaLanding.es_pauta)
+    ).scalar() or 0
+    visitas_por_fuente = session.execute(
+        select(VisitaLanding.fuente, func.count().label("n"))
+        .group_by(VisitaLanding.fuente)
+        .order_by(func.count().desc())
+        .limit(5)
+    ).all()
+    ultimas_visitas = session.execute(
+        select(VisitaLanding).order_by(VisitaLanding.created_at.desc()).limit(6)
+    ).scalars().all()
+    visitas = {
+        "total": visitas_total,
+        "ultimas_24h": visitas_24h,
+        "pauta": visitas_pauta,
+        "por_fuente": [{"fuente": f, "n": n} for f, n in visitas_por_fuente],
+        "ultimas": [
+            {
+                "fuente": v.fuente,
+                "medio": v.medio or "",
+                "campania": v.campania or "",
+                "es_pauta": bool(v.es_pauta),
+                "created_at": str(v.created_at) if v.created_at else "",
+            }
+            for v in ultimas_visitas
+        ],
+    }
+
     template = env.get_template("admin.html")
     html = template.render(
         request=request,
         tutelas=rows,
         stats=stats,
+        visitas=visitas,
         pagina=pagina,
         total_paginas=total_paginas,
         total_tutelas=total_tutelas,

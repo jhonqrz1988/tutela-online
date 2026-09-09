@@ -89,7 +89,9 @@ _PRIVACIDAD_HTML = Path("app/templates/privacidad.html").read_text(encoding="utf
 
 
 @app.get("/", response_class=HTMLResponse)
-async def pagina_inicio():
+async def pagina_inicio(request: Request):
+    from app.services.visitas_service import registrar_visita_landing
+    registrar_visita_landing(str(request.query_params))
     return HTMLResponse(_LANDING_HTML)
 
 

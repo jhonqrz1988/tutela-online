@@ -22,7 +22,7 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 - DB init: Called automatically via `init_db()` in `app/database.py` — crea el directorio padre automáticamente (`_ensure_sqlite_dir`)
 - Dockerfile declara `VOLUME ["/data"]` para persistencia
 - Session: `SessionLocal()` (sync SQLAlchemy)
-- Tables: `User`, `Tutela`, `MensajeWhatsApp`, `CitaLegal`, `CitaPendiente`, `Radicacion`
+- Tables: `User`, `Tutela`, `MensajeWhatsApp`, `CitaLegal`, `CitaPendiente`, `Radicacion`, `VisitaLanding` (registro de cargas de la landing `/` — solo datos de campaña UTM/Facebook, sin IP)
 
 ## Project Structure
 - `app/api/` - FastAPI routers (webhook_whatsapp, admin, tutelas, health)
