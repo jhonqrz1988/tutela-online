@@ -211,7 +211,8 @@ class TestAplicarExtraccion(unittest.TestCase):
         self.assertEqual(resultado["accionante_email"], "juan@correo.com")
         self.assertEqual(resultado["accionante_cedula"], "1020304050")
         self.assertEqual(resultado["hechos"], "1. [10/01/2026] - Pido cita.")
-        self.assertEqual(resultado["accionado"], "EPS Sanitas")
+        self.assertEqual(resultado["accionado"], "Nueva EPS",
+                         "La EPS declarada en el paso personal no se reemplaza por la de la IA")
         self.assertEqual(resultado["peticion"], "Que ordene la cita.")
 
     def test_no_roba_direccion_ni_ciudad(self):

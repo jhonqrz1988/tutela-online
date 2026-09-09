@@ -57,6 +57,7 @@ def _datos_personales_completos():
         "ciudad": "Bogotá",
         "accionante_direccion": "Calle 1 # 2-3, Barrio Centro",
         "departamento": "Cundinamarca",
+        "accionado": "Nueva EPS",
     }
 
 
@@ -152,6 +153,53 @@ class TestConfirmarDatosPersonales(_FlujoMixin):
         resp, _, _ = asyncio.run(self._procesar(session, user.telefono, "99"))
         tutela = session.execute(select(Tutela)).scalars().all()[0]
         self.assertEqual(tutela.estado, "corrigiendo_datos_personales")
+
+    def test_ultimo_campo_personal_es_la_eps(self):
+        """El último paso personal es el nombre de la EPS que irá a la tutela."""
+        self.assertEqual(PASOS[-1][0], "accionado")
+        self.assertIn("EPS", PASOS[-1][1])
+
+    def test_responder_eps_guarda_accionado_y_muestra_resumen(self):
+        """Al completar el paso de la EPS se guarda como accionado y el resumen lo muestra."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "recogiendo_datos",
+            {"tipo": "salud", "_step": len(PASOS) - 1,
+             **{CAMPOS[i]: f"valor_{i}" for i in range(len(PASOS) - 1)}}
+        )
+        resp, mock_b, _ = asyncio.run(self._procesar(session, user.telefono, "Nueva EPS"))
+        tutela = session.execute(select(Tutela)).scalars().all()[0]
+        self.assertEqual(tutela.estado, "confirmar_datos_personales")
+        guardados = json.loads(tutela.datos_json)
+        self.assertEqual(guardados["accionado"], "Nueva EPS")
+        cuerpo = "\n".join(resp.get("respuestas", []))
+        self.assertIn("🏥 EPS", cuerpo, "El resumen de datos personales debe incluir la EPS")
+
+    def test_corregir_eps_con_numero_de_campo(self):
+        """El campo de EPS se puede corregir por su número en el menú de datos."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "confirmar_datos_personales", _datos_personales_completos()
+        )
+        num = len(PASOS)
+        asyncio.run(self._procesar(session, user.telefono, "2"))
+        asyncio.run(self._procesar(session, user.telefono, str(num)))
+        asyncio.run(self._procesar(session, user.telefono, "EPS Sanitas"))
+        tutela = session.execute(select(Tutela)).scalars().all()[0]
+        self.assertEqual(json.loads(tutela.datos_json)["accionado"], "EPS Sanitas")
+        self.assertEqual(tutela.estado, "confirmar_datos_personales")
+
+    def test_eps_de_cliente_no_la_pisa_la_ia(self):
+        """La EPS declarada en el paso personal se conserva: la extracción de la
+        narración no la sobreescribe, así los datos de la tutela usan esa EPS."""
+        from app.services.ia_service import aplicar_extraccion
+
+        datos = _datos_personales_completos()
+        aplicar_extraccion(datos, {
+            "accionado": "EPS inventada por IA", "hechos": "relato", "peticion": "x",
+        })
+        self.assertEqual(datos["accionado"], "Nueva EPS")
+        self.assertEqual(datos["hechos"], "relato")
 
 
 class TestPreguntasClinicas(_FlujoMixin):

@@ -872,6 +872,7 @@ _PERSONALES_LABEL = {
     "ciudad": "🏙️ Ciudad",
     "accionante_direccion": "📍 Dirección",
     "departamento": "🗺️ Departamento",
+    "accionado": "🏥 EPS",
 }
 
 
@@ -1234,6 +1235,8 @@ MENU_DEFAULT = (
 )
 
 # Orden de recolección de datos personales: (campo, mensaje)
+# El último paso (accionado/EPS) es la entidad que se usará como accionado
+# en los datos de la tutela; por eso está protegido en CAMPOS_PERSONALES_GUARDADOS.
 DATOS_PERSONALES_STEPS = [
     ("accionante_nombre", "👤 Escribe tu *nombre completo*:"),
     ("accionante_tipo_doc", "🪪 Tipo de documento (CC, CE, Pasaporte):"),
@@ -1243,6 +1246,7 @@ DATOS_PERSONALES_STEPS = [
     ("ciudad", "🏙️ ¿En qué ciudad vives?:"),
     ("accionante_direccion", "📍 Dirección de residencia completa (calle, número, barrio, ciudad):"),
     ("departamento", "🗺️ Departamento (ej: Cundinamarca, Antioquia):"),
+    ("accionado", "🏥 ¿Cuál es el *nombre de tu EPS*? (Ej: Nueva EPS, Sanitas, Salud Total):"),
 ]
 
 # Datos clínicos del caso que pregunta el bot (evita que la IA los invente): (campo, mensaje)

@@ -48,10 +48,12 @@ def normalizar_dato_obligatorio(valor: str | None) -> str:
 
 # Campos de datos personales recolectados paso a paso en el flujo de WhatsApp.
 # La extracción de IA (narración) NO debe leerlos, pisarlos ni inventarlos.
+# `accionado` es la EPS que el usuario declaró en el último paso y es la entidad
+# que se toma para los datos de la tutela, así que tampoco se pisa.
 CAMPOS_PERSONALES_GUARDADOS = {
     "accionante_nombre", "accionante_tipo_doc", "accionante_cedula",
     "accionante_telefono", "accionante_email", "accionante_direccion",
-    "ciudad", "departamento",
+    "ciudad", "departamento", "accionado",
 }
 
 
