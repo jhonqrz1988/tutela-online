@@ -1,7 +1,8 @@
+import asyncio
 import json
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.bot.navegador import RadicadorBot
 from app.database import SessionLocal
@@ -160,18 +161,50 @@ async def continuar_radicacion_con_codigo(tutela_id: int, codigo: str) -> dict:
         rad = session.execute(
             select(Radicacion).where(Radicacion.tutela_id == tutela_id)
         ).scalar_one_or_none()
-        if not rad or rad.estado != "esperando_codigo_email":
+        if not rad or rad.estado not in ("esperando_codigo_email", "fallida", "continuando"):
             return {"ok": False, "error": "Esta tutela no está esperando código de email"}
+
+        # Claim atómico: solo un intento (de los mensajes que llegan a la vez)
+        # procesa el código; el resto responde sin tocar el navegador.
+        claimed = session.execute(
+            update(Radicacion)
+            .where(Radicacion.id == rad.id, Radicacion.estado.in_(["esperando_codigo_email", "fallida"]))
+            .values(estado="continuando")
+        )
+        session.commit()
+        if claimed.rowcount != 1:
+            return {"ok": False, "error": "El código ya se está procesando. Espera un momento."}
 
         datos = json.loads(tutela.datos_json or "{}")
         bot = _get_bot()
+        if bot.page is None or bot.page.is_closed():
+            rad.estado = "fallida"
+            rad.ultimo_error = "Navegador no disponible (posible reinicio del servidor)"
+            session.commit()
+            return {"ok": False, "error": "El navegador no está disponible. Reintenta desde el panel admin."}
 
-        # Ingresar código de verificación
-        await bot.ingresar_codigo_email(codigo)
+        # Ingresar código de verificación (con timeout para no colgar el webhook)
+        try:
+            await asyncio.wait_for(bot.ingresar_codigo_email(codigo), timeout=120)
+        except asyncio.TimeoutError:
+            rad.estado = "fallida"
+            rad.ultimo_error = "Timeout ingresando el código de email"
+            session.commit()
+            logger.error(f"Timeout ingresando código de email para tutela {tutela_id}")
+            return {"ok": False, "error": "No se pudo aplicar el código a tiempo. Intenta de nuevo."}
         logger.info(f"Código de email ingresado para tutela {tutela_id}")
 
-        # Completar pasos restantes (5-10)
-        await _completar_radicacion(bot, tutela, datos, rad, session)
+        # Completar pasos restantes (5-10) con timeout de seguridad
+        try:
+            await asyncio.wait_for(
+                _completar_radicacion(bot, tutela, datos, rad, session), timeout=360
+            )
+        except asyncio.TimeoutError:
+            rad.estado = "fallida"
+            rad.ultimo_error = "Timeout completando la radicación"
+            session.commit()
+            logger.error(f"Timeout completando radicación tutela {tutela_id}")
+            return {"ok": False, "error": "La radicación se demoró demasiado. Reintenta desde el panel admin."}
 
         return {"ok": True}
 

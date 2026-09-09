@@ -415,7 +415,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
                 Tutela.user_id == user.id,
                 Tutela.id.in_(
                     select(Radicacion.tutela_id).where(
-                        Radicacion.estado == "esperando_codigo_email"
+                        Radicacion.estado.in_(["esperando_codigo_email", "fallida"])
                     )
                 ),
             ).order_by(Tutela.created_at.desc()).limit(1)
