@@ -16,7 +16,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import get_session
 from app.models.cita_legal import CitaLegal, CitaPendiente
-from app.models.radicacion import Radicacion
+from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.whatsapp import MensajeWhatsApp
@@ -221,6 +221,16 @@ async def webhook_zapi(request: Request, session=Depends(get_session)):
 # FLUJO PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════
 
+def _borrar_radicaciones(session, tutela_ids):
+    rads = session.execute(select(Radicacion).where(Radicacion.tutela_id.in_(tutela_ids))).scalars().all()
+    if not rads:
+        return
+    rad_ids = [r.id for r in rads]
+    session.execute(delete(PasoRadicacion).where(PasoRadicacion.radicacion_id.in_(rad_ids)))
+    for r in rads:
+        session.delete(r)
+
+
 async def procesar_mensaje(
     session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool
 ) -> dict:
@@ -250,6 +260,7 @@ async def procesar_mensaje(
         tutela_ids = session.execute(select(Tutela.id).where(Tutela.user_id == user.id)).scalars().all()
         if tutela_ids:
             session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
+            _borrar_radicaciones(session, tutela_ids)
         for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
             session.delete(t)
         user.estado = "nuevo"
@@ -268,6 +279,7 @@ async def procesar_mensaje(
         tutela_ids = session.execute(select(Tutela.id).where(Tutela.user_id == user.id)).scalars().all()
         if tutela_ids:
             session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
+            _borrar_radicaciones(session, tutela_ids)
         for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
             session.delete(t)
         session.delete(user)

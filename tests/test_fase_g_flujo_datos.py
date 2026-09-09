@@ -25,6 +25,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models.cita_legal import CitaPendiente
+from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 from app.models.user import User
 
@@ -329,6 +330,23 @@ class TestSalirReiniciar(_FlujoMixin):
         self.assertEqual(len(s2.execute(select(Tutela)).scalars().all()), 0)
         self.assertEqual(len(s2.execute(select(User)).scalars().all()), 0)
         s2.close()
+
+    def test_salir_borra_radicacion_y_pasos_sin_error(self):
+        """Regresión Postgres: 'salir' con tutela que tiene Radicacion + PasoRadicacion
+        (cascade delete-orphan) no debe emitir UPDATE tutela_id=NULL sobre NOT NULL."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "pendiente_radicacion", {**_datos_personales_completos(), "tipo": "salud"}
+        )
+        rad = Radicacion(tutela_id=tutela.id, estado="esperando_codigo_email")
+        session.add(rad)
+        session.flush()
+        session.add(PasoRadicacion(radicacion_id=rad.id, paso="llenar_formulario", estado="ok"))
+        session.commit()
+        asyncio.run(self._procesar(session, user.telefono, "salir"))
+        self.assertEqual(len(session.execute(select(Tutela)).scalars().all()), 0)
+        self.assertEqual(len(session.execute(select(Radicacion)).scalars().all()), 0)
+        self.assertEqual(len(session.execute(select(PasoRadicacion)).scalars().all()), 0)
 
 
 class TestMapeoClinicosAlPrompt(unittest.TestCase):
