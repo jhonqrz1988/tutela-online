@@ -132,11 +132,14 @@ class TestPaginaPagoHorario(unittest.TestCase):
         self.assertIn("compártenos ese", html,
                       "Debe pedir que compartan el código por WhatsApp")
         self.assertIn("ana@correo.com", html, "Debe mostrar el correo del usuario")
-        self.assertIn("únicamente", html, "Debe indicar que el pago es solo por MP")
         self.assertNotIn("Nequi", html, "Nequi no está activo y no debe mencionarse")
         self.assertNotIn("transferencia", html,
                          "Transferencia no está activa y no debe mencionarse")
-        self.assertIn("font-size:16px", html, "La leyenda de pago debe verse más grande")
+        self.assertNotIn("El pago se realiza", html,
+                         "La leyenda inferior de pago debe haber sido retirada")
+        self.assertIn("font-size:20px", html, "El botón debe verse más grande y llamativo")
+        self.assertIn("font-size:18px", html, "El cuerpo debe crecer a 18px")
+        self.assertIn("00a650", html, "El botón debe destacar en verde Mercado Pago")
 
 
 class TestTextoAvisoHorario(unittest.TestCase):

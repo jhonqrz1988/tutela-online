@@ -48,47 +48,43 @@ def _pagina_pago(
     aviso: str,
     email: str = "",
     init_point: str | None = None,
-    reference: str = "",
 ) -> str:
     """Página intermedia de pago (Radicación de tutela).
 
-    Avisa el horario de la Rama Judicial, pide compartir por WhatsApp el posible
-    código de verificación que llegue por correo una vez pagado, e indica que el
-    pago es únicamente vía el botón de Mercado Pago (no Nequi ni transferencia).
+    Avisa el horario de la Rama Judicial y pide compartir por WhatsApp el posible
+    código de verificación que llegue por correo una vez pagado. El pago se hace
+    con el botón de Mercado Pago, grande y llamativo, sin leyendas de medios
+    alternativos (Nequi/transferencia no están activos).
     ``init_point`` es el checkout de MP; si es None se muestra una página informativa.
     """
     precio = f"${settings.mercadopago_amount:,.0f}".replace(",", ".")
     email_txt = f" <b>{escape(email)}</b>" if email else ""
-    boton = f'<a class="btn" href="{escape(init_point)}">Continuar al pago</a>' if init_point else ""
-    ref_line = f'<p class="nota">Referencia: <code>{escape(reference)}</code></p>' if reference else ""
+    boton = f'<a class="btn" href="{escape(init_point)}">&#128179; Continuar al pago</a>' if init_point else ""
     return f"""<!DOCTYPE html>
     <html lang="es">
     <head><meta charset="utf-8"><title>Pago - Tutela</title>
     <style>
-      body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px; color:#222; }}
-      h1 {{ color:#1a5fb4; }}
-      .card {{ border:1px solid #ddd; border-radius:10px; padding:24px; }}
-      .aviso {{ background:#fff3cd; border:1px solid #ffe08a; border-radius:8px; padding:12px 14px;
-                font-size:14px; color:#7a5c00; margin:16px 0; }}
+      body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px;
+              color:#222; font-size:18px; }}
+      h1 {{ color:#1a5fb4; font-size:28px; }}
+      .card {{ border:1px solid #ddd; border-radius:12px; padding:28px; }}
+      .aviso {{ background:#fff3cd; border:1px solid #ffe08a; border-radius:8px; padding:14px 16px;
+                font-size:16px; color:#7a5c00; margin:18px 0; line-height:1.5; }}
       .aviso.email {{ background:#e3f2fd; border:1px solid #90caf9; color:#0d47a1; }}
-      .btn {{ display:block; text-align:center; background:#1a5fb4; color:#fff; text-decoration:none;
-              padding:14px; border-radius:8px; font-weight:600; font-size:16px; }}
-      .nota {{ font-size:16px; color:#555; margin-top:16px; }}
-      code {{ background:#f0f0f0; padding:2px 6px; border-radius:4px; }}
+      .btn {{ display:block; text-align:center; background:linear-gradient(180deg,#00a650,#008745);
+              color:#fff; text-decoration:none; padding:18px; border-radius:12px; font-weight:800;
+              font-size:20px; margin-top:22px; box-shadow:0 4px 12px rgba(0,166,80,.35); }}
     </style></head>
     <body>
       <div class="card">
         <h1>Radicación de tutela</h1>
-        <p style="font-size:16px;">Radicamos tu tutela ante la Rama Judicial por <b>{precio} COP</b>.</p>
+        <p style="margin-bottom:0;">Radicamos tu tutela ante la Rama Judicial por <b>{precio} COP</b>.</p>
         <div class="aviso"><b>&#128197; Horario de radicación de la Rama Judicial</b><br>{aviso}</div>
         <div class="aviso email"><b>&#128231; Código de verificación por correo</b><br>
             Al radicar, la Rama Judicial podría enviar un mensaje con un código de
             verificación a tu correo{email_txt}. <b>Una vez pagues</b>, compártenos ese
             código por WhatsApp para continuar con la radicación.</div>
         {boton}
-        <p class="nota">El pago se realiza <b>únicamente</b> a través de
-            <b>Mercado Pago</b> con el botón de arriba. No solicitamos pagos por otros medios.</p>
-        {ref_line}
       </div>
     </body></html>
     """
@@ -153,16 +149,14 @@ async def iniciar_pago(
                 aviso,
                 email=datos.get("accionante_email", ""),
                 init_point=init_point,
-                reference=reference,
             ))
 
-    # Sin Mercado Pago configurado: página informativa + opción de confirmar manualmente
+    # Sin Mercado Pago configurado: página informativa
     datos = json.loads(tutela.datos_json or "{}")
     aviso = texto_aviso_horario(es_horario_habil())
     return HTMLResponse(_pagina_pago(
         aviso,
         email=datos.get("accionante_email", ""),
-        reference=reference,
     ))
 
 
