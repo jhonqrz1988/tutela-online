@@ -5,7 +5,8 @@ import logging
 import os
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -20,6 +21,8 @@ from app.models.visita import VisitaLanding
 
 router = APIRouter(prefix="/admin")
 logger = logging.getLogger(__name__)
+
+BOGOTA_TZ = ZoneInfo("America/Bogota")
 env = Environment(
     loader=FileSystemLoader("app/templates"),
     cache_size=0,
@@ -29,6 +32,19 @@ env = Environment(
 SESSION_COOKIE = "tutela_admin"
 SESSION_TTL = 12 * 3600  # 12 horas
 CSRF_COOKIE = "tutela_admin_csrf"
+
+
+def _fecha_bogota(dt) -> str:
+    """Convierte un datetime naive guardado como UTC a hora de Bogotá (UTC-5).
+
+    Las fechas se persisten con func.now() (UTC). El panel las muestra en
+    hora local de Colombia para que coincidan con el horario de radicación.
+    """
+    if dt is None:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(BOGOTA_TZ).strftime("%Y-%m-%d %H:%M")
 
 # Etiquetas cortas para el resumen de pasos del bot en la tabla del panel.
 _ETIQUETA_PASO = {
@@ -307,7 +323,7 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
             "constancia_path": constancia,
             "user_nombre": user_nombre,
             "user_telefono": user_telefono,
-            "created_at": str(t.created_at) if t.created_at else "",
+"created_at": _fecha_bogota(t.created_at),
             "pasos": pasos_row,
         })
 
@@ -340,7 +356,7 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
                 "medio": v.medio or "",
                 "campania": v.campania or "",
                 "es_pauta": bool(v.es_pauta),
-                "created_at": str(v.created_at) if v.created_at else "",
+                "created_at": _fecha_bogota(v.created_at),
             }
             for v in ultimas_visitas
         ],
@@ -383,14 +399,14 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
             "ultimo_error": r.ultimo_error,
             "constancia_path": r.constancia_path,
             "token_verificacion": r.token_verificacion,
-            "created_at": str(r.created_at) if r.created_at else "",
-            "updated_at": str(r.updated_at) if r.updated_at else "",
+            "created_at": _fecha_bogota(r.created_at),
+            "updated_at": _fecha_bogota(r.updated_at),
             "pasos": [
                 {
                     "paso": p.paso,
                     "estado": p.estado,
                     "detalle": p.detalle,
-                    "created_at": str(p.created_at) if p.created_at else "",
+                    "created_at": _fecha_bogota(p.created_at),
                 }
                 for p in pasos
             ],
@@ -404,7 +420,7 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
             "tipo": m.tipo_mensaje,
             "media_url": m.media_url,
             "es_recibido": m.es_recibido,
-            "created_at": str(m.created_at) if m.created_at else "",
+            "created_at": _fecha_bogota(m.created_at),
         })
 
     return {
@@ -415,8 +431,8 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
         "link_pago": f"{settings.app_url}/pago/{t.id}",
         "datos": datos,
         "pdf_path": t.pdf_path,
-        "created_at": str(t.created_at) if t.created_at else "",
-        "updated_at": str(t.updated_at) if t.updated_at else "",
+        "created_at": _fecha_bogota(t.created_at),
+        "updated_at": _fecha_bogota(t.updated_at),
         "usuario": {
             "telefono": t.user.telefono.replace("whatsapp:", "") if t.user and t.user.telefono else "",
             "nombre": t.user.nombre if t.user else "",

@@ -197,6 +197,17 @@ class TestPanelIncluyePasos(unittest.TestCase):
         self.assertIn("Formulario", html, "Debe aparecer la etiqueta del primer paso")
         self.assertIn("formulario", html.lower(), "Debe aparecer el paso registrado")
 
+    def test_fecha_bogota_convierte_utc_a_hora_local(self):
+        """El panel debe mostrar fechas en hora de Bogotá (UTC-5), no en UTC."""
+        from datetime import datetime
+
+        from app.api.admin import _fecha_bogota
+
+        # 22:28 UTC (lo que guarda func.now en SQLite) = 17:28 en Bogotá
+        naive_utc = datetime(2026, 9, 9, 22, 28, 39)
+        self.assertEqual(_fecha_bogota(naive_utc), "2026-09-09 17:28")
+        self.assertEqual(_fecha_bogota(None), "")
+
 
 if __name__ == "__main__":
     unittest.main()

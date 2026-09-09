@@ -129,7 +129,7 @@
         {% for v in visitas.ultimas %}
         <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:4px 0; border-bottom:1px solid #f0f0f0;">
           <span>{{ v.fuente }}{% if v.campania %} <small style="color:#666;">({{ v.campania }})</small>{% endif %}</span>
-          <span style="color:#aaa; white-space:nowrap;">{{ v.created_at[:19] }}</span>
+          <span style="color:#aaa; white-space:nowrap;">{{ v.created_at }}</span>
         </div>
         {% endfor %}
       </div>
@@ -201,7 +201,7 @@
         </td>
         <td>{{ t.num_radicado or '—' }}</td>
         <td>{{ t.user_nombre or '—' }}<br><small>{{ t.user_telefono or '' }}</small></td>
-        <td>{{ (t.created_at[:16] if t.created_at else '—') }}</td>
+        <td>{{ t.created_at or '—' }}</td>
         <td>
           {% if t.pasos %}
             {% for p in t.pasos %}
