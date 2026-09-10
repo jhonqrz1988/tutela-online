@@ -717,7 +717,7 @@ class RadicadorBot:
                     for (var key in clients) {{
                         var client = clients[key];
                         if (client && client.T) {{
-                            client.T(token);
+                            client.T('{token}');
                         }}
                     }}
                 }}

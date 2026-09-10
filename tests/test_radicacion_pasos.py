@@ -139,6 +139,35 @@ def settings_sim():
     return settings
 
 
+class TestNavegadorRecaptcha(unittest.TestCase):
+    """El token de reCAPTCHA se inserta en el textarea y en el callback T()
+    SIEMPRE como literal JS (nunca dejar un identificador `token` suelto,
+    que explota con ReferenceError en el navegador)."""
+
+    def _pagina_que_guarda_script(self):
+        clase = self
+
+        class PageToken:
+            async def evaluate(self, script):
+                clase.script = script
+
+        page = PageToken()
+        self.script = ""
+        return page
+
+    def test_token_se_interpola_como_literal_en_textarea_y_callback(self):
+        bot = _make_bot(self._pagina_que_guarda_script())
+        with mock.patch.object(settings_sim(), "simulate_bot", False), \
+             mock.patch("app.services.captcha_service.resolver_recaptcha_v2",
+                        new=mock.AsyncMock(return_value="TOKEN_123")):
+            resultado = asyncio.run(bot.resolver_recaptcha())
+
+        self.assertTrue(resultado, "Debe resolver el reCAPTCHA")
+        self.assertIn("g-recaptcha-response').value = 'TOKEN_123'", self.script)
+        self.assertIn("client.T('TOKEN_123')", self.script)
+        self.assertNotIn("client.T(token)", self.script, "El token no puede ser un identificador JS suelto")
+
+
 class TestServicioRegistraPasos(unittest.TestCase):
     """El servicio persiste los pasos en la BD, con estado ok y error."""
 
