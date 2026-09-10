@@ -8,7 +8,11 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
-from app.services.radicacion_service import descolgar_radicaciones_estancadas, iniciar_radicacion
+from app.services.radicacion_service import (
+    ESTADOS_RADICACION_EN_CURSO,
+    descolgar_radicaciones_estancadas,
+    iniciar_radicacion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +84,9 @@ def procesar_cola_radicacion():
             ).scalar_one_or_none()
             if rad and rad.estado == "esperando_codigo_email":
                 logger.info(f"Tutela {tutela_id} esperando código de email, saltando")
+                continue
+            if rad and rad.estado in ESTADOS_RADICACION_EN_CURSO:
+                logger.info(f"Tutela {tutela_id} con radicación en curso ({rad.estado}), saltando")
                 continue
 
             # Reintentar solo si no tiene muchos intentos fallidos

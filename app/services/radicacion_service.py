@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import threading
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
@@ -21,6 +22,11 @@ _bot: RadicadorBot | None = None
 # la Rama Judicial vence a los 10 min, así que el umbral debe ser menor para
 # que el reenvío del usuario alcance a entrar dentro de la validez.
 UMBRAL_CONTINUANDO_ESTANCADO = timedelta(minutes=5)
+
+# Estados en los que el navegador de Playwright está físicamente trabajando
+# sobre la radicación. No debe arrancar una segunda instancia (ni programarla)
+# mientras esté en alguno de estos: el portal es sesión única por navegador.
+ESTADOS_RADICACION_EN_CURSO = ("iniciando", "continuando", "completando_formulario", "resolviendo_captcha", "enviando")
 
 
 def _descolgar_continuando_estancado(session, tutela_id: int):
@@ -55,6 +61,43 @@ def _get_bot() -> RadicadorBot:
     if _bot is None:
         _bot = RadicadorBot()
     return _bot
+
+
+def programar_radicacion_inmediata(tutela_id: int) -> dict:
+    """Arranca la radicación en segundo plano apenas se confirma el pago.
+
+    El webhook de Mercado Pago no debe bloquearse esperando a Playwright:
+    por eso la radicación corre en su propio hilo con event loop propio.
+    No lanza una segunda instancia si ya hay una radicación en curso
+    (iniciando/continuando/completando...): el portal es sesión única, abrir
+    otro navegador a la vez duplicaría la solicitud en el portal.
+
+    Retorna {"ok": True} si se programó, o {"ok": False} con la razón.
+    """
+    session = SessionLocal()
+    try:
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+        ).scalar_one_or_none()
+        if rad and rad.estado in ESTADOS_RADICACION_EN_CURSO:
+            return {"ok": False, "error": "Ya hay una radicación en curso para esta tutela"}
+    finally:
+        session.close()
+
+    def _correr():
+        try:
+            asyncio.run(iniciar_radicacion(tutela_id))
+        except Exception as e:  # noqa: BLE001 - el hilo nunca debe romper el webhook
+            logger.error(f"Error en radicación inmediata de tutela {tutela_id}: {e}")
+
+    hilo = threading.Thread(
+        target=_correr,
+        name=f"radicacion-inmediata-{tutela_id}",
+        daemon=True,
+    )
+    hilo.start()
+    logger.info(f"Radicación inmediata programada para tutela {tutela_id}")
+    return {"ok": True}
 
 
 async def iniciar_radicacion(

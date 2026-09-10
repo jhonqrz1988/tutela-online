@@ -16,6 +16,7 @@ from app.services.mercadopago_service import (
     crear_preferencia_checkout,
     verificar_firma,
 )
+from app.services.radicacion_service import programar_radicacion_inmediata
 from app.services.whatsapp_service import enviar_texto
 from app.tasks.jobs import es_horario_habil
 
@@ -224,6 +225,11 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
                 "Nuestro equipo técnico ya está trabajando en la generación y radicación "
                 "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.",
             )
+        # Radicar de inmediato (sin esperar los 15 min del scheduler) solo si
+        # hay horario hábil de la Rama Judicial; si no, queda en cola para el
+        # próximo ciclo del scheduler en horario laboral.
+        if es_horario_habil():
+            programar_radicacion_inmediata(tutela.id)
     return {"ok": True}
 
 
