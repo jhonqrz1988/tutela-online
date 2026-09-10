@@ -168,6 +168,141 @@ class TestNavegadorRecaptcha(unittest.TestCase):
         self.assertNotIn("client.T(token)", self.script, "El token no puede ser un identificador JS suelto")
 
 
+class TestNavegadorDerechos(unittest.TestCase):
+    """Los derechos del cliente vienen como artículos de la IA (Art. 48 CP...)
+    pero el portal usa categorías. Se mapean a categorías, se deduplican y si
+    no se puede seleccionar ninguno no se inventa (se aborta con error claro)."""
+
+    _datos_salud = {"tipo": "salud", "derechos_vulnerados": ["Art. 48 CP", "Art. 49 CP"]}
+
+    def _pagina_que_guarda_scripts(self):
+        clase = self
+        clase.scripts = []
+
+        class PageOpts:
+            async def evaluate(self, script):
+                clase.scripts.append(script)
+                return []
+
+        return PageOpts()
+
+    def _bot_con_select(self, resolver):
+        from app.bot.navegador import RadicadorBot
+
+        class PageDerechos:
+            async def wait_for_timeout(self, ms):
+                return None
+
+            async def evaluate(self, script):
+                return []
+
+        bot = RadicadorBot.__new__(RadicadorBot)
+        bot.page = PageDerechos()
+        bot._seleccionar_select = resolver
+        return bot
+
+    def test_candidatos_mapean_articulos_a_categorias(self):
+        from app.bot.navegador import _candidatos_derecho
+
+        self.assertIn("salud", _candidatos_derecho("Art. 48 CP", "salud"))
+        self.assertIn("vida", _candidatos_derecho("Art. 11 CP", "salud"))
+        self.assertIn("tutela", _candidatos_derecho("Art. 86 CP", "salud"))
+        self.assertIn("dignidad", _candidatos_derecho("Art. 2 CP", "salud"))
+        self.assertIn("Art. 48 CP", _candidatos_derecho("Art. 48 CP", "salud"))
+
+    def test_derechos_se_seleccionan_y_deduplican(self):
+        async def resolver(selector, label):
+            return label if label in ("salud", "vida") else None
+
+        bot = self._bot_con_select(resolver)
+        bot._js_click = mock.AsyncMock()
+        bot._cerrar_jconfirm = mock.AsyncMock()
+        bot._esperar_select_ajax = mock.AsyncMock()
+        log_derechos = mock.AsyncMock()
+        with mock.patch.object(bot, "_log_opciones_derechos", new=log_derechos):
+            n = asyncio.run(bot._paso_derechos(self._datos_salud))
+        self.assertEqual(n, 1, "Art 48 y 49 mapean a 'salud': se deduplica y se agrega una sola vez")
+        bot._js_click.assert_has_calls([mock.call("#btnAdd")])
+        bot._js_click.assert_any_call("#RdbNoMedida")
+        log_derechos.assert_not_awaited()
+
+    def test_sin_opciones_matchea_aborta_con_error_y_dumpa_opciones(self):
+        page = self._pagina_que_guarda_scripts()
+        bot = self._bot_con_select(lambda sel, label: None)
+        bot.page = page
+        bot._js_click = mock.AsyncMock()
+        bot._cerrar_jconfirm = mock.AsyncMock()
+        bot._esperar_select_ajax = mock.AsyncMock()
+        with self.assertRaises(ValueError):
+            asyncio.run(bot._paso_derechos(self._datos_salud))
+        self.assertTrue(any("DDLDerechos option" in s for s in self.scripts),
+                        "Debe volcar las opciones del dropdown para diagnosticar")
+
+    def test_sin_derechos_listados_no_selecciona_nada(self):
+        bot = self._bot_con_select(lambda sel, label: "salud")
+        bot._js_click = mock.AsyncMock()
+        bot._cerrar_jconfirm = mock.AsyncMock()
+        bot._esperar_select_ajax = mock.AsyncMock()
+        with mock.patch.object(bot, "_log_opciones_derechos", new=mock.AsyncMock()), \
+             self.assertRaises(ValueError):
+            asyncio.run(bot._paso_derechos({"tipo": "salud", "derechos_vulnerados": []}))
+        bot._js_click.assert_not_awaited()
+
+
+class TestNavegadorEnviarValidaExito(unittest.TestCase):
+    """Tras pulsar #enviar, el portal puede quedarse en un modal de validación
+    (ej. 'debe seleccionar al menos un derecho') en vez de radicar: el bot NO
+    debe declarar la tutela radicada. Si el portal muestra error → error."""
+
+    class _Pagina:
+        def __init__(self, numero="", overlay=""):
+            self.numero = numero
+            self.overlay = overlay
+
+        async def wait_for_timeout(self, ms):
+            return None
+
+        async def evaluate(self, script):
+            if "textContent" in script and "overlays" in script:
+                return self.overlay
+            return None
+
+        async def query_selector(self, selector):
+            if selector == "#numRadicado":
+                return self._Texto(self.numero)
+            return None
+
+        class _Texto:
+            def __init__(self, value):
+                self._value = value
+
+            async def text_content(self):
+                return self._value
+
+    def _enviar(self, numero="", overlay=""):
+        bot = _make_bot(self._Pagina(numero=numero, overlay=overlay))
+        with mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_capturar_evidencia", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "tomar_screenshot", new=mock.AsyncMock(return_value="storage/constancia_x.png")):
+            return asyncio.run(bot.enviar_y_descargar())
+
+    def test_radicada_con_numero_no_es_error(self):
+        r = self._enviar(numero="11001-2026-0009")
+        self.assertNotIn("error", r)
+        self.assertEqual(r.get("num_radicado"), "11001-2026-0009")
+
+    def test_modal_de_validacion_no_declara_radicada(self):
+        r = self._enviar(numero="", overlay="Debe seleccionar al menos un derecho")
+        self.assertIn("error", r, "El modal de validación debe abortar la radicación")
+        self.assertIn("derecho", r["error"].lower())
+        self.assertIsNone(r.get("num_radicado"))
+
+    def test_sin_modal_y_sin_numero_sigue_siendo_radicada(self):
+        r = self._enviar(numero="", overlay="")
+        self.assertNotIn("error", r)
+
+
 class TestServicioRegistraPasos(unittest.TestCase):
     """El servicio persiste los pasos en la BD, con estado ok y error."""
 

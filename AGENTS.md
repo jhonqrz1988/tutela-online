@@ -81,7 +81,9 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 
 ## Key Conventions
 - WhatsApp bot flow: `procesar_mensaje()` handles state machine in `webhook_whatsapp.py`
-- PDF generation: `generar_pdf(datos, None)` in `documento_service.py` - reads from `datos` dict, NOT from IA-generated text
+- PDF generation: `generar_pdf(datos, None)` in `documento_service.py` - reads from `datos` dict, NOT from IA-generated text; writes to `{cedula}_tutela.pdf` (`path_tutela_pdf_nombre`, sin colisiones) — ese archivo es el que se sube como DEMANDA/PRUEBA al portal
+- **Portal - Derechos**: la IA trae artículos ("Art. 48 CP"), el portal usa categorías. `_candidatos_derecho()` mapea artículo→categoría (`_MAPEO_ARTICULO_CATEGORIA`), `_paso_derechos()` deduplica y agrega; si ningún candidato matchea vuelca las opciones de `#DDLDerechos` (`_log_opciones_derechos`) y **aborta** (no se inventa un derecho) → tutela `fallida`
+- **Portal - Verificación de radicación**: tras pulsar `#enviar`, `enviar_y_descargar()` lee `#numRadicado` y el overlay visible (`_JS_OVERLAY_TEXTO`); si el overlay es un error de validación (`_parece_error_validacion`, ej. "debe seleccionar al menos un derecho") → la tutela NO se marca `radicada` (bug en prod: se marcaba radicada con validación fallida); el número también se puede extraer del texto del overlay (`_extraer_numero_de_texto`)
 - Citation verification: `normalizar_referencia()` normalizes legal references, `verificar_citas()` checks against whitelist
 - IA calls: All async via `AsyncOpenAI` client, model from `settings.ai_chat_model`
 - WhatsApp provider: Configured via `WHATSAPP_PROVIDER` (meta|zapi|twilio|infobip)

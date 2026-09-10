@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -51,14 +52,106 @@ _JS_SELECTOR_CODIGO = """() => {
     return null;
 }"""
 
+# Texto del overlay visible (cajón/modal) si hay uno — para detectar tras
+# pulsar 'Enviar' si el portal rechazó la tutela (ej. "debe seleccionar al
+# menos un derecho") en vez de radicarla, y no declararla radicada por error.
+_JS_OVERLAY_TEXTO = """() => {
+    const overlays = Array.from(document.querySelectorAll('.jconfirm, .modal, [role="dialog"]'));
+    const visible = overlays.find(o => o.offsetParent !== null || o.style.display !== 'none');
+    if (!visible) return "";
+    return (visible.textContent || "").trim();
+}"""
+
+# Opciones del dropdown de derechos del portal (diagnóstico cuando el bot
+# no encuentra la categoría mapeada desde los artículos de la IA).
+_JS_DERECHOS_OPCIONES = """() =>
+    Array.from(document.querySelectorAll('#DDLDerechos option'))
+        .map(o => o.text.trim())
+        .slice(0, 80)"""
+
+# La IA reporta artículos ("Art. 48 CP"); el portal usa categorías por tema.
+_MAPEO_ARTICULO_CATEGORIA = {
+    "2": "dignidad",
+    "11": "vida",
+    "12": "vida",
+    "13": "igualdad",
+    "21": "igualdad",
+    "25": "trabajo",
+    "43": "igualdad",
+    "48": "salud",
+    "49": "salud",
+    "51": "vivienda",
+    "86": "tutela",
+}
+
+_TEXTO_ERROR_VALIDACION = (
+    "debe ", "obligatorio", "seleccione", "verifique", "no puede", "no válido",
+    "incompleto", "requerido", "rechaz", " no se pudo", "falta ", " error",
+)
+_TEXTO_EXITO_VALIDACION = ("radicad", "éxito", "exito", "constancia", "número de radicado")
+
+
+def _candidatos_derecho(derecho: str, tipo: str) -> list[str]:
+    """Categorías candidatas en el portal para un derecho de la IA.
+
+    Un artículo "Art. 48 CP" se mapea a su categoría ("salud"); queda el
+    texto original como candidato y, para tutelas de salud, se añade la
+    categoría típica del portal ("salud" / "salud y vida").
+    """
+    match = re.search(r"(\d{1,3})", derecho)
+    candidatos: list[str] = []
+    if match:
+        categoria = _MAPEO_ARTICULO_CATEGORIA.get(match.group(1))
+        if categoria:
+            candidatos.append(categoria)
+    candidatos.append(derecho)
+    if tipo == "salud":
+        candidatos.extend(["salud", "salud y vida"])
+    vistos: set[str] = set()
+    resultado: list[str] = []
+    for c in candidatos:
+        clave = c.lower().strip()
+        if clave and clave not in vistos:
+            vistos.add(clave)
+            resultado.append(c)
+    return resultado
+
+
+def _parece_error_validacion(texto_overlay: str) -> bool:
+    """True si el texto de un overlay es un error de validación del portal
+    (no una confirmación de radicación)."""
+    t = texto_overlay.lower()
+    if any(p in t for p in _TEXTO_EXITO_VALIDACION):
+        return False
+    return any(p in t for p in _TEXTO_ERROR_VALIDACION)
+
+
+def _extraer_numero_de_texto(texto: str) -> str:
+    """Extrae el número de radicado del texto de un overlay si aparece
+    ('Número de radicado: 11001-2026-00009')."""
+    m = re.search(
+        r"(?:n[o°]?\.?\s*radicad[oa]|n[uú]mero\s+de\s+radicac[ió]n)\s*[:.\-]?\s*([0-9\- ]{6,})",
+        texto,
+        re.IGNORECASE,
+    )
+    if m:
+        return re.sub(r"\s+", " ", m.group(1)).strip()
+    return ""
+
 
 def _separar_nombre(nombre_completo: str) -> dict:
     """Separa un nombre completo colombiano en partes.
 
     Asume formato: [PrimerNombre] [SegundoNombre] [PrimerApellido] [SegundoApellido]
-    Maneja 2, 3 o 4 partes.
+    Maneja 2, 3 o 4 partes y descarta iniciales/abreviaturas sueltas ("J.",
+    "M. A.") que el cliente pudo registrar.
     """
-    partes = nombre_completo.strip().split()
+    partes = [
+        p for p in nombre_completo.strip().split()
+        if re.fullmatch(r"[A-Za-zÁÉÍÓÚÑáéíóúñ]\.?", p) is None
+    ]
+    if not partes:
+        partes = nombre_completo.strip().split()
     if len(partes) == 1:
         return {"primer_nombre": partes[0], "segundo_nombre": "", "primer_apellido": "", "segundo_apellido": ""}
     if len(partes) == 2:
@@ -164,14 +257,16 @@ class RadicadorBot:
         except Exception:
             logger.warning(f"Timeout esperando opciones en {selector}")
 
-    async def _seleccionar_select(self, selector: str, label: str):
+    async def _seleccionar_select(self, selector: str, label: str) -> str | None:
         """Selecciona un option por texto visible en un select, manejando AJAX y mayúsculas.
 
-        Busca primero por JS case-insensitive + alias para evitar timeouts de select_option.
+        Busca primero por JS case-insensitive + alias + normalizado (sin puntos
+        ni espacios: "C.C." == "CC") para evitar timeouts de select_option.
+        Retorna el value del option elegido, o None si no se encontró.
         """
         await self._esperar_select_ajax(selector)
 
-        # Buscar el value por JS (case-insensitive / parcial / alias)
+        # Buscar el value por JS (case-insensitive / parcial / alias / normalizado)
         match_value = await self.page.evaluate(
             """([sel, lbl]) => {
                 const ALIASES = {
@@ -181,15 +276,22 @@ class RadicadorBot:
                     'pa': 'pasaporte',
                     'pep': 'permiso especial de permanencia',
                 };
+                const norm = (s) => s.replace(/[^a-z0-9]/g, '');
                 const s = document.querySelector(sel);
                 if (!s) return null;
                 const lower = lbl.toLowerCase().trim();
-                const expanded = ALIASES[lower] || lower;
+                const expanded = ALIASES[norm(lower)] || lower;
+                const nLower = norm(lower);
+                const nExpanded = norm(expanded);
                 for (const opt of s.options) {
                     const txt = opt.text.trim().toLowerCase();
+                    const nTxt = norm(txt);
                     if (txt === expanded || txt === lower ||
                         txt.includes(expanded) || expanded.includes(txt) ||
-                        txt.includes(lower) || lower.includes(txt)) {
+                        txt.includes(lower) || lower.includes(txt) ||
+                        nTxt === nExpanded || nTxt === nLower ||
+                        (nExpanded.length > 2 && nTxt.includes(nExpanded)) ||
+                        (nLower.length > 2 && nTxt.includes(nLower))) {
                         return opt.value;
                     }
                 }
@@ -200,8 +302,9 @@ class RadicadorBot:
 
         if match_value is not None:
             await self.page.select_option(selector, value=match_value)
-        else:
-            logger.warning(f"No se encontró '{label}' en {selector}")
+            return match_value
+        logger.warning(f"No se encontró '{label}' en {selector}")
+        return None
 
     async def _type(self, selector: str, texto: str):
         """Escribe texto carácter por carácter (evita restricción de paste)."""
@@ -284,22 +387,25 @@ class RadicadorBot:
         """Paso 4: Datos del accionante. Retorna True si requiere código de email."""
         nombre = _separar_nombre(datos.get("accionante_nombre", ""))
 
-        # Tipo documento
+        # Tipo documento: se usa el que el cliente registró (CC por defecto);
+        # el normalizado del alias resuelve variantes ("C.C.", "CC").
         tipo_doc = datos.get("accionante_tipo_doc", "CC")
         await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
         await self.page.wait_for_timeout(500)
 
-        # Número documento
-        await self._type("#NumeroDocumento", datos.get("accionante_cedula", ""))
+        # Número documento: sin puntos ni espacios, limpiando el campo primero
+        # (un campo con valor previo truncaría o duplicaría el dato).
+        cedula = re.sub(r"[\s.]", "", str(datos.get("accionante_cedula", "")))
+        await self._type_existing("#NumeroDocumento", cedula)
 
         # Nombres (typing lento para evitar bloqueo de paste)
-        await self._type("#PrimerNombre", nombre["primer_nombre"])
-        await self._type("#SegundoNombre", nombre["segundo_nombre"])
-        await self._type("#PrimerApellido", nombre["primer_apellido"])
-        await self._type("#SegundoApellido", nombre["segundo_apellido"])
+        await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
+        await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
+        await self._type_existing("#PrimerApellido", nombre["primer_apellido"])
+        await self._type_existing("#SegundoApellido", nombre["segundo_apellido"])
 
         # Teléfono
-        await self._type("#Telefono", datos.get("accionante_telefono", ""))
+        await self._type_existing("#Telefono", datos.get("accionante_telefono", ""))
 
         # Tipo discapacidad (si el usuario declaró una, se usa; si no, "No Aplica")
         discapacidad = datos.get("accionante_discapacidad") or "No Aplica"
@@ -313,7 +419,7 @@ class RadicadorBot:
         # Se guarda en el bot: tras validar el código, el portal vuelve a pedir
         # el correo y `ingresar_codigo_email` necesita re-ingresarlo.
         self._email_accionante = email
-        await self._type("#Email", email)
+        await self._type_existing("#Email", email)
 
         # Click validar correo — activa verificación
         await self._cerrar_jconfirm()
@@ -547,25 +653,53 @@ class RadicadorBot:
         await self._js_click("#btnAddAccionado")
         await self.page.wait_for_timeout(1500)
 
-    async def _paso_derechos(self, datos: dict):
-        """Paso 6: Agregar derechos vulnerados y medida provisional."""
+    async def _paso_derechos(self, datos: dict) -> int:
+        """Paso 6: Agregar derechos vulnerados (mapeados a categorías del portal).
+
+        La IA trae artículos ("Art. 48 CP"); el portal usa categorías ("salud").
+        Se mapea cada artículo a categoría, se deduplican y se agregan. Retorna
+        cuántos se seleccionaron; si ninguno coincide se vuelca el dropdown al
+        log y se lanza error (no se inventa un derecho que el portal no tiene).
+        """
         derechos = datos.get("derechos_vulnerados", [])
+        tipo = datos.get("tipo", "")
+        elegidos: set[str] = set()
+        seleccionados = 0
         for derecho in derechos[:5]:
-            try:
-                await self._seleccionar_select("#DDLDerechos", derecho)
-                await self.page.wait_for_timeout(500)
-            except Exception:
-                logger.warning(f"No se pudo seleccionar derecho: {derecho}")
-                continue
+            for candidato in _candidatos_derecho(derecho, tipo):
+                try:
+                    value = await self._seleccionar_select("#DDLDerechos", candidato)
+                except Exception:
+                    value = None
+                if value is None:
+                    continue
+                if value in elegidos:
+                    continue
+                elegidos.add(value)
+                seleccionados += 1
 
-            if datos.get("medida_provisional") == "si":
-                await self._js_click("#RdbSiMedida")
-            else:
-                await self._js_click("#RdbNoMedida")
+                if datos.get("medida_provisional") == "si":
+                    await self._js_click("#RdbSiMedida")
+                else:
+                    await self._js_click("#RdbNoMedida")
 
-            await self._cerrar_jconfirm()
-            await self._js_click("#btnAdd")
-            await self.page.wait_for_timeout(1000)
+                await self._cerrar_jconfirm()
+                await self._js_click("#btnAdd")
+                await self.page.wait_for_timeout(1000)
+                break
+
+        if seleccionados < 1:
+            await self._log_opciones_derechos()
+            raise ValueError("No se pudo seleccionar ningún derecho vulnerado en el portal")
+        return seleccionados
+
+    async def _log_opciones_derechos(self):
+        """Vuelca las opciones reales de #DDLDerechos para diagnosticar el mapeo."""
+        try:
+            opciones = await self.page.evaluate(_JS_DERECHOS_OPCIONES)
+            logger.warning(f"[diagnóstico derechos] opciones en #DDLDerechos: {json.dumps(opciones)[:2000]}")
+        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            logger.warning(f"No se pudo volcar las opciones del dropdown de derechos: {e}")
 
     async def _paso_archivos(self, ruta_pdf: str):
         """Paso 7: Subir el PDF de la tutela como DEMANDA (obligatorio) y como PRUEBA."""
@@ -744,10 +878,24 @@ class RadicadorBot:
             await self._js_click("#enviar")
             await self.page.wait_for_timeout(5000)
 
+            # Verificación de éxito REAL: si el portal quedó en un overlay de
+            # validación (ej. "debe seleccionar al menos un derecho"), la tutela
+            # NO se radicó — antes marcábamos 'radicada' igual (bug en prod).
+            num_radicado = await self._leer_num_radicado()
+            overlay_texto = await self._leer_overlay()
+            if not num_radicado and overlay_texto:
+                if _parece_error_validacion(overlay_texto):
+                    await self._capturar_evidencia("envio_validacion_error")
+                    logger.warning(f"El portal rechazó la tutela: {overlay_texto[:200]}")
+                    return {"path": None, "num_radicado": None, "error": f"El portal rechazó el envío: {overlay_texto[:200]}"}
+                # Success en overlay: recuperar el número del texto ("Número de
+                # radicado: 11001-2026-00009") que el selector de la página no trae.
+                num_radicado = _extraer_numero_de_texto(overlay_texto)
+
             # Descargar constancia
             ruta_constancia = path_constancia()
             try:
-                async with self.page.expect_download(timeout=15000) as download_info:
+                async with self.page.context.expect_download(timeout=15000) as download_info:
                     await self.page.click("#btnDescargarConstancia")
                 download = await download_info.value
                 await download.save_as(ruta_constancia)
@@ -755,14 +903,9 @@ class RadicadorBot:
                 logger.warning("No se pudo descargar constancia, intentando screenshot")
                 ruta_constancia = str(await self.tomar_screenshot("constancia"))
 
-            # Extraer número de radicado
-            num_radicado = ""
-            try:
-                elemento = await self.page.query_selector("#numRadicado")
-                if elemento:
-                    num_radicado = (await elemento.text_content() or "").strip()
-            except Exception as e:
-                logger.error(f"Error obteniendo num_radicado: {e}")
+            # Extraer número de radicado (si aún viene vacío)
+            if not num_radicado:
+                num_radicado = await self._leer_num_radicado()
 
             self._reportar_paso("paso_10_enviar", "ok", num_radicado or "")
             return {"path": ruta_constancia, "num_radicado": num_radicado}
@@ -771,6 +914,23 @@ class RadicadorBot:
             logger.error(f"Error en enviar_y_descargar: {e}")
             self._reportar_paso("paso_10_enviar", "error", str(e))
             return {"path": None, "num_radicado": None, "error": str(e)}
+
+    async def _leer_num_radicado(self) -> str:
+        try:
+            elemento = await self.page.query_selector("#numRadicado")
+            if elemento:
+                return (await elemento.text_content() or "").strip()
+        except Exception as e:  # noqa: BLE001 - el número es un extra, nunca rompe el flujo
+            logger.error(f"Error obteniendo num_radicado: {e}")
+        return ""
+
+    async def _leer_overlay(self) -> str:
+        try:
+            texto = await self.page.evaluate(_JS_OVERLAY_TEXTO)
+            return str(texto or "").strip()
+        except Exception as e:  # noqa: BLE001 - el overlay es un extra, nunca rompe el flujo
+            logger.warning(f"No se pudo leer el overlay tras el envío: {e}")
+            return ""
 
     async def tomar_screenshot(self, nombre: str = "radicacion") -> Path:
         """Toma screenshot de la página actual y retorna la ruta."""

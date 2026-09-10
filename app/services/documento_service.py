@@ -7,7 +7,7 @@ from fpdf import FPDF
 from PIL import Image
 
 from app.services.ia_service import normalizar_dato_obligatorio
-from app.utils.file_utils import path_tutela_pdf
+from app.utils.file_utils import path_tutela_pdf_nombre
 
 # Títulos de sección estilo "IV. HECHOS" / "VIII. PRETENSIONES"
 _TITULO_SECCION_RE = re.compile(r"^[IVXLCDM]{1,4}\.\s+\S")
@@ -249,7 +249,8 @@ class TutelaPDF(FPDF):
 
 
 def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
-    ruta = path_tutela_pdf()
+    cedula_pdf = (datos.get("accionante_cedula") or "").strip()
+    ruta = path_tutela_pdf_nombre(f"{cedula_pdf}_tutela" if cedula_pdf else "tutela")
 
     pdf = TutelaPDF()
     pdf.alias_nb_pages()

@@ -44,5 +44,32 @@ class TestNavegadorScreenshotDir(unittest.TestCase):
             self.assertTrue(b._screenshot_dir.is_dir())
 
 
+class TestTutelaPdfNombre(unittest.TestCase):
+    """El PDF de la tutela se nombra '{cedula}_tutela' (pedido de producción:
+    identificar el archivo que se sube como DEMANDA al portal)."""
+
+    def _ruta_con(self, storage_dir, stem):
+        with mock.patch.object(settings, "storage_dir", storage_dir):
+            return file_utils.path_tutela_pdf_nombre(stem)
+
+    def test_nombre_incluye_cedula(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ruta = self._ruta_con(tmp, "1067890123_tutela")
+            self.assertEqual(os.path.basename(ruta), "1067890123_tutela.pdf")
+
+    def test_no_colisiona_si_ya_existe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "tutelas"
+            d.mkdir()
+            (d / "1067890123_tutela.pdf").write_text("x")
+            ruta = self._ruta_con(tmp, "1067890123_tutela")
+            self.assertEqual(os.path.basename(ruta), "1067890123_tutela_2.pdf")
+
+    def test_sanea_cedula_con_puntos(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ruta = self._ruta_con(tmp, "10.678.901_tutela")
+            self.assertEqual(os.path.basename(ruta), "10678901_tutela.pdf")
+
+
 if __name__ == "__main__":
     unittest.main()
