@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 
@@ -14,6 +15,30 @@ logger = logging.getLogger(__name__)
 
 # Instancia global del bot (se reutiliza entre llamadas)
 _bot: RadicadorBot | None = None
+
+# Si la radicación queda en 'continuando' más de este tiempo sin terminar,
+# se considera colgada (navegador muerto/portal no respondió): el código de
+# la Rama Judicial vence a los 10 min, así que el umbral debe ser menor para
+# que el reenvío del usuario alcance a entrar dentro de la validez.
+UMBRAL_CONTINUANDO_ESTANCADO = timedelta(minutes=5)
+
+
+def _descolgar_continuando_estancado(session, tutela_id: int):
+    """Si la radicación lleva demasiado tiempo en 'continuando', la declara
+    colgada pasando a 'fallida' para que el claim del código vuelva a
+    funcionar (reenvío del usuario o reintento desde el admin)."""
+    corte = datetime.utcnow() - UMBRAL_CONTINUANDO_ESTANCADO
+    actualizado = session.execute(
+        update(Radicacion)
+        .where(
+            Radicacion.tutela_id == tutela_id,
+            Radicacion.estado == "continuando",
+            Radicacion.updated_at < corte,
+        )
+        .values(estado="fallida", ultimo_error="Radicación colgada en 'continuando' (código vencido o navegador sin respuesta)")
+    )
+    session.commit()
+    return actualizado.rowcount, None
 
 
 def _registrar_paso(session, rad_id: int, paso: str, estado: str, detalle: str = ""):
@@ -164,6 +189,15 @@ async def continuar_radicacion_con_codigo(tutela_id: int, codigo: str) -> dict:
         if not rad or rad.estado not in ("esperando_codigo_email", "fallida", "continuando"):
             return {"ok": False, "error": "Esta tutela no está esperando código de email"}
 
+        # Si quedó 'continuando' colgada más del umbral (código vencido a los
+        # 10 min o navegador sin respuesta), se desestanca a 'fallida': el
+        # reenvío del código vuelve a reclamar la radicación en lugar de
+        # responder "ya se está procesando" para siempre.
+        _descolgar_continuando_estancado(session, tutela_id)
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+        ).scalar_one_or_none()
+
         # Claim atómico: solo un intento (de los mensajes que llegan a la vez)
         # procesa el código; el resto responde sin tocar el navegador.
         claimed = session.execute(
@@ -185,13 +219,20 @@ async def continuar_radicacion_con_codigo(tutela_id: int, codigo: str) -> dict:
 
         # Ingresar código de verificación (con timeout para no colgar el webhook)
         try:
-            await asyncio.wait_for(bot.ingresar_codigo_email(codigo), timeout=120)
+            resultado = await asyncio.wait_for(bot.ingresar_codigo_email(codigo), timeout=120)
         except asyncio.TimeoutError:
             rad.estado = "fallida"
             rad.ultimo_error = "Timeout ingresando el código de email"
             session.commit()
             logger.error(f"Timeout ingresando código de email para tutela {tutela_id}")
             return {"ok": False, "error": "No se pudo aplicar el código a tiempo. Intenta de nuevo."}
+
+        if resultado is not None and not resultado.get("ok"):
+            rad.estado = "fallida"
+            rad.ultimo_error = resultado.get("error", "Error ingresando el código de email")
+            session.commit()
+            logger.error(f"Error ingresando código de email para tutela {tutela_id}: {resultado.get('error')}")
+            return {"ok": False, "error": resultado.get("error", "No se pudo ingresar el código")}
         logger.info(f"Código de email ingresado para tutela {tutela_id}")
 
         # Completar pasos restantes (5-10) con timeout de seguridad
@@ -221,6 +262,35 @@ async def continuar_radicacion_con_codigo(tutela_id: int, codigo: str) -> dict:
         except Exception:
             pass
         return {"ok": False, "error": str(e)}
+    finally:
+        session.close()
+
+
+def descolgar_radicaciones_estancadas(umbral=UMBRAL_CONTINUANDO_ESTANCADO) -> list[dict]:
+    """Watchdog: marca como 'fallida' las radicaciones colgadas en 'continuando'.
+
+    Si el navegador de Playwright se queda pegado (sin respetar el timeout),
+    la radicación queda en 'continuando' para siempre. Este barrido la pasa a
+    'fallida' para que el admin pueda reintentarla o el usuario reenviar el
+    código. Retorna el detalle de las radicaciones descolgadas.
+    """
+    corte = datetime.utcnow() - umbral
+    descolgadas: list[dict] = []
+    session = SessionLocal()
+    try:
+        estancadas = session.execute(
+            select(Radicacion).where(
+                Radicacion.estado == "continuando",
+                Radicacion.updated_at < corte,
+            )
+        ).scalars().all()
+        for rad in estancadas:
+            rad.estado = "fallida"
+            rad.ultimo_error = "Radicación colgada en 'continuando' (watchdog)"
+            session.commit()
+            descolgadas.append({"radicacion_id": rad.id, "tutela_id": rad.tutela_id})
+            logger.warning(f"Watchdog: radicación {rad.id} (tutela {rad.tutela_id}) colgada en 'continuando' → fallida")
+        return descolgadas
     finally:
         session.close()
 

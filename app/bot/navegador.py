@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 TYPE_DELAY = 50
 
+# Tiempo máximo esperando el campo del código de email (antes colgaba el
+# loop de Playwright sin límite y la radicación quedaba en 'continuando').
+ESPERA_CODIGO_SELECTOR_MS = 20000
+
 
 def _separar_nombre(nombre_completo: str) -> dict:
     """Separa un nombre completo colombiano en partes.
@@ -293,10 +297,25 @@ class RadicadorBot:
             logger.warning("No se pudo detectar campo de verificación de email; se asume que aplica")
             return True
 
-    async def ingresar_codigo_email(self, codigo: str):
-        """Ingresa el código de verificación de correo en #IdEmail1."""
-        await self._type_existing("#IdEmail1", codigo)
-        await self.page.wait_for_timeout(500)
+    async def ingresar_codigo_email(self, codigo: str) -> dict:
+        """Ingresa el código de verificación de correo en #IdEmail1.
+
+        Espera el selector con timeout acotado y devuelve {ok, error} para
+        que el flujo nunca cuelgue el event loop esperando un campo que no
+        aparece (bug de producción: radicación colgada en 'continuando').
+        """
+        try:
+            await self.page.wait_for_selector("#IdEmail1", timeout=ESPERA_CODIGO_SELECTOR_MS)
+        except Exception as e:
+            logger.warning(f"No apareció el campo de verificación de email: {e}")
+            return {"ok": False, "error": "No apareció el campo de verificación de email en el portal"}
+        try:
+            await self._type_existing("#IdEmail1", codigo)
+            await self.page.wait_for_timeout(500)
+        except Exception as e:
+            logger.warning(f"No se pudo escribir el código de verificación: {e}")
+            return {"ok": False, "error": f"No se pudo escribir el código en el portal: {e}"}
+        return {"ok": True}
 
     async def _paso_accionado(self, datos: dict):
         """Paso 5: Agregar accionado."""

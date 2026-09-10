@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.database import SessionLocal
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
-from app.services.radicacion_service import iniciar_radicacion
+from app.services.radicacion_service import descolgar_radicaciones_estancadas, iniciar_radicacion
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,16 @@ def procesar_cola_radicacion():
     Tutelas con estado 'esperando_codigo_email' se saltan (esperan input del usuario).
     Cada tutela se procesa con su propia sesión para evitar usar una sesión cerrada.
     """
+    # Watchdog: radicaciones colgadas en 'continuando' pasan a 'fallida'
+    # para poder reintentarlas (ya reproducido en producción). Corre incluso
+    # fuera de horario hábil: es limpieza, no radicación.
+    try:
+        descolgadas = descolgar_radicaciones_estancadas()
+        if descolgadas:
+            logger.warning(f"Watchdog descolgó {len(descolgadas)} radicaciones estancadas")
+    except Exception as e:  # noqa: BLE001 - el watchdog nunca debe romper el ciclo
+        logger.error(f"Error en watchdog de radicaciones estancadas: {e}")
+
     if not es_horario_habil():
         logger.info("Fuera de horario hábil, saltando cola de radicación")
         return
