@@ -453,14 +453,12 @@ def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_
     if t.estado not in ("fallida", "pdf_generado", "pendiente_radicacion", "pago_confirmado", "esperando_codigo_email"):
         return {"error": f"No se puede reintentar (estado: {t.estado})"}
 
-    import asyncio
-
-    from app.services.radicacion_service import iniciar_radicacion
+    from app.services.radicacion_service import despachar_radicacion
 
     t.estado = "pendiente_radicacion"
     session.commit()
     try:
-        resultado = asyncio.run(iniciar_radicacion(t.id, forzar=True))
+        resultado = despachar_radicacion(t.id, forzar=True)
         resultado["scheduler_automatico"] = automatico_activo()
         return resultado
     except Exception as e:

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -11,7 +10,7 @@ from app.models.tutela import Tutela
 from app.services.radicacion_service import (
     ESTADOS_RADICACION_EN_CURSO,
     descolgar_radicaciones_estancadas,
-    iniciar_radicacion,
+    despachar_radicacion,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +95,7 @@ def procesar_cola_radicacion():
                 continue
 
             logger.info(f"Iniciando radicación automática para tutela {tutela_id}")
-            asyncio.run(iniciar_radicacion(tutela_id))
+            despachar_radicacion(tutela_id)
         except Exception as e:
             logger.error(f"Error procesando tutela {tutela_id} en cola: {e}")
         finally:

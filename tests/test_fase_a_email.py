@@ -183,11 +183,13 @@ class TestCodigoEmail(unittest.TestCase):
         datos_nueva = json.loads(tutela_nueva.datos_json)
         self.assertEqual(datos_nueva.get("_step"), 0, "La tutela huérfana no debe avanzar")
 
-    def test_codigo_se_procesa_una_sola_vez_con_llegadas_concurrentes(self):
-        """Bug de producción: 5 envíos simultáneos del código colgaban el webhook
-        (5 fills concurrentes sobre la misma página de Playwright). El claim
-        atómico debe procesar el código UNA sola vez y responder 'ya en proceso'
-        al resto sin tocar el navegador."""
+    def test_con_parqueo_perdido_todos_los_envios_responden_sin_tocar_bot(self):
+        """Cambio de diseño (escenario a): el señalador ya no reclama la radicación
+        con un claim atómico, sólo despierta el parqueo en memoria vía event loop.
+
+        Si el parqueo se perdió (servidor reiniciado), TODOS los envíos del código
+        responden con error de no-parqueo y el navegador jamás se toca (imposible
+        que 5 fills concurrentes colguen el webhook)."""
         engine = create_engine(
             "sqlite://",
             connect_args={"check_same_thread": False},
@@ -201,13 +203,11 @@ class TestCodigoEmail(unittest.TestCase):
         session.close()
 
         class FakeBot:
-            class _Page:
-                def is_closed(self):
-                    return False
-
             def __init__(self):
-                self.page = self._Page()
                 self.entradas = []
+
+            async def verificar_conexion(self):
+                return True
 
             async def ingresar_codigo_email(self, codigo):
                 self.entradas.append(codigo)
@@ -220,41 +220,36 @@ class TestCodigoEmail(unittest.TestCase):
             try:
                 radicacion_service.SessionLocal = lambda: S()
                 radicacion_service._get_bot = lambda: bot
-                with mock.patch.object(
-                    radicacion_service, "_completar_radicacion",
-                    new=mock.AsyncMock(return_value=None),
-                ):
-                    async def correr():
-                        r1, r2, r3 = await asyncio.gather(
-                            radicacion_service.continuar_radicacion_con_codigo(tutela_id, "582913"),
-                            radicacion_service.continuar_radicacion_con_codigo(tutela_id, "582913"),
-                            radicacion_service.continuar_radicacion_con_codigo(tutela_id, "582913"),
-                            return_exceptions=True,
-                        )
-                        return r1, r2, r3
+                async def correr():
+                    r1, r2, r3 = await asyncio.gather(
+                        radicacion_service.continuar_radicacion_con_codigo(tutela_id, "582913"),
+                        radicacion_service.continuar_radicacion_con_codigo(tutela_id, "582913"),
+                        radicacion_service.continuar_radicacion_con_codigo(tutela_id, "582913"),
+                        return_exceptions=True,
+                    )
+                    return r1, r2, r3
 
-                    return asyncio.run(correr())
+                return asyncio.run(correr()), bot
             finally:
                 radicacion_service.SessionLocal = real_sessionloc
                 radicacion_service._get_bot = real_get_bot
 
-        resultados = _run_concurrentes()
-        oks = [r.get("ok") for r in resultados if isinstance(r, dict)]
-        self.assertEqual(oks.count(True), 1, "Solo un intento debe procesar el código")
-        self.assertEqual(oks.count(False), 2)
+        resultados, bot = _run_concurrentes()
+        self.assertEqual(len(resultados), 3)
         for r in resultados:
-            if not isinstance(r, dict):
-                self.fail(f"Una llamada concurrente lanzó excepción: {r!r}")
-            self.assertTrue(
-                r.get("ok") or "ya se está procesando" in r.get("error", ""),
-                f"Error inesperado: {r}",
-            )
+            self.assertIsInstance(r, dict, f"Una llamada concurrente lanzó excepción: {r!r}")
+            self.assertFalse(r.get("ok"), f"Ningún envío debe ganar sin parqueo: {r}")
+            self.assertIn("reinició", r.get("error", ""), f"Error inesperado: {r}")
+        self.assertEqual(bot.entradas, [], "Sin parqueo el navegador no debe tocarse")
 
         sesion_final = S()
         rad = sesion_final.execute(
             select(Radicacion).where(Radicacion.tutela_id == tutela_id)
         ).scalar_one()
-        self.assertEqual(rad.estado, "continuando", "El claim debe dejar el estado 'continuando'")
+        self.assertEqual(
+            rad.estado, "esperando_codigo_email",
+            "Sin parqueo el señalador no debe tocar el estado (sólo despierta la coroutine)",
+        )
         sesion_final.close()
 
 

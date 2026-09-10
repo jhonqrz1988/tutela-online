@@ -317,6 +317,23 @@ class RadicadorBot:
             return {"ok": False, "error": f"No se pudo escribir el código en el portal: {e}"}
         return {"ok": True}
 
+    async def verificar_conexion(self, timeout_ms: int = 5000) -> bool:
+        """Verifica que el navegador siga respondiendo (ping acotado).
+
+        Un navegador puede quedar 'vivo aparente' pero con la conexión muerta
+        sin disparar errores: Playwright ignora la cancelación de asyncio y un
+        await queda colgado para siempre (bug de producción que colgaba el
+        webhook esperando el código). Antes de escribir en una página retomada
+        se verifica que responda con un ``page.evaluate`` acotado.
+        """
+        if self.page is None:
+            return False
+        try:
+            await self.page.evaluate("1 + 1", timeout=timeout_ms)
+            return True
+        except Exception:  # noqa: BLE001 - cualquier fallo = no hay conexión usable
+            return False
+
     async def _paso_accionado(self, datos: dict):
         """Paso 5: Agregar accionado."""
         tipo = datos.get("accionado_tipo", "juridica")

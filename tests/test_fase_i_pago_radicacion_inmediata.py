@@ -11,7 +11,6 @@ Cubre:
   segundo navegador mientras el bot radica).
 """
 import json
-import time
 import unittest
 from unittest import mock
 
@@ -49,8 +48,8 @@ def _crear_tutela_pagada(session, estado="esperando_pago", telefono="57300999000
 
 
 class TestProgramarRadicacionInmediata(unittest.TestCase):
-    def test_programa_y_ejecuta_la_radicacion_en_hilo(self):
-        """programar_radicacion_inmediata lanza iniciar_radicacion en segundo plano."""
+    def test_programa_y_ejecuta_la_radicacion(self):
+        """programar_radicacion_inmediata despacha la radicación al loop del bot."""
         from app.services import radicacion_service as svc
 
         session = _nueva_sesion()
@@ -60,17 +59,17 @@ class TestProgramarRadicacionInmediata(unittest.TestCase):
         llamado = {"id": None}
         llamadas = []
 
-        async def fake_iniciar(tutela_id, token_usuario=None, forzar=False):
+        def fake_despachar(tutela_id, **kwargs):
             llamado["id"] = tutela_id
-            llamadas.append("iniciar")
+            llamadas.append("despachar")
+            return {"ok": True, "despachada": True}
 
         with mock.patch.object(svc, "SessionLocal", return_value=session), \
-             mock.patch.object(svc, "iniciar_radicacion", side_effect=fake_iniciar):
+             mock.patch.object(svc, "despachar_radicacion", side_effect=fake_despachar):
             res = svc.programar_radicacion_inmediata(tutela_id)
 
         self.assertTrue(res.get("ok"), f"Debe programarse: {res}")
-        self._esperar(lambda: llamado["id"] is not None)
-        self.assertEqual(llamado["id"], tutela_id, "El hilo debe radicar ESTA tutela")
+        self.assertEqual(llamado["id"], tutela_id, "Debe radicar ESTA tutela")
 
     def test_no_duplica_si_ya_hay_radicacion_en_curso(self):
         """Si la radicación ya arrancó (p.ej. el scheduler llegó primero) no abre otra."""
@@ -82,15 +81,15 @@ class TestProgramarRadicacionInmediata(unittest.TestCase):
         session.commit()
         llamado = {"veces": 0}
 
-        async def fake_iniciar(tutela_id, token_usuario=None, forzar=False):
+        def fake_despachar(tutela_id, **kwargs):
             llamado["veces"] += 1
+            return {"ok": True, "despachada": True}
 
         with mock.patch.object(svc, "SessionLocal", return_value=session), \
-             mock.patch.object(svc, "iniciar_radicacion", side_effect=fake_iniciar):
+             mock.patch.object(svc, "despachar_radicacion", side_effect=fake_despachar):
             res = svc.programar_radicacion_inmediata(tutela_id)
 
         self.assertFalse(res.get("ok"), f"No debe programarse con una radicación en curso: {res}")
-        time.sleep(0.3)
         self.assertEqual(llamado["veces"], 0, "No debe arrancar un segundo navegador")
 
     def test_si_permitido_con_radicacion_esperando_codigo(self):
@@ -103,21 +102,16 @@ class TestProgramarRadicacionInmediata(unittest.TestCase):
         session.commit()
         llamado = {"id": None}
 
-        async def fake_iniciar(tutela_id, token_usuario=None, forzar=False):
+        def fake_despachar(tutela_id, **kwargs):
             llamado["id"] = tutela_id
+            return {"ok": True, "despachada": True}
 
         with mock.patch.object(svc, "SessionLocal", return_value=session), \
-             mock.patch.object(svc, "iniciar_radicacion", side_effect=fake_iniciar):
+             mock.patch.object(svc, "despachar_radicacion", side_effect=fake_despachar):
             res = svc.programar_radicacion_inmediata(tutela_id)
 
         self.assertTrue(res.get("ok"), "Esperando código se puede reintentar")
-        self._esperar(lambda: llamado["id"] is not None)
         self.assertEqual(llamado["id"], tutela_id)
-
-    def _esperar(self, condicion, segundos=3.0):
-        inicio = time.monotonic()
-        while not condicion() and time.monotonic() - inicio < segundos:
-            time.sleep(0.02)
 
 
 class TestWebhookPagoActivaRadicacion(unittest.TestCase):
@@ -197,12 +191,13 @@ class TestSchedulerSaltaTutelaEnCurso(unittest.TestCase):
         session.commit()
         procesadas = []
 
-        async def fake_iniciar(tutela_id, **kwargs):
+        def fake_despachar(tutela_id, **kwargs):
             procesadas.append(tutela_id)
+            return {"ok": True, "despachada": True}
 
         with mock.patch.object(jobs_mod, "es_horario_habil", return_value=True), \
              mock.patch.object(jobs_mod, "SessionLocal", return_value=session), \
-             mock.patch.object(jobs_mod, "iniciar_radicacion", side_effect=fake_iniciar):
+             mock.patch.object(jobs_mod, "despachar_radicacion", side_effect=fake_despachar):
             jobs_mod.procesar_cola_radicacion()
 
         self.assertEqual(procesadas, [], "No debe reprocesar una tutela con radicación en curso")

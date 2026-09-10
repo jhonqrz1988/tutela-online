@@ -6,7 +6,7 @@ from app.database import get_session
 from app.models.tutela import Tutela
 from app.schemas.tutela import DatosTutela
 from app.services.documento_service import generar_pdf
-from app.services.radicacion_service import iniciar_radicacion
+from app.services.radicacion_service import despachar_radicacion
 
 router = APIRouter(prefix="/api/v1/tutelas", dependencies=[Depends(require_admin)])
 
@@ -57,6 +57,5 @@ def generar_pdf_tutela(tutela_id: int, session=Depends(get_session)):
 
 @router.post("/{tutela_id}/radicar")
 def radicar_tutela(tutela_id: int):
-    import asyncio
-    resultado = asyncio.run(iniciar_radicacion(tutela_id))
+    resultado = despachar_radicacion(tutela_id)
     return resultado

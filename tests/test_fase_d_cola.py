@@ -41,13 +41,13 @@ class TestColaIncluyePagoConfirmado(unittest.TestCase):
 
         procesadas = []
 
-        async def fake_iniciar(tutela_id):
+        def fake_despachar(tutela_id, **kwargs):
             procesadas.append(tutela_id)
-            return {"ok": True}
+            return {"ok": True, "despachada": True}
 
         with mock.patch.object(jobs, "SessionLocal", return_value=Session), \
              mock.patch.object(jobs, "es_horario_habil", return_value=True), \
-             mock.patch.object(jobs, "iniciar_radicacion", side_effect=fake_iniciar):
+             mock.patch.object(jobs, "despachar_radicacion", side_effect=fake_despachar):
             jobs.procesar_cola_radicacion()
 
         self.assertIn(t.id, procesadas, "Una tutela pagada (pago_confirmado) debe entrar a la cola")

@@ -128,10 +128,10 @@ class TestReintentarAmpliado(unittest.TestCase):
 
         from app.services import radicacion_service as rad_svc
 
-        async def fake_iniciar(tutela_id, forzar=False):
-            return {"ok": True, "completado": True}
+        def fake_despachar(tutela_id, forzar=False):
+            return {"ok": True, "despachada": True}
 
-        with mock.patch.object(rad_svc, "iniciar_radicacion", side_effect=fake_iniciar):
+        with mock.patch.object(rad_svc, "despachar_radicacion", side_effect=fake_despachar):
             resp = self._post(t.id, session)
 
         self.assertEqual(resp.status_code, 200)
@@ -148,10 +148,10 @@ class TestReintentarAmpliado(unittest.TestCase):
 
         from app.services import radicacion_service as rad_svc
 
-        async def fake_iniciar(tutela_id, forzar=False):
-            return {"ok": True, "esperando_codigo": True}
+        def fake_despachar(tutela_id, forzar=False):
+            return {"ok": True, "despachada": True}
 
-        with mock.patch.object(rad_svc, "iniciar_radicacion", side_effect=fake_iniciar):
+        with mock.patch.object(rad_svc, "despachar_radicacion", side_effect=fake_despachar):
             resp = self._post(t.id, session)
 
         self.assertEqual(resp.status_code, 200)
