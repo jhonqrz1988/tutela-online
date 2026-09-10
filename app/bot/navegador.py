@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from pathlib import Path
@@ -407,7 +408,11 @@ class RadicadorBot:
         if self.page is None:
             return False
         try:
-            await self.page.evaluate("1 + 1", timeout=timeout_ms)
+            # `page.evaluate()` NO acepta el kwarg `timeout` (TypeError en
+            # Playwright): el acotado lo hace `asyncio.wait_for`. Sin esto el
+            # ping fallaba SIEMPRE y un navegador vivo parecía muerto — la
+            # raíz de todos los 'Navegador sin responder' en producción.
+            await asyncio.wait_for(self.page.evaluate("1 + 1"), timeout=timeout_ms / 1000)
             return True
         except Exception as e:  # noqa: BLE001 - cualquier fallo = conexión no usable
             logger.warning(f"Navegador sin responder (timeout={timeout_ms}ms): {e}")

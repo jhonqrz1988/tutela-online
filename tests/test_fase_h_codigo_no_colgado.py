@@ -536,6 +536,41 @@ class TestDescolgarEstancadas(unittest.TestCase):
         self.assertEqual(rad_reciente.estado, "continuando", "La reciente no debe tocarse")
 
 
+class TestVerificarConexion(unittest.TestCase):
+    """`page.evaluate()` de Playwright NO acepta el kwarg `timeout`; el ping
+    fallaba SIEMPRE con TypeError y un navegador vivo parecía muerto (fue el
+    origen de todos los 'Navegador sin responder' en producción). El acotado
+    debe hacerlo `asyncio.wait_for`, sin pasarle `timeout` al evaluate."""
+
+    def test_ping_no_le_pasa_timeout_al_evaluate(self):
+        from app.bot.navegador import RadicadorBot
+
+        kwargs_vistos = []
+
+        class PageViva:
+            async def evaluate(self, expr, **kwargs):
+                kwargs_vistos.append(kwargs)
+                return 2
+
+        bot = RadicadorBot()
+        bot.page = PageViva()
+        self.assertTrue(asyncio.run(bot.verificar_conexion()), "Un navegador vivo debe responder")
+        self.assertNotIn("timeout", kwargs_vistos[0], "No debe pasarse 'timeout' a page.evaluate")
+
+    def test_ping_lento_se_acota_con_wait_for(self):
+        from app.bot.navegador import RadicadorBot
+
+        class PageLenta:
+            async def evaluate(self, expr, **kwargs):
+                await asyncio.sleep(0.5)
+                return 2
+
+        bot = RadicadorBot()
+        bot.page = PageLenta()
+        self.assertFalse(asyncio.run(bot.verificar_conexion(timeout_ms=50)),
+                         "Un ping que excede su tapa (50ms) debe reportarse como fallo")
+
+
 class TestIngresarCodigoEmailAcotado(unittest.TestCase):
     def test_selector_ausente_devuelve_error_sin_colgarse(self):
         """Si el portal no muestra #IdEmail1, `ingresar_codigo_email` debe
