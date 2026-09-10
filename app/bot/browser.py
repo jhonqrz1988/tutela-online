@@ -24,6 +24,15 @@ class BrowserManager:
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
+                # Anti-congelamiento de pestañas en segundo plano: el bot
+                # PARQUEA la página esperando el código de email y Chromium
+                # puede congelar/dormir el renderer de una pestaña inactiva,
+                # colgando los awaits de Playwright (bug de producción: la
+                # radicación quedaba en 'continuando' para siempre). Sin estos
+                # flags la pestaña parkeada puede morir o congelarse en Render.
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
             ],
         )
         return cls._instance

@@ -61,6 +61,14 @@ MAX_REINTENTOS_CODIGO = 3
 # Segundos que espera el reintento automático antes de re-despachar la radicación.
 RETRY_ESPERA_SEG = 60
 
+# Sondeo tolerante al despertar el parqueo: el portal es pesado (cajón de
+# verificación abierto) y un `page.evaluate` puede tardar en responder SIN que
+# el navegador esté muerto. No se declara muerto hasta N intentos consecutivos
+# fallidos (el usuario confirmó que la página queda viva pero lenta).
+CONEXION_REINTENTOS = 3
+CONEXION_PAUSA_SEG = 2.0
+CONEXION_TIMEOUT_SEG = 20
+
 # Estados en los que el navegador de Playwright está físicamente trabajando
 # sobre la radicación. No debe arrancar una segunda instancia (ni programarla)
 # mientras esté en alguno de estos: el portal es sesión única por navegador.
@@ -201,6 +209,27 @@ def _get_bot() -> RadicadorBot:
     if _bot is None:
         _bot = RadicadorBot()
     return _bot
+
+
+async def _sondeo_tolerante(bot) -> bool:
+    """Verifica la conexión del navegador al despertar, con reintentos.
+
+    El primer ping puede dar falsos negativos (página pesada con el cajón de
+    verificación abierto: el `page.evaluate` tarda más de la cuenta). Solo tras
+    ``CONEXION_REINTENTOS`` intentos consecutivos fallidos, espaciados, se
+    declara muerto. El motivo del fallo queda en el log para diagnóstico.
+    """
+    for intento in range(CONEXION_REINTENTOS):
+        try:
+            if await asyncio.wait_for(bot.verificar_conexion(), timeout=CONEXION_TIMEOUT_SEG):
+                return True
+        except Exception as e:  # noqa: BLE001 - timeout o fallo del ping = reintentar
+            logger.warning(
+                f"Sondeo del navegador (intento {intento + 1}/{CONEXION_REINTENTOS}): {e}"
+            )
+        if intento < CONEXION_REINTENTOS - 1:
+            await asyncio.sleep(CONEXION_PAUSA_SEG)
+    return False
 
 
 def programar_radicacion_inmediata(tutela_id: int) -> dict:
@@ -382,11 +411,14 @@ async def iniciar_radicacion(
             rad.estado = "continuando"
             session.commit()
 
-            # Ping: el navegador pudo quedar 'vivo aparente' pero sin responder
-            # tras la espera; NO se escribe sobre una página muerta.
+            # Sondeo tolerante: el navegador pudo quedar 'vivo aparente' pero
+            # sin responder, o simplemente tardar (página pesada). NO se escribe
+            # sobre una página muerta, pero tampoco se mata un parqueo por un
+            # ping lento transitorio.
             try:
-                vivo = bool(await asyncio.wait_for(bot.verificar_conexion(), timeout=10))
-            except Exception:  # noqa: BLE001 - timeout o fallo del ping = no está vivo
+                vivo = await _sondeo_tolerante(bot)
+            except Exception as e:  # noqa: BLE001 - el sondeo mismo nunca rompe el flujo
+                logger.warning(f"Error sondeando el navegador al despertar: {e}")
                 vivo = False
             if not vivo:
                 return await _manejar_fallo_codigo(

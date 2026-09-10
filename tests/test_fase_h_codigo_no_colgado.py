@@ -79,6 +79,8 @@ class _FakeBotConCodigo:
         self.cerrado = False
         self.ingreso_delay = ingreso_delay
         self.vivo_al_ping = True
+        self.ping_fallidos_antes = 0
+        self.llamadas_ping = 0
 
     async def iniciar(self):
         pass
@@ -90,6 +92,9 @@ class _FakeBotConCodigo:
         return {"ok": True, "requiere_codigo_email": True}
 
     async def verificar_conexion(self):
+        self.llamadas_ping += 1
+        if self.llamadas_ping <= self.ping_fallidos_antes:
+            return False
         return self.vivo_al_ping
 
     async def ingresar_codigo_email(self, codigo):
@@ -307,7 +312,8 @@ class TestParqueoCodigo(unittest.TestCase):
         recupera automáticamente)."""
         self.redespachos = []
         self.bot.vivo_al_ping = False
-        with mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
+        with mock.patch.object(radicacion_service, "CONEXION_PAUSA_SEG", 0.02), \
+             mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
              mock.patch.object(
                  radicacion_service,
                  "despachar_radicacion",
@@ -323,6 +329,7 @@ class TestParqueoCodigo(unittest.TestCase):
         self.assertFalse(resultado.get("ok"))
         self.assertTrue(resultado.get("reintento_automatico"), f"Debe reintentar sola: {resultado}")
         self.assertEqual(self.bot.entradas, [], "Nunca se escribe sobre un navegador muerto")
+        self.assertGreaterEqual(self.bot.llamadas_ping, 3, "El sondeo tolerante debe intentar varias veces antes de declararlo muerto")
         session = self.fabrica()
         tutela = session.get(Tutela, self.tutela_id)
         self.assertEqual(tutela.estado, "pendiente_radicacion")
@@ -333,6 +340,25 @@ class TestParqueoCodigo(unittest.TestCase):
         session.close()
         self.assertEqual(self.redespachos, [self.tutela_id])
         self.assertTrue(any("automáticamente" in a.lower() for a in self.avisos), f"Avisos: {self.avisos}")
+
+    def test_ping_lento_transitorio_no_mata_el_parqueo(self):
+        """El portal pesado puede tardar en responder el ping (cajón de
+        verificación abierto) estando VIVO. El sondeo tolerante (varios
+        intentos espaciados) no debe declararlo muerto por un par de fallos:
+        el código se ingresa y la radicación completa."""
+        self.bot.ping_fallidos_antes = 2
+        fut = self._despachar()
+        self.assertTrue(self._esperar_parqueo())
+
+        res = self._señalar("582913")
+        self.assertTrue(res.get("ok"), f"El código debe señalarse: {res}")
+
+        with mock.patch.object(radicacion_service, "CONEXION_PAUSA_SEG", 0.02):
+            resultado = fut.result(timeout=5)
+
+        self.assertTrue(resultado.get("ok"), f"Debe completarse pese al ping lento: {resultado}")
+        self.assertEqual(self.bot.entradas, ["582913"], "El código debe ingresarse una sola vez")
+        self.assertGreaterEqual(self.bot.llamadas_ping, 3, "El sondeo debe haber intentado varias veces")
 
     def test_reintentos_agotados_no_reintenta_y_pasa_a_fallida(self):
         """Con los intentos agotados (3), el timeout ya no agenda más
@@ -548,33 +574,127 @@ class TestIngresarCodigoEmailAcotado(unittest.TestCase):
         self.assertFalse(resultado.get("ok"))
         self.assertTrue(resultado.get("error"))
 
-    def test_codigo_valido_escribe_y_devuelve_ok(self):
-        """Flujo feliz: el selector existe, se limpia, escribe el código y
-        devuelve {ok: True}."""
+    def test_codigo_valido_escribe_confirma_reingresa_correo_y_devuelve_ok(self):
+        """FLUJO REAL del portal: el código se escribe en un cajón que se abre
+        al validar el correo, se pulsa 'Continuar', el cajón valida y el portal
+        vuelve a pedir el correo. El bot debe: escribir el código, pulsar
+        'Continuar', re-ingresar el correo y validarlo de nuevo (ya sin código)."""
         from app.bot.navegador import RadicadorBot
 
-        esperado = {"limpiado": "", "escrito": ""}
+        esperado = {"limpiados": [], "escritos": [], "clicks": []}
 
-        class PageConSelector:
+        class ElementoBoton:
+            async def is_visible(self):
+                return True
+
+            async def click(self):
+                return None
+
+        class PageCajon:
+            def __init__(self):
+                self.pide_codigo_de_nuevo = False
+
             async def wait_for_selector(self, selector, **kwargs):
-                return object()  # elemento encontrado
+                return ElementoBoton()
+
+            async def query_selector(self, selector):
+                if selector == "#IdEmail1":
+                    return ElementoBoton() if self.pide_codigo_de_nuevo else None
+                return ElementoBoton()
 
             async def fill(self, selector, valor, **kwargs):
-                esperado["limpiado"] = valor
+                esperado["limpiados"].append((selector, valor))
 
             async def type(self, selector, valor, **kwargs):
-                esperado["escrito"] = valor
+                esperado["escritos"].append((selector, valor))
 
             async def wait_for_timeout(self, ms):
-                return
+                return None
 
         bot = RadicadorBot()
-        bot.page = PageConSelector()
+        bot.page = PageCajon()
+        bot._email_accionante = "a@b.com"
+        bot._js_click = mock.AsyncMock()
+        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+
         resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
 
-        self.assertTrue(resultado.get("ok"))
-        self.assertEqual(esperado["limpiado"], "")
-        self.assertEqual(esperado["escrito"], "582913")
+        self.assertTrue(resultado.get("ok"), f"Flujo completo debe devolver ok: {resultado}")
+        self.assertIn(("#IdEmail1", ""), esperado["limpiados"])
+        self.assertIn(("#IdEmail1", "582913"), esperado["escritos"])
+        self.assertIn(("#Email", ""), esperado["limpiados"], "Debe limpiarse el correo para re-ingresarlo")
+        self.assertIn(("#Email", "a@b.com"), esperado["escritos"], "Debe re-ingresarse el correo")
+        bot._js_click.assert_has_calls([mock.call("#btnValidar")], any_order=True)
+
+    def test_cajon_sin_boton_continuar_devuelve_error(self):
+        """Si el cajón de verificación no expone un botón 'Continuar', se
+        devuelve {ok: False} con un error claro en vez de avanzar a ciegas."""
+        from app.bot.navegador import RadicadorBot
+
+        class PageSinBoton:
+            async def wait_for_selector(self, selector, **kwargs):
+                return object()
+
+            async def query_selector(self, selector):
+                return None
+
+            async def fill(self, *args, **kwargs):
+                return None
+
+            async def type(self, *args, **kwargs):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                return None
+
+        bot = RadicadorBot()
+        bot.page = PageSinBoton()
+        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+
+        resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
+
+        self.assertIsInstance(resultado, dict)
+        self.assertFalse(resultado.get("ok"))
+        self.assertIn("Continuar", resultado.get("error", ""))
+
+    def test_cajon_pide_codigo_de_nuevo_devuelve_error(self):
+        """Tras re-ingresar el correo el cajón siguió pidiendo código (correo
+        no quedó verificado): se devuelve error claro, no se avanza a ciegas."""
+        from app.bot.navegador import RadicadorBot
+
+        class ElementoVisible:
+            async def is_visible(self):
+                return True
+
+            async def click(self):
+                return None
+
+        class PagePideDeNuevo:
+            async def wait_for_selector(self, selector, **kwargs):
+                return ElementoVisible()
+
+            async def query_selector(self, selector):
+                return ElementoVisible()
+
+            async def fill(self, *args, **kwargs):
+                return None
+
+            async def type(self, *args, **kwargs):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                return None
+
+        bot = RadicadorBot()
+        bot.page = PagePideDeNuevo()
+        bot._email_accionante = "a@b.com"
+        bot._js_click = mock.AsyncMock()
+        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+
+        resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
+
+        self.assertFalse(resultado.get("ok"))
+        self.assertIn("volvió a pedir", resultado.get("error", "").lower())
 
 
 if __name__ == "__main__":

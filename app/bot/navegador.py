@@ -275,6 +275,9 @@ class RadicadorBot:
 
         # Email
         email = datos.get("accionante_email", "")
+        # Se guarda en el bot: tras validar el código, el portal vuelve a pedir
+        # el correo y `ingresar_codigo_email` necesita re-ingresarlo.
+        self._email_accionante = email
         await self._type("#Email", email)
 
         # Click validar correo — activa verificación
@@ -298,26 +301,96 @@ class RadicadorBot:
             return True
 
     async def ingresar_codigo_email(self, codigo: str) -> dict:
-        """Ingresa el código de verificación de correo en #IdEmail1.
+        """Valida el código de verificación en el cajón que abre el portal.
 
-        Espera el selector con timeout acotado y devuelve {ok, error} para
-        que el flujo nunca cuelgue el event loop esperando un campo que no
-        aparece (bug de producción: radicación colgada en 'continuando').
+        FLUJO REAL del portal (Rama Judicial), confirmado en pruebas manuales:
+          1. Al dar "Validar" el correo (#btnValidar), el portal abre un cajón
+             ("ingrese el código") con el campo #IdEmail1 y un botón.
+          2. Se escribe el código y se pulsa el botón "Continuar".
+          3. El cajón valida el código; si es correcto se cierra y el portal
+             vuelve a pedir el correo (el email quedó verificado).
+          4. Se ingresa el correo de nuevo y se da "Validar": ya NO vuelve a
+             pedir código y el flujo continúa.
+
+        Todo acotado con timeouts: nunca cuelga el loop esperando un campo que
+        no aparece (bug de producción: radicación colgada en 'continuando').
         """
         try:
             await self.page.wait_for_selector("#IdEmail1", timeout=ESPERA_CODIGO_SELECTOR_MS)
         except Exception as e:
+            await self._capturar_evidencia("codigo_sin_cajon")
             logger.warning(f"No apareció el campo de verificación de email: {e}")
             return {"ok": False, "error": "No apareció el campo de verificación de email en el portal"}
         try:
             await self._type_existing("#IdEmail1", codigo)
-            await self.page.wait_for_timeout(500)
+            await self.page.wait_for_timeout(400)
         except Exception as e:
+            await self._capturar_evidencia("codigo_no_escrito")
             logger.warning(f"No se pudo escribir el código de verificación: {e}")
             return {"ok": False, "error": f"No se pudo escribir el código en el portal: {e}"}
+
+        # Pulsar "Continuar" en el cajón para que valide el código.
+        confirmado = await self._click_continuar_cajon()
+        if not confirmado:
+            await self._capturar_evidencia("codigo_sin_continuar")
+            logger.warning("No se encontró el botón 'Continuar' del cajón de verificación")
+            return {"ok": False, "error": "No se encontró el botón 'Continuar' del cajón de verificación"}
+
+        # El cajón valida el código, se cierra y el portal vuelve a pedir correo.
+        await self.page.wait_for_timeout(1200)
+        email = getattr(self, "_email_accionante", "")
+        if email:
+            try:
+                await self._type_existing("#Email", email)
+                await self._js_click("#btnValidar")
+                await self.page.wait_for_timeout(1000)
+            except Exception as e:
+                await self._capturar_evidencia("codigo_reingreso_correo_error")
+                logger.warning(f"No se pudo re-ingresar el correo tras el código: {e}")
+                return {"ok": False, "error": f"No se pudo re-ingresar el correo tras el código: {e}"}
+
+        # Verificar que el portal ya no pide código (correo quedó verificado).
+        try:
+            campo = await self.page.query_selector("#IdEmail1")
+            if campo is not None and await campo.is_visible():
+                await self._capturar_evidencia("codigo_pide_de_nuevo")
+                logger.warning("El portal volvió a pedir el código tras el re-ingreso del correo")
+                return {"ok": False, "error": "El portal volvió a pedir el código de verificación tras el re-ingreso del correo"}
+        except Exception:
+            pass
+
+        logger.info("Código de email validado: verificación completada")
         return {"ok": True}
 
-    async def verificar_conexion(self, timeout_ms: int = 5000) -> bool:
+    async def _click_continuar_cajon(self) -> bool:
+        """Pulsa el botón 'Continuar' del cajón de verificación de email.
+
+        Busca el botón por su texto (case-insensitive) priorizando los estilos
+        de los modales jquery-confirm que usa el portal. Retorna False si no
+        encontró ninguno (para no avanzar a ciegas).
+        """
+        for selector in (
+            ".jconfirm .btn:has-text('Continuar')",
+            ".jconfirm-buttons button:has-text('Continuar')",
+            "button:has-text('Continuar')",
+        ):
+            try:
+                btn = await self.page.query_selector(selector)
+                if btn is not None and await btn.is_visible():
+                    await btn.click()
+                    return True
+            except Exception:  # noqa: BLE001 - probar el siguiente candidato
+                continue
+        return False
+
+    async def _capturar_evidencia(self, tag: str):
+        """Toma un screenshot de diagnóstico SIEMPRE sin romper el flujo."""
+        try:
+            await self.tomar_screenshot(tag)
+        except Exception as e:  # noqa: BLE001 - la evidencia nunca debe romper el flujo
+            logger.warning(f"No se pudo capturar screenshot {tag}: {e}")
+
+    async def verificar_conexion(self, timeout_ms: int = 12000) -> bool:
         """Verifica que el navegador siga respondiendo (ping acotado).
 
         Un navegador puede quedar 'vivo aparente' pero con la conexión muerta
@@ -325,13 +398,19 @@ class RadicadorBot:
         await queda colgado para siempre (bug de producción que colgaba el
         webhook esperando el código). Antes de escribir en una página retomada
         se verifica que responda con un ``page.evaluate`` acotado.
+
+        El timeout por defecto es generoso (12s): el portal es pesado y un ping
+        lento NO significa navegador muerto (por eso radicacion_service lo
+        sondea varias veces espaciadas). Se loguea el motivo real del fallo
+        (target cerrado vs timeout) para diagnosticar en producción.
         """
         if self.page is None:
             return False
         try:
             await self.page.evaluate("1 + 1", timeout=timeout_ms)
             return True
-        except Exception:  # noqa: BLE001 - cualquier fallo = no hay conexión usable
+        except Exception as e:  # noqa: BLE001 - cualquier fallo = conexión no usable
+            logger.warning(f"Navegador sin responder (timeout={timeout_ms}ms): {e}")
             return False
 
     async def _paso_accionado(self, datos: dict):
