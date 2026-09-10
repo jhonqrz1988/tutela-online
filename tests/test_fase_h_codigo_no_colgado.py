@@ -572,34 +572,75 @@ class TestVerificarConexion(unittest.TestCase):
 
 
 class TestIngresarCodigoEmailAcotado(unittest.TestCase):
-    def test_selector_ausente_devuelve_error_sin_colgarse(self):
-        """Si el portal no muestra #IdEmail1, `ingresar_codigo_email` debe
-        acotar la espera y devolver {ok: False} en vez de colgar el loop."""
+    """El portal NO pone el código en #IdEmail1 (ese es el 'confirmar correo',
+    disabled hasta validar): el código vive en un input del CAJÓN. El bot debe
+    localizarlo por su estado (visible+habilitado dentro del cajón), escribir,
+    pulsar 'Continuar', re-ingresar el correo y verificar que el cajón cerró."""
+
+    def _hacer_bot(self, page):
+        from app.bot.navegador import RadicadorBot
+
+        bot = RadicadorBot()
+        bot.page = page
+        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+        bot._js_click = mock.AsyncMock()
+        bot._email_accionante = "a@b.com"
+        return bot
+
+    class ElementoBoton:
+        async def is_visible(self):
+            return True
+
+        async def click(self):
+            return None
+
+    def _pagina_cajon(self, *, selector_codigo="#txtCodigo", cajon_abierto=False):
+        """FakePage que simula el cajón con un único input de código habilitado."""
+
+        class PageCajon:
+            async def wait_for_function(self, script, **kwargs):
+                return True
+
+            async def evaluate(self, script, arg=None):
+                if "candidatos" in script:
+                    return selector_codigo
+                if "overlays" in script:
+                    return cajon_abierto
+                return "el.disabled" in script
+
+            async def query_selector(self, selector):
+                if "Continuar" in selector:
+                    return self.ElementoBoton()
+                return None
+
+            async def fill(self, *args, **kwargs):
+                return None
+
+            async def type(self, *args, **kwargs):
+                return None
+
+            async def wait_for_timeout(self, ms):
+                return None
+
+        PageCajon.ElementoBoton = TestIngresarCodigoEmailAcotado.ElementoBoton
+        return PageCajon()
+
+    def test_sin_cajon_detectable_devuelve_error_sin_colgarse(self):
+        """Si no aparece un cajón con input de código, acota la espera y
+        devuelve {ok: False} en vez de colgar el loop."""
         import app.bot.navegador as navegador_mod
         from app.bot.navegador import RadicadorBot
 
         real_timeout = navegador_mod.ESPERA_CODIGO_SELECTOR_MS
 
-        class PageSinSelector:
-            def __init__(self):
-                self.llamadas_selector = 0
-
-            async def wait_for_selector(self, selector, **kwargs):
-                self.llamadas_selector += 1
-                raise TimeoutError(f"No aparece {selector}")
-
-            async def fill(self, *args, **kwargs):
-                raise AssertionError("No se debe intentar escribir sin selector")
-
-            async def type(self, *args, **kwargs):
-                raise AssertionError("No se debe intentar escribir sin selector")
-
-            async def wait_for_timeout(self, ms):
-                return
+        class PageSinCajon:
+            async def wait_for_function(self, script, **kwargs):
+                raise TimeoutError("No aparece el cajón")
 
         navegador_mod.ESPERA_CODIGO_SELECTOR_MS = 100
         bot = RadicadorBot()
-        bot.page = PageSinSelector()
+        bot.page = PageSinCajon()
+        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
         try:
             resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
         finally:
@@ -607,35 +648,38 @@ class TestIngresarCodigoEmailAcotado(unittest.TestCase):
 
         self.assertIsInstance(resultado, dict)
         self.assertFalse(resultado.get("ok"))
-        self.assertTrue(resultado.get("error"))
+        self.assertIn("cajón", resultado.get("error", "").lower())
+
+    def test_cajon_sin_input_identificable_devuelve_error(self):
+        """Si el cajón tiene varios inputs habilitados (ambiguo) o ninguno,
+        no se escribe a ciegas: error + diagnóstico."""
+        page = self._pagina_cajon(selector_codigo=None)
+        bot = self._hacer_bot(page)
+
+        resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
+
+        self.assertFalse(resultado.get("ok"))
+        self.assertIn("código", resultado.get("error", "").lower())
 
     def test_codigo_valido_escribe_confirma_reingresa_correo_y_devuelve_ok(self):
-        """FLUJO REAL del portal: el código se escribe en un cajón que se abre
-        al validar el correo, se pulsa 'Continuar', el cajón valida y el portal
-        vuelve a pedir el correo. El bot debe: escribir el código, pulsar
-        'Continuar', re-ingresar el correo y validarlo de nuevo (ya sin código)."""
-        from app.bot.navegador import RadicadorBot
-
-        esperado = {"limpiados": [], "escritos": [], "clicks": []}
-
-        class ElementoBoton:
-            async def is_visible(self):
-                return True
-
-            async def click(self):
-                return None
+        """FLUJO REAL: escribe el código en el input del cajón, pulsa
+        'Continuar', re-ingresa el correo (email + confirmar) y valida;
+        el cajón cierra y ya no pide código."""
+        esperado = {"limpiados": [], "escritos": []}
 
         class PageCajon:
-            def __init__(self):
-                self.pide_codigo_de_nuevo = False
+            async def wait_for_function(self, script, **kwargs):
+                return True
 
-            async def wait_for_selector(self, selector, **kwargs):
-                return ElementoBoton()
+            async def evaluate(self, script, arg=None):
+                if "candidatos" in script:
+                    return "#txtCodigo"
+                return "el.disabled" in script
 
             async def query_selector(self, selector):
-                if selector == "#IdEmail1":
-                    return ElementoBoton() if self.pide_codigo_de_nuevo else None
-                return ElementoBoton()
+                if "Continuar" in selector:
+                    return self.ElementoBoton()
+                return None
 
             async def fill(self, selector, valor, **kwargs):
                 esperado["limpiados"].append((selector, valor))
@@ -646,29 +690,28 @@ class TestIngresarCodigoEmailAcotado(unittest.TestCase):
             async def wait_for_timeout(self, ms):
                 return None
 
-        bot = RadicadorBot()
-        bot.page = PageCajon()
-        bot._email_accionante = "a@b.com"
-        bot._js_click = mock.AsyncMock()
-        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+        PageCajon.ElementoBoton = TestIngresarCodigoEmailAcotado.ElementoBoton
+        bot = self._hacer_bot(PageCajon())
 
         resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
 
         self.assertTrue(resultado.get("ok"), f"Flujo completo debe devolver ok: {resultado}")
-        self.assertIn(("#IdEmail1", ""), esperado["limpiados"])
-        self.assertIn(("#IdEmail1", "582913"), esperado["escritos"])
-        self.assertIn(("#Email", ""), esperado["limpiados"], "Debe limpiarse el correo para re-ingresarlo")
+        self.assertIn(("#txtCodigo", ""), esperado["limpiados"])
+        self.assertIn(("#txtCodigo", "582913"), esperado["escritos"], "El código va al input del cajón")
         self.assertIn(("#Email", "a@b.com"), esperado["escritos"], "Debe re-ingresarse el correo")
+        self.assertIn(("#IdEmail1", "a@b.com"), esperado["escritos"], "Debe re-ingresarse el correo de confirmación")
         bot._js_click.assert_has_calls([mock.call("#btnValidar")], any_order=True)
 
     def test_cajon_sin_boton_continuar_devuelve_error(self):
-        """Si el cajón de verificación no expone un botón 'Continuar', se
-        devuelve {ok: False} con un error claro en vez de avanzar a ciegas."""
-        from app.bot.navegador import RadicadorBot
-
+        """El cajón no expone un botón 'Continuar': error claro, no se avanza."""
         class PageSinBoton:
-            async def wait_for_selector(self, selector, **kwargs):
-                return object()
+            async def wait_for_function(self, script, **kwargs):
+                return True
+
+            async def evaluate(self, script, arg=None):
+                if "candidatos" in script:
+                    return "#txtCodigo"
+                return "el.disabled" in script
 
             async def query_selector(self, selector):
                 return None
@@ -682,9 +725,7 @@ class TestIngresarCodigoEmailAcotado(unittest.TestCase):
             async def wait_for_timeout(self, ms):
                 return None
 
-        bot = RadicadorBot()
-        bot.page = PageSinBoton()
-        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+        bot = self._hacer_bot(PageSinBoton())
 
         resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
 
@@ -693,38 +734,10 @@ class TestIngresarCodigoEmailAcotado(unittest.TestCase):
         self.assertIn("Continuar", resultado.get("error", ""))
 
     def test_cajon_pide_codigo_de_nuevo_devuelve_error(self):
-        """Tras re-ingresar el correo el cajón siguió pidiendo código (correo
-        no quedó verificado): se devuelve error claro, no se avanza a ciegas."""
-        from app.bot.navegador import RadicadorBot
-
-        class ElementoVisible:
-            async def is_visible(self):
-                return True
-
-            async def click(self):
-                return None
-
-        class PagePideDeNuevo:
-            async def wait_for_selector(self, selector, **kwargs):
-                return ElementoVisible()
-
-            async def query_selector(self, selector):
-                return ElementoVisible()
-
-            async def fill(self, *args, **kwargs):
-                return None
-
-            async def type(self, *args, **kwargs):
-                return None
-
-            async def wait_for_timeout(self, ms):
-                return None
-
-        bot = RadicadorBot()
-        bot.page = PagePideDeNuevo()
-        bot._email_accionante = "a@b.com"
-        bot._js_click = mock.AsyncMock()
-        bot.tomar_screenshot = mock.AsyncMock(return_value=None)
+        """Tras re-ingresar el correo el cajón siguió abierto (el correo no
+        quedó verificado): error claro, no se avanza a ciegas."""
+        page = self._pagina_cajon(cajon_abierto=True)
+        bot = self._hacer_bot(page)
 
         resultado = asyncio.run(bot.ingresar_codigo_email("582913"))
 

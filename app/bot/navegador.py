@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import uuid
 from pathlib import Path
@@ -16,6 +17,39 @@ TYPE_DELAY = 50
 # Tiempo máximo esperando el campo del código de email (antes colgaba el
 # loop de Playwright sin límite y la radicación quedaba en 'continuando').
 ESPERA_CODIGO_SELECTOR_MS = 20000
+
+# ¿Está abierto el CAJÓN del código de verificación? Un overlay visible
+# (jquery-confirm `.jconfirm`, `.modal`, `[role=dialog]`) con un input
+# habilitado es el indicador real: `#IdEmail1` es el 'confirmar correo' y
+# permanece disabled hasta validar (NUNCA es el campo del código).
+_JS_CAJON_ABIERTO = """() => {
+    const overlays = Array.from(document.querySelectorAll('.jconfirm, .modal, [role="dialog"]'));
+    return overlays.some(o => {
+        if (o.offsetParent === null && o.style.display === 'none') return false;
+        return Array.from(o.querySelectorAll('input')).some(i =>
+            !i.disabled && !i.readOnly && i.offsetWidth > 0 && i.offsetHeight > 0);
+    });
+}"""
+
+# Selector del INPUT del código dentro del cajón: el único input visible y
+# habilitado de los overlays. Devuelve un selector CSS usable o null si es
+# ambiguo (varios inputs) — mejor no escribir a ciegas.
+_JS_SELECTOR_CODIGO = """() => {
+    const overlays = Array.from(document.querySelectorAll('.jconfirm, .modal, [role="dialog"]'));
+    const scope = overlays.find(o => o.offsetParent !== null || o.style.display !== 'none');
+    if (!scope) return null;
+    const candidatos = Array.from(scope.querySelectorAll('input')).filter(i => {
+        if (i.disabled || i.readOnly) return false;
+        const st = window.getComputedStyle(i);
+        return i.offsetWidth > 0 && i.offsetHeight > 0 &&
+               st.visibility !== 'hidden' && st.display !== 'none';
+    });
+    if (candidatos.length !== 1) return null;
+    const c = candidatos[0];
+    if (c.id) return '#' + CSS.escape(c.id);
+    if (c.name) return '[name="' + CSS.escape(c.name) + '"]';
+    return null;
+}"""
 
 
 def _separar_nombre(nombre_completo: str) -> dict:
@@ -286,47 +320,59 @@ class RadicadorBot:
         await self._js_click("#btnValidar")
         await self.page.wait_for_timeout(1000)
 
-        # Detección condicional: el portal SOLO pide código de verificación
-        # cuando el correo no está registrado. Si #IdEmail1 (input del código)
-        # no aparece, el email ya estaba verificado y se continúa directo.
+        # Detección condicional: el portal SOLO pide código cuando el correo
+        # no está registrado. El indicador real es el CAJÓN visible con un
+        # input habilitado (no `#IdEmail1`/`#btnValidar`, que están siempre en
+        # el DOM; `#IdEmail1` es el 'confirmar correo' y queda disabled hasta
+        # validar el código).
         try:
-            campo_codigo = await self.page.query_selector("#IdEmail1")
-            if campo_codigo is None:
-                logger.info("Correo ya verificado, no se requiere código de email")
-                return False
-            visible = await campo_codigo.is_visible()
-            return bool(visible)
-        except Exception:
-            # Ambiguo/error: pedir el código (mejor que radicar un email sin verificar)
-            logger.warning("No se pudo detectar campo de verificación de email; se asume que aplica")
+            await self.page.wait_for_function(_JS_CAJON_ABIERTO, timeout=5000)
             return True
+        except Exception:
+            logger.info("Correo ya verificado, no se requiere código de email")
+            return False
 
     async def ingresar_codigo_email(self, codigo: str) -> dict:
         """Valida el código de verificación en el cajón que abre el portal.
 
         FLUJO REAL del portal (Rama Judicial), confirmado en pruebas manuales:
           1. Al dar "Validar" el correo (#btnValidar), el portal abre un cajón
-             ("ingrese el código") con el campo #IdEmail1 y un botón.
-          2. Se escribe el código y se pulsa el botón "Continuar".
-          3. El cajón valida el código; si es correcto se cierra y el portal
-             vuelve a pedir el correo (el email quedó verificado).
-          4. Se ingresa el correo de nuevo y se da "Validar": ya NO vuelve a
-             pedir código y el flujo continúa.
+             ("ingrese el código") con un INPUT y un botón.
+          2. El código se escribe en ese INPUT del cajón (NUNCA en #IdEmail1:
+             es el 'confirmar correo' y queda disabled hasta validar).
+          3. Se pulsa el botón "Continuar" y el cajón valida el código.
+          4. El cajón cierra y el portal vuelve a pedir el correo (email +
+             confirmar); se re-ingresa y se da "Validar": ya NO vuelve a pedir
+             código y el flujo continúa.
 
         Todo acotado con timeouts: nunca cuelga el loop esperando un campo que
         no aparece (bug de producción: radicación colgada en 'continuando').
         """
         try:
-            await self.page.wait_for_selector("#IdEmail1", timeout=ESPERA_CODIGO_SELECTOR_MS)
+            await self.page.wait_for_function(_JS_CAJON_ABIERTO, timeout=ESPERA_CODIGO_SELECTOR_MS)
         except Exception as e:
             await self._capturar_evidencia("codigo_sin_cajon")
-            logger.warning(f"No apareció el campo de verificación de email: {e}")
-            return {"ok": False, "error": "No apareció el campo de verificación de email en el portal"}
+            await self._log_diagnostico_cajon()
+            logger.warning(f"No se detectó el cajón del código de email: {e}")
+            return {"ok": False, "error": "No se detectó el cajón del código de verificación en el portal"}
+
+        # Identificar el input del código dentro del cajón (único habilitado).
         try:
-            await self._type_existing("#IdEmail1", codigo)
+            selector_codigo = await self.page.evaluate(_JS_SELECTOR_CODIGO)
+        except Exception as e:
+            selector_codigo = None
+            logger.warning(f"No se pudo identificar el campo del código: {e}")
+        if not selector_codigo:
+            await self._capturar_evidencia("codigo_sin_input")
+            await self._log_diagnostico_cajon()
+            return {"ok": False, "error": "No se identificó el campo del código en el cajón del portal"}
+
+        try:
+            await self._type_existing(selector_codigo, codigo)
             await self.page.wait_for_timeout(400)
         except Exception as e:
             await self._capturar_evidencia("codigo_no_escrito")
+            await self._log_diagnostico_cajon()
             logger.warning(f"No se pudo escribir el código de verificación: {e}")
             return {"ok": False, "error": f"No se pudo escribir el código en el portal: {e}"}
 
@@ -334,6 +380,7 @@ class RadicadorBot:
         confirmado = await self._click_continuar_cajon()
         if not confirmado:
             await self._capturar_evidencia("codigo_sin_continuar")
+            await self._log_diagnostico_cajon()
             logger.warning("No se encontró el botón 'Continuar' del cajón de verificación")
             return {"ok": False, "error": "No se encontró el botón 'Continuar' del cajón de verificación"}
 
@@ -342,26 +389,78 @@ class RadicadorBot:
         email = getattr(self, "_email_accionante", "")
         if email:
             try:
-                await self._type_existing("#Email", email)
-                await self._js_click("#btnValidar")
-                await self.page.wait_for_timeout(1000)
+                await self._reingresar_email(email)
             except Exception as e:
                 await self._capturar_evidencia("codigo_reingreso_correo_error")
+                await self._log_diagnostico_cajon()
                 logger.warning(f"No se pudo re-ingresar el correo tras el código: {e}")
                 return {"ok": False, "error": f"No se pudo re-ingresar el correo tras el código: {e}"}
 
-        # Verificar que el portal ya no pide código (correo quedó verificado).
+        # Verificar que el cajón ya no está abierto (correo quedó verificado).
         try:
-            campo = await self.page.query_selector("#IdEmail1")
-            if campo is not None and await campo.is_visible():
-                await self._capturar_evidencia("codigo_pide_de_nuevo")
-                logger.warning("El portal volvió a pedir el código tras el re-ingreso del correo")
-                return {"ok": False, "error": "El portal volvió a pedir el código de verificación tras el re-ingreso del correo"}
+            sigue_abierto = bool(await self.page.evaluate(_JS_CAJON_ABIERTO))
         except Exception:
-            pass
+            sigue_abierto = False
+        if sigue_abierto:
+            await self._capturar_evidencia("codigo_pide_de_nuevo")
+            await self._log_diagnostico_cajon()
+            logger.warning("El portal volvió a pedir el código tras el re-ingreso del correo")
+            return {"ok": False, "error": "El portal volvió a pedir el código de verificación tras el re-ingreso del correo"}
 
         logger.info("Código de email validado: verificación completada")
         return {"ok": True}
+
+    async def _reingresar_email(self, email: str):
+        """Re-ingresa el correo en lo que el portal dejó disponible tras
+        validar el código: #Email (si quedó vacío) y #IdEmail1 (el 'confirmar
+        correo' que se habilita al quedar verificado). Solo si está habilitado."""
+        await self._rellenar_si_habilitado("#Email", email)
+        await self._rellenar_si_habilitado("#IdEmail1", email)
+        await self._js_click("#btnValidar")
+        await self.page.wait_for_timeout(1000)
+
+    async def _rellenar_si_habilitado(self, selector: str, texto: str):
+        """Escribe un campo SOLO si existe y está habilitado (un campo disabled
+        haría bloquear `page.fill` 30s)."""
+        try:
+            disponible = bool(await self.page.evaluate(
+                """([sel]) => {
+                    const el = document.querySelector(sel);
+                    if (!el) return false;
+                    return !el.disabled && !el.readOnly &&
+                           el.offsetWidth > 0 && el.offsetHeight > 0;
+                }""",
+                [selector],
+            ))
+        except Exception:
+            disponible = False
+        if disponible:
+            await self._type_existing(selector, texto)
+
+    async def _log_diagnostico_cajon(self):
+        """Vuelca a los logs la estructura del cajón (inputs con su estado)
+        para diagnosticar el portal sin depender de capturas de pantalla."""
+        try:
+            info = await self.page.evaluate("""() => {
+                const overlays = Array.from(
+                    document.querySelectorAll('.jconfirm, .modal, [role="dialog"]'));
+                const visibles = overlays.filter(
+                    o => o.offsetParent !== null || o.style.display !== 'none');
+                return visibles.map(o => ({
+                    clases: o.className,
+                    inputs: Array.from(o.querySelectorAll('input')).map(i => ({
+                        id: i.id,
+                        name: i.name,
+                        type: i.type,
+                        disabled: i.disabled,
+                        readonly: i.readOnly,
+                        visible: i.offsetWidth > 0 && i.offsetHeight > 0,
+                    })),
+                }));
+            }""")
+            logger.warning(f"[diagnóstico cajón código] {json.dumps(info)[:2500]}")
+        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            logger.warning(f"No se pudo diagnosticar el cajón del código: {e}")
 
     async def _click_continuar_cajon(self) -> bool:
         """Pulsa el botón 'Continuar' del cajón de verificación de email.

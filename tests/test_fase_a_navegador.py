@@ -24,15 +24,16 @@ class FakeElement:
 
 
 class FakePage:
-    def __init__(self, idemail_visible: bool = False):
-        self.idemail_visible = idemail_visible
+    def __init__(self, cajon_abierto: bool = False):
+        self.cajon_abierto = cajon_abierto
         self.tipodiscapacidad_argumento = None
 
+    async def wait_for_function(self, script, **kwargs):
+        if self.cajon_abierto:
+            return True
+        raise TimeoutError("No hay cajón de verificación")
+
     async def query_selector(self, selector: str):
-        if selector == "#IdEmail1":
-            if self.idemail_visible:
-                return FakeElement(True)
-            return None
         return FakeElement(True)
 
     async def evaluate(self, *args, **kwargs):
@@ -63,30 +64,31 @@ class TestVerificacionEmailCondicional(unittest.TestCase):
     def _ejecutar_paso_accionante(self, bot, datos) -> bool:
         return asyncio.run(bot._paso_accionante(datos))
 
-    def test_sin_campo_idemail_retorna_false(self):
-        """Si #IdEmail1 no es visible (correo ya registrado), NO requiere código."""
-        bot = _make_bot(FakePage(idemail_visible=False))
+    def test_sin_cajon_retorna_false(self):
+        """Si el portal no abre el cajón del código (correo ya registrado),
+        NO requiere código."""
+        bot = _make_bot(FakePage(cajon_abierto=False))
         with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
-        self.assertFalse(requiere, "Si el portal no pide verificación, debe retornar False")
+        self.assertFalse(requiere, "Si el portal no abre el cajón, debe retornar False")
 
-    def test_con_campo_idemail_retorna_true(self):
-        """Si #IdEmail1 es visible (portal pide verificación), requiere código."""
-        bot = _make_bot(FakePage(idemail_visible=True))
+    def test_con_cajon_retorna_true(self):
+        """Si el portal abre el cajón de verificación, requiere código."""
+        bot = _make_bot(FakePage(cajon_abierto=True))
         with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
-        self.assertTrue(requiere, "Si el portal pide verificación, debe retornar True")
+        self.assertTrue(requiere, "Si el portal abre el cajón del código, debe retornar True")
 
 
 class TestDiscapacidad(unittest.TestCase):
     _datos = {"accionante_nombre": "Juan Perez Lopez", "accionante_email": "a@b.com"}
 
-    def _capturar_discapacidad(self, datos, idemail_visible=True) -> list:
-        bot = _make_bot(FakePage(idemail_visible=idemail_visible))
+    def _capturar_discapacidad(self, datos, cajon_abierto=True) -> list:
+        bot = _make_bot(FakePage(cajon_abierto=cajon_abierto))
         llamadas = []
 
         async def fake_select(selector, label):
