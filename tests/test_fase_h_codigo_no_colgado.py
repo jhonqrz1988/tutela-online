@@ -78,6 +78,7 @@ class _FakeBotConCodigo:
         self.entradas = []
         self.cerrado = False
         self.ingreso_delay = ingreso_delay
+        self.vivo_al_ping = True
 
     async def iniciar(self):
         pass
@@ -89,7 +90,7 @@ class _FakeBotConCodigo:
         return {"ok": True, "requiere_codigo_email": True}
 
     async def verificar_conexion(self):
-        return True
+        return self.vivo_al_ping
 
     async def ingresar_codigo_email(self, codigo):
         self.entradas.append(codigo)
@@ -198,6 +199,12 @@ class TestParqueoCodigo(unittest.TestCase):
             time.sleep(0.005)
         return bool(self.bot.entradas)
 
+    def _esperar_despachos(self, n, segundos=5):
+        limite = time.monotonic() + segundos
+        while time.monotonic() < limite and len(self.redespachos) < n:
+            time.sleep(0.005)
+        return len(self.redespachos)
+
     def _señalar(self, codigo):
         return asyncio.run(radicacion_service.continuar_radicacion_con_codigo(self.tutela_id, codigo))
 
@@ -249,16 +256,28 @@ class TestParqueoCodigo(unittest.TestCase):
         with radicacion_service._parqueos_lock:
             self.assertNotIn(self.tutela_id, radicacion_service._codigos_pendientes, "No debe quedar código huérfano")
 
-    def test_parqueo_expira_sin_codigo_marca_fallida_y_cierra_navegador(self):
-        """Sin código a tiempo, la coroutine se abandona sola: cierra el
-        navegador, marca 'fallida' y avisa. Los dicts de parqueo quedan limpios."""
-        with mock.patch.object(radicacion_service, "TIMEOUT_ESPERA_CODIGO", 0.15):
+    def test_parqueo_expira_sin_codigo_programa_reintento_automatico(self):
+        """Sin código a tiempo, el parqueo se abandona solo y la radicación se
+        re-lanza automáticamente (sin esperar al admin): cierra el navegador,
+        encola la tutela y agenda un re-despacho que vuelve a pedir un código
+        nuevo (el portal lo genera de nuevo en cada corrida)."""
+        self.redespachos = []
+        with mock.patch.object(radicacion_service, "TIMEOUT_ESPERA_CODIGO", 0.15), \
+             mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
+             mock.patch.object(
+                 radicacion_service,
+                 "despachar_radicacion",
+                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or {"ok": True, "despachada": True},
+             ):
             fut = self._despachar()
             self.assertTrue(self._esperar_parqueo())
             resultado = fut.result(timeout=5)
+            self.assertTrue(self._esperar_despachos(1), "Debe re-despacharse antes de desparchear: evita un navegador real")
 
         self.assertFalse(resultado.get("ok"), f"Sin código debe abandonarse: {resultado}")
+        self.assertTrue(resultado.get("reintento_automatico"), f"Debe ser un reintento automático: {resultado}")
         self.assertIn("tiempo", resultado.get("error", "").lower())
+        self.assertIn("automáticamente", resultado.get("error", "").lower())
         self.assertTrue(self.bot.cerrado, "El navegador debe cerrarse al abandonar el parqueo")
         self.assertEqual(self.bot.entradas, [], "Nunca debe ingresarse un código inexistente")
 
@@ -266,17 +285,112 @@ class TestParqueoCodigo(unittest.TestCase):
         rad = session.execute(
             select(Radicacion).where(Radicacion.tutela_id == self.tutela_id)
         ).scalar_one()
-        self.assertEqual(rad.estado, "fallida")
+        self.assertEqual(rad.estado, "fallida", "El intento actual se registra como fallido")
+        self.assertEqual(rad.intentos, 1, "El reintento automático cuenta como un intento")
         self.assertTrue(rad.ultimo_error)
         tutela = session.get(Tutela, self.tutela_id)
-        self.assertEqual(tutela.estado, "esperando_codigo_email")
+        self.assertEqual(tutela.estado, "pendiente_radicacion", "Se encola para re-radicar sola")
         session.close()
 
-        self.assertTrue(self.avisos, "Debe avisarse al usuario que el código expiró")
+        self.assertEqual(len(self.redespachos), 1, "Un solo re-despacho automático")
+        self.assertEqual(self.redespachos[0], self.tutela_id, "El re-despacho debe apuntar a ESTA tutela")
+        self.assertTrue(any("automáticamente" in a.lower() for a in self.avisos), f"Aviso de reintento: {self.avisos}")
 
         with radicacion_service._parqueos_lock:
             self.assertNotIn(self.tutela_id, radicacion_service._parqueos)
             self.assertNotIn(self.tutela_id, radicacion_service._codigos_pendientes)
+
+    def test_browser_muerto_al_despertar_reintenta_automaticamente(self):
+        """El navegador pudo quedar 'vivo aparente' al parquear. Si al llegar el
+        código el ping falla, NO se escribe sobre una página muerta: la
+        radicación se re-lanza sola (la falla que veía el usuario ahora se
+        recupera automáticamente)."""
+        self.redespachos = []
+        self.bot.vivo_al_ping = False
+        with mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
+             mock.patch.object(
+                 radicacion_service,
+                 "despachar_radicacion",
+                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or {"ok": True, "despachada": True},
+             ):
+            fut = self._despachar()
+            self.assertTrue(self._esperar_parqueo())
+            res = self._señalar("582913")
+            self.assertTrue(res.get("ok"), f"El código debe señalarse: {res}")
+            resultado = fut.result(timeout=5)
+            self.assertTrue(self._esperar_despachos(1), "Debe re-despacharse antes de desparchear")
+
+        self.assertFalse(resultado.get("ok"))
+        self.assertTrue(resultado.get("reintento_automatico"), f"Debe reintentar sola: {resultado}")
+        self.assertEqual(self.bot.entradas, [], "Nunca se escribe sobre un navegador muerto")
+        session = self.fabrica()
+        tutela = session.get(Tutela, self.tutela_id)
+        self.assertEqual(tutela.estado, "pendiente_radicacion")
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == self.tutela_id)
+        ).scalar_one()
+        self.assertEqual(rad.intentos, 1)
+        session.close()
+        self.assertEqual(self.redespachos, [self.tutela_id])
+        self.assertTrue(any("automáticamente" in a.lower() for a in self.avisos), f"Avisos: {self.avisos}")
+
+    def test_reintentos_agotados_no_reintenta_y_pasa_a_fallida(self):
+        """Con los intentos agotados (3), el timeout ya no agenda más
+        re-despachos: falla definitivo para revisión del admin (y el scheduler
+        tampoco lo reprocesa: respeta `intentos >= 3`)."""
+        session = self.fabrica()
+        session.add(Radicacion(tutela_id=self.tutela_id, intentos=3))
+        session.commit()
+        session.close()
+
+        self.redespachos = []
+        with mock.patch.object(radicacion_service, "TIMEOUT_ESPERA_CODIGO", 0.15), \
+             mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
+             mock.patch.object(
+                 radicacion_service,
+                 "despachar_radicacion",
+                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or {"ok": True, "despachada": True},
+             ):
+            fut = self._despachar()
+            self.assertTrue(self._esperar_parqueo())
+            resultado = fut.result(timeout=5)
+
+        time.sleep(0.2)
+        self.assertFalse(resultado.get("ok"))
+        self.assertNotIn("reintento_automatico", resultado, f"No debe reintentar con intentos agotados: {resultado}")
+        self.assertEqual(self.redespachos, [], "No debe re-despacharse con intentos agotados")
+        self.assertEqual(self.bot.entradas, [])
+        session = self.fabrica()
+        tutela = session.get(Tutela, self.tutela_id)
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == self.tutela_id)
+        ).scalar_one()
+        self.assertEqual(rad.intentos, 4, "El intento agotado cuenta pero no reintenta más (3 previos + 1 actual)")
+        self.assertEqual(tutela.estado, "fallida")
+        session.close()
+        with radicacion_service._parqueos_lock:
+            self.assertNotIn(self.tutela_id, radicacion_service._parqueos)
+            self.assertNotIn(self.tutela_id, radicacion_service._codigos_pendientes)
+
+    def test_reintento_no_dobla_si_la_tutela_ya_se_radico(self):
+        """El hilo de reintento revisa la BD antes de despachar: si mientras
+        esperaba otra corrida (o el admin) ya radicó, NO abre un segundo
+        navegador sobre la misma tutela."""
+        session = self.fabrica()
+        _, tutela_hecha = _crear_tutela_a_radicar(session, telefono="573004445566", estado="radicada")
+        session.close()
+
+        self.redespachos = []
+        with mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
+             mock.patch.object(
+                 radicacion_service,
+                 "despachar_radicacion",
+                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or {"ok": True, "despachada": True},
+             ):
+            radicacion_service._programar_reintento_codigo(tutela_hecha.id)
+            time.sleep(0.3)
+
+        self.assertEqual(self.redespachos, [], "Ya radicada: el reintento no debe volver a radicar")
 
     def test_webhook_no_espera_al_navegador_con_ingesta_lenta(self):
         """El señalador responde al instante aunque el navegador tarde en

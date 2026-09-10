@@ -54,7 +54,7 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 18. `radicada` - Radicado number registered from admin panel
 19. `completado` - Done
 20. `hazlo_tu_mismo` - User chose to radicate it themselves; can switch back to `confirmar_pago` (writes "Quiero que la radiquen") without restarting the flow
-21. `pendiente_radicacion` - Retry queued (Reintentar or nightly job)
+21. `pendiente_radicacion` - Retry queued (Reintentar, nightly job o **reintento automático del código**: si el código no llega a tiempo o el navegador muere al recibirlo, `_manejar_fallo_codigo` re-lanza sola tras `RETRY_ESPERA_SEG` y pide un código nuevo; tope `MAX_REINTENTOS_CODIGO=3` vía `Radicacion.intentos`, al agotarlos → `fallida` para revisión del admin; el hilo de reintento re-chequea la BD antes de despachar para no doblar una radicación ya hecha)
 22. `fallida` - Radicacion attempt failed
 
 ## Payment Flow (Mercado Pago Checkout Pro + manual radicacion)

@@ -51,6 +51,16 @@ UMBRAL_ESPERANDO_CODIGO = timedelta(minutes=12)
 # de abandonarse solo: cierra el navegador, marca 'fallida' y avisa.
 TIMEOUT_ESPERA_CODIGO = 600
 
+# Reintento automático del ciclo del código de email: si el código no llega a
+# tiempo (timeout del parqueo) o el navegador muere al recibirlo, la radicación
+# se re-lanza sola tras `RETRY_ESPERA_SEG` y el portal envía un código nuevo.
+# Tope de intentos para no spamear al usuario; al agotarlo pasa a revisión del
+# admin (el scheduler también respeta `intentos >= 3` en jobs.py).
+MAX_REINTENTOS_CODIGO = 3
+
+# Segundos que espera el reintento automático antes de re-despachar la radicación.
+RETRY_ESPERA_SEG = 60
+
 # Estados en los que el navegador de Playwright está físicamente trabajando
 # sobre la radicación. No debe arrancar una segunda instancia (ni programarla)
 # mientras esté en alguno de estos: el portal es sesión única por navegador.
@@ -115,6 +125,66 @@ def _registrar_resultado_despacho(tutela_id: int, envio):
         pass
     except Exception as e:  # noqa: BLE001 - registro, nunca rompe flujo
         logger.error(f"Error en radicación de tutela {tutela_id}: {e}")
+
+
+def _programar_reintento_codigo(tutela_id: int):
+    """Agenda un re-despacho de la radicación tras `RETRY_ESPERA_SEG`.
+
+    Corre en un hilo daemon: nunca bloquea al coroutine que falló. Volver a
+    revisar la BD en el hilo evita radicar dos veces si el usuario (o el
+    scheduler del horario hábil) ya la radicó mientras se esperaba.
+    """
+    def _lanzar():
+        time.sleep(RETRY_ESPERA_SEG)
+        try:
+            session = SessionLocal()
+            try:
+                tutela = session.execute(
+                    select(Tutela).where(Tutela.id == tutela_id)
+                ).scalar_one_or_none()
+                if tutela is None or tutela.estado not in ("pendiente_radicacion", "fallida", "pendiente", "pago_confirmado"):
+                    return  # ya se radicó o cambió de flujo: no doblar
+                rad = session.execute(
+                    select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+                ).scalar_one_or_none()
+                if rad and (rad.estado in ESTADOS_RADICACION_EN_CURSO or rad.estado == "esperando_codigo_email"):
+                    return  # ya hay otro ciclo encima: no abrir un segundo navegador
+            finally:
+                session.close()
+            despachar_radicacion(tutela_id)
+        except Exception as e:  # noqa: BLE001 - el reintento nunca debe romper otros flujos
+            logger.error(f"Reintento automático de código para tutela {tutela_id} falló: {e}")
+
+    threading.Thread(
+        target=_lanzar,
+        daemon=True,
+        name=f"retry-codigo-{tutela_id}",
+    ).start()
+
+
+async def _manejar_fallo_codigo(bot, tutela, rad, session, *, motivo, error_reintento, aviso_reintento, error_final, aviso_final) -> dict:
+    """Cierra el navegador tras un fallo del parqueo y decide reintento automático.
+
+    Incrementa `intentos`. Si quedan reintentos automáticos
+    (``< MAX_REINTENTOS_CODIGO``) deja la tutela en 'pendiente_radicacion' y
+    agenda un re-despacho que vuelve a pedir un código nuevo; si no, la deja en
+    'fallida' para revisión del admin.
+    """
+    await _cerrar_bot(bot)
+    rad.estado = "fallida"
+    rad.ultimo_error = motivo
+    rad.intentos = (rad.intentos or 0) + 1
+    reintenta = (rad.intentos or 0) < MAX_REINTENTOS_CODIGO
+    tutela.estado = "pendiente_radicacion" if reintenta else "fallida"
+    session.commit()
+    if reintenta:
+        logger.warning(f"Radicación tutela {tutela.id} fallida (reintento automático {rad.intentos}/{MAX_REINTENTOS_CODIGO}): {motivo}")
+        _avisar_usuario(tutela, aviso_reintento)
+        _programar_reintento_codigo(tutela.id)
+        return {"ok": False, "reintento_automatico": True, "reintento": rad.intentos, "error": error_reintento}
+    logger.warning(f"Radicación tutela {tutela.id} fallida (intentos agotados): {motivo}")
+    _avisar_usuario(tutela, aviso_final)
+    return {"ok": False, "error": error_final}
 
 
 def _registrar_paso(session, rad_id: int, paso: str, estado: str, detalle: str = ""):
@@ -265,15 +335,24 @@ async def iniciar_radicacion(
                     if _parqueos.get(tutela_id, (None, None, None))[2] is tarea:
                         _parqueos.pop(tutela_id, None)
                     _codigos_pendientes.pop(tutela_id, None)
-                await _fallar_y_avisar(
+                return await _manejar_fallo_codigo(
                     bot,
                     tutela,
                     rad,
                     session,
-                    "Código de email no recibido dentro de la validez (10 min). Reintenta la radicación.",
-                    "⚠️ El código de email expiró antes de que llegara. Envíanoslo de nuevo o reinicia la radicación para intentarlo otra vez.",
+                    motivo="Código de email no recibido dentro de la validez (10 min). Reintenta la radicación.",
+                    error_reintento="El código no llegó a tiempo. Reintentamos la radicación automáticamente.",
+                    aviso_reintento=(
+                        "⚠️ No recibimos tu código a tiempo. Estamos reintentando la radicación "
+                        "automáticamente: en un momento el portal enviará un código nuevo. "
+                        "Escríbelo aquí apenas te llegue."
+                    ),
+                    error_final="El código de email no llegó a tiempo y se agotaron los reintentos automáticos. Reintenta desde el panel admin.",
+                    aviso_final=(
+                        "⚠️ El código de email expiró y se agotaron los reintentos automáticos. "
+                        "Nuestro equipo revisará tu caso; el envío se puede reintentar desde el panel admin."
+                    ),
                 )
-                return {"ok": False, "error": "El código de email no llegó a tiempo. Reintenta la radicación."}
             except asyncio.CancelledError:
                 with _parqueos_lock:
                     if _parqueos.get(tutela_id, (None, None, None))[2] is tarea:
@@ -310,15 +389,23 @@ async def iniciar_radicacion(
             except Exception:  # noqa: BLE001 - timeout o fallo del ping = no está vivo
                 vivo = False
             if not vivo:
-                await _fallar_y_avisar(
+                return await _manejar_fallo_codigo(
                     bot,
                     tutela,
                     rad,
                     session,
-                    "Navegador sin responder al recibir el código. Reintenta la radicación.",
-                    "⚠️ El navegador del portal no respondió al recibir tu código. Reinicia la radicación para intentarlo de nuevo.",
+                    motivo="Navegador sin responder al recibir el código. Reintenta la radicación.",
+                    error_reintento="El navegador del portal no respondió. Reintentamos la radicación automáticamente.",
+                    aviso_reintento=(
+                        "⚠️ El navegador del portal se reinició. Estamos radicándolo de nuevo "
+                        "automáticamente: pronto llegará un código nuevo. Escríbelo aquí apenas te llegue."
+                    ),
+                    error_final="Navegador sin responder y reintentos agotados. Reintenta desde el panel admin.",
+                    aviso_final=(
+                        "⚠️ El navegador del portal no respondió y se agotaron los reintentos automáticos. "
+                        "Reintenta la radicación desde el panel admin cuando puedas."
+                    ),
                 )
-                return {"ok": False, "error": "Navegador sin responder. Reintenta desde el panel admin."}
 
             # Ingresar código de verificación con timeout acotado.
             try:
