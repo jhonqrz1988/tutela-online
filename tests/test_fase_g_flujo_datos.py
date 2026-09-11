@@ -418,5 +418,29 @@ class TestMapeoClinicosAlPrompt(unittest.TestCase):
         self.assertEqual(mapeado["riesgo_para_salud"], "empeoramiento")
 
 
+class TestAvisoPrivacidadURL(_FlujoMixin):
+    def test_aviso_usa_app_url_configurado(self):
+        """El link de privacidad sale de settings.app_url, no de una URL fija."""
+        with mock.patch.object(webhook_whatsapp.settings, "app_url", "https://tutelapp.co"):
+            texto = webhook_whatsapp.aviso_privacidad()
+            self.assertIn("https://tutelapp.co/privacidad", texto)
+
+    def test_aviso_no_contiene_url_hardcodeada_de_onrender(self):
+        """Tras la migración de dominio no debe quedar la URL vieja en el aviso."""
+        with mock.patch.object(webhook_whatsapp.settings, "app_url", "https://tutelapp.co"):
+            texto = webhook_whatsapp.aviso_privacidad()
+            self.assertNotIn("tutela-online.onrender.com", texto)
+
+    def test_flujo_nuevo_usuario_envia_aviso_con_dominio_configurado(self):
+        """El aviso enviado al usuario nuevo usa el app_url configurado."""
+        session = _nueva_sesion()
+        with mock.patch.object(webhook_whatsapp.settings, "app_url", "https://tutelapp.co"):
+            resp, mock_b, _ = asyncio.run(self._procesar(session, "3001112233", "hola"))
+        avisos = [t for t in resp.get("respuestas", []) if "Aviso de Tratamiento" in t]
+        self.assertTrue(avisos, "el usuario nuevo debe recibir el aviso de privacidad")
+        self.assertTrue(any("tutelapp.co/privacidad" in t for t in avisos))
+        self.assertFalse(any("tutela-online.onrender.com" in t for t in avisos))
+
+
 if __name__ == "__main__":
     unittest.main()

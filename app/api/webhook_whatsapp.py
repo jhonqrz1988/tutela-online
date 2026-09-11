@@ -251,7 +251,7 @@ async def procesar_mensaje(
         session.add(user)
         session.commit()
         _r(respuestas, telefono, BIENVENIDA)
-        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
         return {"ok": True, "respuestas": respuestas}
 
     # ─── SALIR / REINICIAR — borra datos y empieza de cero como nuevo usuario ──
@@ -270,7 +270,7 @@ async def procesar_mensaje(
         session.commit()
         _r(respuestas, telefono, "🔄 *Flujo reiniciado.*\n\nSe borraron los datos anteriores y empiezas de cero.")
         _r(respuestas, telefono, BIENVENIDA)
-        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
         return {"ok": True, "respuestas": respuestas}
 
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
@@ -315,7 +315,7 @@ async def procesar_mensaje(
             session.commit()
             _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, AVISO_PRIVACIDAD, [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
@@ -1164,19 +1164,20 @@ BIENVENIDA = (
     "Comencemos con la autorización de datos."
 )
 
-AVISO_PRIVACIDAD = (
-    "📄 *Aviso de Tratamiento de Datos*\n\n"
-    "En TutelApp protegemos tu información. Para ayudarte con tu tutela, "
-    "trataremos tus datos personales y de salud bajo la Ley 1581 de 2012.\n\n"
-    "🔹 *Finalidad:* Crear y radicar técnicamente tu acción de tutela.\n"
-    "🔹 *Datos Sensibles:* Al continuar, autorizas el procesamiento de tu caso médico "
-    "únicamente para este trámite.\n"
-    "🔹 *Tus Derechos:* Puedes actualizar o eliminar tus datos en cualquier momento "
-    "escribiendo *Eliminar mis datos*.\n\n"
-    "Consulta nuestra política completa aquí: "
-    "https://tutela-online.onrender.com/privacidad\n\n"
-    "¿Autorizas el tratamiento de tus datos para iniciar?"
-)
+def aviso_privacidad() -> str:
+    """Aviso de tratamiento de datos con el link según el dominio configurado (app_url)."""
+    return (
+        "📄 *Aviso de Tratamiento de Datos*\n\n"
+        "En TutelApp protegemos tu información. Para ayudarte con tu tutela, "
+        "trataremos tus datos personales y de salud bajo la Ley 1581 de 2012.\n\n"
+        "🔹 *Finalidad:* Crear y radicar técnicamente tu acción de tutela.\n"
+        "🔹 *Datos Sensibles:* Al continuar, autorizas el procesamiento de tu caso médico "
+        "únicamente para este trámite.\n"
+        "🔹 *Tus Derechos:* Puedes actualizar o eliminar tus datos en cualquier momento "
+        "escribiendo *Eliminar mis datos*.\n\n"
+        f"Consulta nuestra política completa aquí: {settings.app_url}/privacidad\n\n"
+        "¿Autorizas el tratamiento de tus datos para iniciar?"
+    )
 
 NARRACION = (
     "✍️ *Cuéntame tu caso de salud en detalle*\n\n"

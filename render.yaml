@@ -1,11 +1,11 @@
 # Configuración de Render (https://render.com) para TutelApp.
-# Deploy: https://tutela-online.onrender.com
+# Deploy: https://tutelapp.co
 #
 # NOTA sobre el plan GRATIS:
 # - El servicio se duerme tras ~15 min sin tráfico entrante.
 # - Para mantenerlo despierto sin pagar, apunta un monitor externo
-#   gratuito (p. ej. UptimeRobot con intervalo <= 10 min) a
-#   https://tutela-online.onrender.com/health
+#   gratuitos (p. ej. UptimeRobot con intervalo <= 10 min) a
+#   https://tutelapp.co/health
 #   y asegúrate de tener "Auto-Wake" (despertar con petición entrante) activo.
 # - El plan gratis NO dispone de Persistent Disk: los archivos en storage/
 #   se pierden en cada redeploy. Antes de radicar tutelas reales, subir a
@@ -50,7 +50,7 @@ services:
       - key: ADMIN_PASSWORD
         sync: false
       - key: APP_URL
-        value: https://tutela-online.onrender.com
+        value: https://tutelapp.co
       - key: CORS_ORIGINS
         value: ""
       - key: WEBHOOK_AUTH_TOKEN
