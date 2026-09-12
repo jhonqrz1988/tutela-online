@@ -39,6 +39,14 @@ class TestSEO(unittest.TestCase):
         self.assertIn('"@type": "LegalService"', r.text)
         self.assertIn('"@type": "FAQPage"', r.text)
 
+    def test_google_site_verification(self):
+        r = self.client.get("/google06550146ee012678.html")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(
+            r.text.strip(),
+            "google-site-verification: google06550146ee012678.html",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -113,6 +113,14 @@ async def pagina_privacidad():
     return HTMLResponse(_PRIVACIDAD_HTML)
 
 
+_GOOGLE_VERIFY_CONTENT = "google-site-verification: google06550146ee012678.html"
+
+
+@app.get("/google06550146ee012678.html", response_class=Response)
+async def google_site_verification():
+    return Response(content=_GOOGLE_VERIFY_CONTENT, media_type="text/html")
+
+
 @app.get("/robots.txt", response_class=Response)
 async def robots_txt():
     base = settings.app_url.rstrip("/")
