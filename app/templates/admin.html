@@ -73,7 +73,7 @@
   <h1>&#x2696;&#xFE0F; TutelApp</h1>
   <div>
     <a href="#" class="toggle-sched" id="scheduler-toggle" onclick="toggleScheduler(event)" title="Activa o desactiva la radicaci&oacute;n autom&aacute;tica (bot)">Cargando...</a>
-    &nbsp; <span>{{ total_tutelas }} tutelas</span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a>
+    &nbsp; <span>N&deg; de tutela actual: <strong>{{ total_tutelas }}</strong></span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a>
   </div>
 </div>
 
@@ -164,7 +164,7 @@
       <option value="completado">Completado</option>
       <option value="fallida">Fallida</option>
     </select>
-    <input type="text" id="filtro-buscar" placeholder="Buscar tel&#xE9;fono o ID..." oninput="filtrar()">
+    <input type="text" id="filtro-buscar" placeholder="Buscar tel&#xE9;fono, c&eacute;dula o ID..." oninput="filtrar()">
   </div>
 
   {% if tutelas %}
@@ -172,6 +172,7 @@
     <thead>
       <tr>
         <th>ID</th>
+        <th>C&eacute;dula</th>
         <th>Tipo</th>
         <th>Estado</th>
         <th>N&deg; Radicado</th>
@@ -185,6 +186,7 @@
     {% for t in tutelas %}
       <tr class="tr-hover" onclick="abrirDetalle({{ t.id }})">
         <td>{{ t.id }}</td>
+        <td>{{ t.cedula or '—' }}</td>
         <td>{{ t.tipo }}</td>
         <td>
           {% set cls = {'borrador': 'badge-default', 'recogiendo_datos': 'badge-info', 'narracion': 'badge-info', 'confirmar_audio': 'badge-info',
@@ -307,6 +309,7 @@ function renderDetalle() {
       <h3>Informaci&oacute;n General</h3>
       <div class="detail-grid">
         <div class="detail-item"><label>ID</label><span>${t.id}</span></div>
+        <div class="detail-item"><label>C&eacute;dula</label><span>${t.cedula || '&mdash;'}</span></div>
         <div class="detail-item"><label>Tipo</label><span>${t.tipo}</span></div>
         <div class="detail-item"><label>Estado</label><span class="badge badge-${t.estado === 'radicada' ? 'success' : t.estado === 'fallida' ? 'error' : 'warning'}">${t.estado}</span></div>
         <div class="detail-item"><label>Creada</label><span>${t.created_at || '—'}</span></div>

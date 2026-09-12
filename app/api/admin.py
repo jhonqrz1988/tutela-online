@@ -314,8 +314,11 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
 
         user_nombre = t.user.nombre if t.user else ""
         user_telefono = t.user.telefono.replace("whatsapp:", "") if t.user and t.user.telefono else ""
+        datos_row = json.loads(t.datos_json) if t.datos_json else {}
+        cedula_row = (datos_row.get("accionante_cedula") or "").strip()
         rows.append({
             "id": t.id,
+            "cedula": cedula_row,
             "tipo": t.tipo,
             "estado": t.estado,
             "num_radicado": num_rad,
@@ -427,6 +430,7 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
         "id": t.id,
         "tipo": t.tipo,
         "estado": t.estado,
+        "cedula": (datos.get("accionante_cedula") or "").strip(),
         "referencia": f"TUT-{t.id}",
         "link_pago": f"{settings.app_url}/pago/{t.id}",
         "datos": datos,
