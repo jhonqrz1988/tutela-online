@@ -18,7 +18,7 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 - Start dev server: `python -m uvicorn app.main:app --reload`
 
 ## Database
-- SQLite DB: `storage/tutelas.db` local; en Railway con Volume → `sqlite:////data/tutelas.db` (montar Volume en `/data` en dashboard Railway, ver `.env.example`)
+- SQLite DB: `storage/tutelas.db` local; en Render con Volume → `sqlite:////data/tutelas.db` (montar Volume en `/data` en dashboard Render, ver `.env.example`)
 - DB init: Called automatically via `init_db()` in `app/database.py` — crea el directorio padre automáticamente (`_ensure_sqlite_dir`)
 - Dockerfile declara `VOLUME ["/data"]` para persistencia
 - Session: `SessionLocal()` (sync SQLAlchemy)

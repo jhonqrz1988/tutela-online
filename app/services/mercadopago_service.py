@@ -9,6 +9,16 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+def formatear_monto() -> str:
+    """Monto legible sin moneda con separador de miles (ej.: '$29.000')."""
+    return f"${settings.mercadopago_amount:,.0f}".replace(",", ".")
+
+
+def texto_precio() -> str:
+    """Precio legible para mensajes y página de pago (ej.: '$29.000 COP')."""
+    return f"{formatear_monto()} COP"
+
+
 def crear_preferencia_checkout(tutela_id: int, reference: str) -> dict:
     """Crea una preferencia de pago en Mercado Pago (Checkout Pro) y devuelve la URL de checkout.
 

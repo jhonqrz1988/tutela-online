@@ -49,7 +49,7 @@ Los mensajes marcados con ⚠️ son **iniciados por el bot** y pueden necesitar
               🔹 Tus Derechos: Puedes actualizar o eliminar tus datos en cualquier momento
                  escribiendo "Eliminar mis datos".
               Consulta nuestra política completa aquí:
-              https://tutela-online.onrender.com/privacidad
+https://tutelapp.co/privacidad
               ¿Autorizas el tratamiento de tus datos para iniciar?
               [✅ Sí, acepto] [❌ No acepto]
 
@@ -241,7 +241,7 @@ Los mensajes marcados con ⚠️ son **iniciados por el bot** y pueden necesitar
 
 [BOT]      → 💰 Procesamiento automático
               Para completar el pago de $29.000 COP:
-              🔗 https://tutela-online.onrender.com/pago/123
+              🔗 https://tutelapp.co/pago/123
               ⚠️ Importante: Procesamos tu tutela y te entregamos el
               número de seguimiento en máximo 4 horas hábiles (lun-vie 8am-5pm).
 ```
@@ -465,7 +465,7 @@ Estos mensajes son **iniciados por el bot** y pueden enviarse **fuera de la vent
 | Derecho a eliminación | Comando "Eliminar mis datos" recordado en el aviso |
 | Transparencia | Bot se identifica como "herramienta tecnológica", no como abogado |
 | Disclaimer | Aclara que no es representante de la Rama Judicial |
-| Link de privacidad | https://tutela-online.onrender.com/privacidad visible en el aviso |
+| Link de privacidad | https://tutelapp.co/privacidad visible en el aviso |
 | No spam | Solo mensajes transaccionales, no promocionales |
 | No contenido prohibido | Sin violencia, odio, contenido sexual ni información falsa |
 | Opt-out | Comandos "Detener", "Pausar", "No me molesten" |

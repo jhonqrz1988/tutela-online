@@ -21,6 +21,7 @@ from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.whatsapp import MensajeWhatsApp
 from app.services.documento_service import generar_pdf
+from app.services.mercadopago_service import texto_precio
 from app.services.ia_service import (
     aplicar_extraccion,
     analizar_imagen,
@@ -719,14 +720,14 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     if tutela.estado == "esperando_decision_radicacion":
         if body in ("1", "pagar", "radicar", "si radicar"):
             _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, "¿Confirmas que deseas radicar tu tutela por *$29.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
+            _b(respuestas, telefono, f"¿Confirmas que deseas radicar tu tutela por *{texto_precio()}*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
-            _r(respuestas, telefono, "Entendido. Recibiste el PDF de tu tutela por este chat.\n\n"
-                                     "Si al intentar radicarla lo ves complejo, "
-                                     "pulsa el botón y lo hacemos por ti por *$29.000 COP* "
+            _r(respuestas, telefono, f"Entendido. Recibiste el PDF de tu tutela por este chat.\n\n"
+                                     f"Si al intentar radicarla lo ves complejo, "
+                                     f"pulsa el botón y lo hacemos por ti por *{texto_precio()}* "
                                      "sin tener que repetir tus datos.")
             _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Procesen $29k"), ("2", "✍️ Lo hago yo")])
             tutela.estado = "hazlo_tu_mismo"
@@ -743,7 +744,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
                     "si radicar", "mejor pagar", "lo hacen ustedes", "quiero pagar", "no puedo",
                     "me parece complejo", "es complejo", "me ayudan", "radiquenla"):
             _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, "¿Confirmas que deseas procesar tu tutela por *$29.000 COP*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
+            _b(respuestas, telefono, f"¿Confirmas que deseas procesar tu tutela por *{texto_precio()}*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
@@ -755,7 +756,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             return {"ok": True, "respuestas": respuestas}
         _b(respuestas, telefono,
            "📄 Recibiste el PDF de tu tutela. ¿Qué prefieres hacer?\n\n"
-           "1️⃣ *Que la procesen por ti* — $29.000 COP\n"
+           f"1️⃣ *Que la procesen por ti* — {texto_precio()}\n"
            "2️⃣ *Seguir tú mismo*", [("1", "💳 Procesen $29k"), ("2", "✍️ Sigo yo")])
         return {"ok": True, "respuestas": respuestas}
 
@@ -767,7 +768,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             link_pago = f"{settings.app_url}/pago/{tutela.id}"
             _r(respuestas, telefono,
                f"💰 *Procesamiento automático*\n\n"
-               f"Para completar el pago de *$29.000 COP*:\n\n"
+               f"Para completar el pago de *{texto_precio()}*:\n\n"
                f"🔗 {link_pago}\n\n"
                f"⚠️ *Importante:* Procesamos tu tutela y te entregamos el "
                f"*número de seguimiento* en máximo *4 horas hábiles* (lun-vie 8am-5pm).")
@@ -777,7 +778,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
             _r(respuestas, telefono, "Entendido. Recibiste el PDF con tu tutela por este chat.\n\n"
                                      "Si al intentarlo lo ves complejo, pulsa el botón y lo hacemos "
-                                     "por ti por *$29.000 COP* sin repetir datos.")
+                                     f"por ti por *{texto_precio()}* sin repetir datos.")
             _b(respuestas, telefono, "¿Qué prefieres hacer?", [("1", "💳 Procesen $29k"), ("2", "✍️ Lo hago yo")])
             tutela.estado = "hazlo_tu_mismo"
             session.commit()
@@ -792,7 +793,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         if body in ("pagado", "pago confirmado", "si", "ok", "1"):
             _r(respuestas, telefono,
                "✅ *¡Pago recibido!*\n\n"
-               "Hemos confirmado tu pago por $29.000 COP. "
+               f"Hemos confirmado tu pago por {texto_precio()}. "
                "Nuestro equipo técnico ya está trabajando en la generación y radicación "
                "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.\n\n"
                "Gracias por confiar en nosotros.")
@@ -1209,7 +1210,7 @@ JURAMENTO_TEXTO = (
 POST_PDF_OPCIONES = (
     "📄 *PDF generado y enviado*\n\n"
     "Ahora tienes 2 opciones:\n\n"
-    "1️⃣ *Procesamiento automático* — *$29.000 COP*\n"
+    f"1️⃣ *Procesamiento automático* — *{texto_precio()}*\n"
     "   Procesamos tu tutela ante la Rama Judicial.\n"
     "   Resultado en máximo *4 horas hábiles*.\n"
     "   Te entregamos el número de seguimiento.\n\n"
@@ -1218,7 +1219,7 @@ POST_PDF_OPCIONES = (
 
 CONFIRMAR_PAGO_TEXTO = (
     "💳 *Procesamiento automático*\n\n"
-    "Por *$29.000 COP* procesamos tu tutela ante la Rama Judicial.\n"
+    f"Por *{texto_precio()}* procesamos tu tutela ante la Rama Judicial.\n"
     "Incluye:\n"
     "✅ Procesamiento en el portal oficial\n"
     "✅ Número de seguimiento y constancia\n"

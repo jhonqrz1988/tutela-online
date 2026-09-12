@@ -10,7 +10,7 @@ def _ensure_sqlite_dir(db_url: str) -> None:
     """Crea el directorio padre del archivo SQLite si no existe.
 
     Soporta URLs tipo sqlite:///./storage/tutelas.db y
-    sqlite:////data/tutelas.db (volumen Railway en /data).
+    sqlite:////data/tutelas.db (volumen montado en /data, ej. Render o VPS).
     Sin esto, SQLite falla si el directorio no existe.
     """
     if not db_url.startswith("sqlite"):

@@ -13,7 +13,7 @@ El usuario envia su caso por WhatsApp, la IA extrae los datos, genera el documen
 - IA: Groq (modelo openai/gpt-oss-120b) via OpenAI SDK
 - RPA: Playwright (simulado actualmente en produccion; ver SIMULATE_BOT)
 - WhatsApp: Meta Cloud API (numero +57 310 6386975)
-- Hosting: Render (https://tutela-online.onrender.com)
+- Hosting: Render (https://tutelapp.co)
 - Pagos: Mercado Pago (Checkout Pro, $29.000 COP)
 - Captcha: 2Captcha (para radicacion real con bot)
 - Repo: github.com/jhonqrz1988/tutela-online
@@ -23,9 +23,9 @@ El usuario envia su caso por WhatsApp, la IA extrae los datos, genera el documen
 ## Estado Actual (Septiembre 2026)
 
 ### En produccion (Render)
-- URL: https://tutela-online.onrender.com
+- URL: https://tutelapp.co
 - Deploy: Dockerfile (Python 3.12-slim), `run_server.py` arranca uvicorn en :8000
-- Webhook WhatsApp: `https://tutela-online.onrender.com/webhook/meta` (Meta Cloud API)
+- Webhook WhatsApp: `https://tutelapp.co/webhook/meta` (Meta Cloud API)
 - WhatsApp: Meta Cloud API (WHATSAPP_PROVIDER=meta)
 - IA: Groq con AI_CHAT_MODEL=openai/gpt-oss-120b
 - Pagos: Mercado Pago (webhook /webhook/mercadopago)
@@ -133,7 +133,7 @@ AI_PROVIDER=groq
 AI_API_KEY
 AI_CHAT_MODEL=openai/gpt-oss-120b
 
-APP_URL=https://tutela-online.onrender.com
+APP_URL=https://tutelapp.co
 SECRET_KEY, ADMIN_PASSWORD
 DATABASE_URL  (sqlite local / postgres Neon en prod)
 STORAGE_DIR

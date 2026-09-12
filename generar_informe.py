@@ -37,7 +37,6 @@ class InformePDF(FPDF):
 
     def bullet(self, text):
         self.set_font("Times", "", 10)
-        x = self.get_x()
         self.cell(5, 5, "-")
         self.multi_cell(0, 5, text)
         self.ln(1)
@@ -74,7 +73,7 @@ def generar_informe():
     pdf.cell(0, 6, "Julio 2026", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, "Version 0.1.0", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.cell(0, 6, "Repositorio: github.com/jhonqrz1988/tutela-online", align="C", new_x="LMARGIN", new_y="NEXT")
-    pdf.cell(0, 6, "URL Produccion: https://tutela-online-production.up.railway.app", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "URL Produccion: https://tutelapp.co", align="C", new_x="LMARGIN", new_y="NEXT")
 
     # --- INDICE ---
     pdf.add_page()
@@ -112,9 +111,9 @@ def generar_informe():
         "en el portal oficial de la Rama Judicial."
     )
     pdf.parrafo(
-        "El proyecto opera actualmente en produccion en Railway bajo un modelo "
+        "El proyecto opera actualmente en produccion en Render bajo un modelo "
         "freemium: el usuario recibe el PDF de la tutela de forma gratuita, y "
-        "puede pagar $20.000 COP por la radicacion automatica completa. "
+        "puede pagar por la radicacion automatica completa (Mercado Pago). "
         "El servicio de WhatsApp esta activo via Twilio Sandbox a la espera de "
         "migrar a un numero de produccion."
     )
@@ -194,11 +193,11 @@ def generar_informe():
     pdf.par("Fuente", "DejaVuSans (Unicode, soporte espanol)")
 
     pdf.seccion("Infraestructura")
-    pdf.par("Hosting", "Railway (Docker)")
+    pdf.par("Hosting", "Render (Docker)")
     pdf.par("Contenedor", "python:3.12-slim")
-    pdf.par("Orquestacion", "Dockerfile + railway.json")
-    pdf.par("URL", "https://tutela-online-production.up.railway.app")
-    pdf.par("Health Check", "GET /admin (reinicio automatico)")
+    pdf.par("Orquestacion", "Dockerfile + render.yaml")
+    pdf.par("URL", "https://tutelapp.co")
+    pdf.par("Health Check", "GET /health (reinicio automatico)")
 
     pdf.seccion("Otras Dependencias")
     pdf.bullet("APScheduler 3.11.3 - Tareas programadas (radicacion automatica)")
@@ -384,14 +383,14 @@ def generar_informe():
     # --- 11. INFRAESTRUCTURA ---
     pdf.add_page()
     pdf.titulo("11. INFRAESTRUCTURA Y DESPLIEGUE")
-    pdf.seccion("Railway")
+    pdf.seccion("Render")
     pdf.parrafo(
         "Hosting cloud con despliegue via Docker. Build automatico desde GitHub. "
-        "Balanceo, SSL automatico, health checks, y reinicio automatico en fallos."
+        "SSL automatico, health checks, volumen persistente en /data."
     )
-    pdf.par("URL", "https://tutela-online-production.up.railway.app")
-    pdf.par("Region", "EE.UU. (us-west)")
-    pdf.par("Plan", "Hobby ($5/mes aprox)")
+    pdf.par("URL", "https://tutelapp.co")
+    pdf.par("Region", "EE.UU.")
+    pdf.par("Plan", "Starter (con disco)")
 
     pdf.seccion("Docker")
     pdf.parrafo(
@@ -399,13 +398,13 @@ def generar_informe():
         "para Playwright Chromium. Instala chromium via playwright install."
     )
 
-    pdf.seccion("Variables de Entorno (Railway)")
-    pdf.bullet("WHATSAPP_PROVIDER=twilio")
-    pdf.bullet("TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_NUMBER")
-    pdf.bullet("AI_PROVIDER=groq, AI_API_KEY, AI_CHAT_MODEL=llama-3.3-70b-versatile")
-    pdf.bullet("APP_URL=https://tutela-online-production.up.railway.app")
-    pdf.bullet("DATABASE_URL=sqlite:///./storage/tutelas.db")
-    pdf.bullet("SIMULATE_BOT=true")
+    pdf.seccion("Variables de Entorno (Render)")
+    pdf.bullet("WHATSAPP_PROVIDER=meta")
+    pdf.bullet("META_ACCESS_TOKEN, META_PHONE_NUMBER_ID, META_VERIFY_TOKEN, META_APP_SECRET")
+    pdf.bullet("AI_PROVIDER=openai/groq, AI_API_KEY, AI_CHAT_MODEL")
+    pdf.bullet("APP_URL=https://tutelapp.co")
+    pdf.bullet("DATABASE_URL=sqlite:////data/tutelas.db (volumen)")
+    pdf.bullet("SIMULATE_BOT=false")
 
     # --- 12. ESTADO ACTUAL ---
     pdf.add_page()
@@ -425,7 +424,7 @@ def generar_informe():
     pdf.bullet("Confirmacion antes de radicar: 'Deseas radicar? 1. Si / 2. No'")
     pdf.bullet("Dashboard admin con historial, filtros, detalle, descarga PDF")
     pdf.bullet("Chat web de prueba en /admin/chat")
-    pdf.bullet("Despliegue en Railway con Docker")
+    pdf.bullet("Despliegue en Render con Docker")
 
     pdf.seccion("En pruebas:")
     pdf.bullet("Twilio Sandbox activo, flujo funcional")
@@ -528,7 +527,7 @@ def generar_informe():
     pdf.set_font("Times", "I", 10)
     pdf.parrafo(
         "Nota: Los costos operativos incluyen API de Groq (~$0.10 por tutela), "
-        "2Captcha (~$0.001 por resolucion), hosting Railway (~$5/mes), y "
+        "2Captcha (~$0.001 por resolucion), hosting Render (~$19/mes), y "
         "comision de Wompi (~2.5% + $300 COP por transaccion). Rentabilidad estimada: "
         ">90% margen en escenario base."
     )

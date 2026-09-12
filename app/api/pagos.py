@@ -14,6 +14,8 @@ from app.models.tutela import Tutela
 from app.services.mercadopago_service import (
     consultar_pago,
     crear_preferencia_checkout,
+    formatear_monto,
+    texto_precio,
     verificar_firma,
 )
 from app.services.radicacion_service import programar_radicacion_inmediata
@@ -58,7 +60,7 @@ def _pagina_pago(
     alternativos (Nequi/transferencia no están activos).
     ``init_point`` es el checkout de MP; si es None se muestra una página informativa.
     """
-    precio = f"${settings.mercadopago_amount:,.0f}".replace(",", ".")
+    precio = formatear_monto()
     email_txt = f" <b>{escape(email)}</b>" if email else ""
     boton = f'<a class="btn" href="{escape(init_point)}">&#128179; Continuar al pago</a>' if init_point else ""
     return f"""<!DOCTYPE html>
@@ -221,7 +223,7 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
         if tutela.user and tutela.user.telefono:
             enviar_texto(
                 tutela.user.telefono,
-                "✅ *¡Pago recibido!* Hemos confirmado tu pago de $29.000 COP.\n\n"
+                f"✅ *¡Pago recibido!* Hemos confirmado tu pago de {texto_precio()}.\n\n"
                 "Nuestro equipo técnico ya está trabajando en la generación y radicación "
                 "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.",
             )

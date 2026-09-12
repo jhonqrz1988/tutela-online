@@ -72,7 +72,7 @@ USUARIO ENVÍA "HOLA"
 | # | Tipo | Mensaje | Trigger |
 |---|------|---------|---------|
 | 1 | Texto | `👋 *Hola! Soy el asistente de TutelApp.*\n\nTe ayudo a crear y radicar acciones de tutela en Colombia de forma rápida y sencilla.\n\nComencemos con la autorización de datos.` | Primera vez que el usuario escribe |
-| 2 | Botones | `📄 *Aviso de Tratamiento de Datos Personales*\n\nDe acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013, te informamos que:\n\n🔹 *Responsable:* TutelApp\n🔹 *Finalidad:* Gestionar, crear y radicar tu acción de tutela ante la Rama Judicial\n🔹 *Datos recolectados:* Nombre, documento, teléfono, correo, ciudad, historia clínica y demás información relevante para tu tutela\n🔹 *Derechos del titular:* Acceder, actualizar, rectificar y solicitar la eliminación de tus datos en cualquier momento escribiendo *Eliminar mis datos*\n🔹 *Política completa:* https://tutela-online-production.up.railway.app/privacidad\n\nAl aceptar, autorizas el tratamiento de tus datos personales para los fines descritos.` `[("acepto","✅ Acepto"), ("no","❌ No")]` | Después del #1 |
+| 2 | Botones | `📄 *Aviso de Tratamiento de Datos Personales*\n\nDe acuerdo con la Ley 1581 de 2012 y el Decreto 1377 de 2013, te informamos que:\n\n🔹 *Responsable:* TutelApp\n🔹 *Finalidad:* Gestionar, crear y radicar tu acción de tutela ante la Rama Judicial\n🔹 *Datos recolectados:* Nombre, documento, teléfono, correo, ciudad, historia clínica y demás información relevante para tu tutela\n🔹 *Derechos del titular:* Acceder, actualizar, rectificar y solicitar la eliminación de tus datos en cualquier momento escribiendo *Eliminar mis datos*\n🔹 *Política completa:* https://tutelapp.co/privacidad\n\nAl aceptar, autorizas el tratamiento de tus datos personales para los fines descritos.` `[("acepto","✅ Acepto"), ("no","❌ No")]` | Después del #1 |
 
 ### FASE 2: RESPUESTAS AL CONSENTIMIENTO
 
@@ -173,7 +173,7 @@ USUARIO ENVÍA "HOLA"
 
 | # | Tipo | Mensaje | Trigger |
 |---|------|---------|---------|
-| 53 | Texto | `💰 *Radicación automática*\n\nPara completar el pago de *$29.000 COP*:\n\n🔗 {app_url}/pago/{tutela_id}\n\n⚠️ *Importante:* Radicamos tu tutela y te entregamos el *número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm).` | Confirma pago |
+| 53 | Texto | `💰 *Radicación automática*\n\nPara completar el pago de *{texto_precio()}* (configurable en settings.mercadopago_amount):\n\n🔗 {app_url}/pago/{tutela_id}\n\n⚠️ *Importante:* Radicamos tu tutela y te entregamos el *número de radicado* en máximo *4 horas hábiles* (lun-vie 8am-5pm).` | Confirma pago |
 | 54 | Texto | `✅ *¡Recibimos tu confirmación de pago!*\n\nNuestro equipo está verificando el pago. En máximo *4 horas hábiles* (lun-vie 8am-5pm) confirmaremos y te enviaremos el *número de radicado* por este chat.\n\nGracias por confiar en nosotros.` | Usuario dice "pagado" |
 | 55 | Texto | `Estamos esperando la confirmación de tu pago. Te avisaremos por este chat.` | Respuesta no válida en espera |
 
@@ -254,13 +254,13 @@ USUARIO ENVÍA "HOLA"
 | # | Riesgo | Política de Meta | Detalle | Severidad |
 |---|--------|-----------------|---------|-----------|
 | 1 | **Solicitud de datos sensibles (historia clínica)** | Messaging Policy §2.1: No solicitar datos médicos sensibles por chat | El paso 17 dice "historia clínica" en el aviso de privacidad. El bot pide "pruebas" que pueden incluir información médica. Meta puede considerar esto como solicitud de datos sensibles. | **ALTA** |
-| 2 | **URL de privacidad incorrecta** | Business Policy: Links must be functional | El link en el mensaje #2 apunta a `tutela-online-production.up.railway.app/privacidad` (Railway, dominio viejo). El deploy actual está en Render. El link puede estar roto. | **MEDIA** |
+| 2 | **URL de privacidad incorrecta** | Business Policy: Links must be functional | El link en el mensaje #2 apuntaba a `tutela-online-production.up.railway.app/privacidad` (Railway, dominio viejo). **CORREGIDO**: ahora apunta a `https://tutelapp.co/privacidad`. | ~~MEDIA~~ ✅ |
 | 3 | **Pago fuera de WhatsApp** | Commerce Policy: Transactions should use WhatsApp Pay when available | El pago se hace vía link externo (Mercado Pago), no dentro de WhatsApp. Meta prefiere transacciones dentro de la plataforma. | **BAJA** |
 | 4 | **Mensajes fuera de ventana de 24h** | WhatsApp Business Policy: Templates needed for non-conversation messages | Si el equipo envía notificaciones fuera de la ventana de 24h del usuario (ej: "pago confirmado", "radicado listo"), necesita usar Messages Templates aprobados. Actualmente usa `enviar_texto()` directo. | **ALTA** |
 | 5 | **No hay opción de opt-out clara** | Messaging Policy: Users must be able to opt out | Solo existe "Eliminar mis datos". No hay "Detener mensajes" o "No me molesten". Meta requiere una forma clara de opt-out. | **MEDIA** |
 | 6 | **Botón "No" no cancela completamente** | Business Policy: Rejection must be respected | Si el usuario dice "No" al consentimiento, el bot dice "escribe Hola" para empezar de nuevo. Esto permite re-intentar, lo cual podría verse como no respetar el rechazo. | **BAJA** |
 | 7 | **Mensajes de radicación automática sin template** | WhatsApp Business Policy §2.2: Business-initiated messages require templates | Los mensajes #56 (código email), #57 (radicada), #60-64 (pago/radicación) son iniciados por el negocio fuera de una conversación activa. Necesitan Messages Templates aprobados. | **ALTA** |
-| 8 | **Precio puede cambiar sin aviso** | Commerce Policy: Prices must be accurate | $29.000 COP está hardcodeado. Si el precio cambia, todos los mensajes deben actualizarse. | **BAJA** |
+| 8 | **Precio puede cambiar sin aviso** | Commerce Policy: Prices must be accurate | ~~$29.000 COP está hardcodeado~~. **CORREGIDO**: el precio se centraliza en `settings.mercadopago_amount` y los mensajes usan `texto_precio()` (formateador único). | ~~BAJA~~ ✅ |
 
 ---
 
@@ -292,8 +292,8 @@ USUARIO ENVÍA "HOLA"
 ### 🟡 RIESGOS MEDIOS (corregir pronto)
 
 **4. URL de privacidad rota**
-- Link apunta a dominio viejo (Railway)
-- **Solución:** Cambiar a `https://tutela-online.onrender.com/privacidad`
+- El link apuntaba a dominio viejo (Railway)
+- **Resuelto:** ahora apunta a `https://tutelapp.co/privacidad`
 
 **5. Rechazo no se respeta permanentemente**
 - Si el usuario rechaza, puede reintentar con "Hola"
@@ -311,7 +311,7 @@ USUARIO ENVÍA "HOLA"
    - Número de radicado
    - Código de verificación de email
 3. **Agregar comandos de opt-out:** "Detener", "No me molesten", "Pausar"
-4. **Corregir URL de privacidad** a `https://tutela-online.onrender.com/privacidad`
+4. **URL de privacidad** quedó corregida a `https://tutelapp.co/privacidad` ✅
 
 ### A mediano plazo
 

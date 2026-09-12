@@ -51,11 +51,23 @@ def _allowed_origins(app_url: str, cors_origins: str = "") -> list[str]:
     return list(dict.fromkeys(origenes))
 
 
+def _config_docs(es_produccion: bool) -> dict:
+    """Configuración de docs para FastAPI.
+
+    En producción se ocultan Swagger (/docs), ReDoc (/redoc) y el esquema
+    OpenAPI (/openapi.json) para no exponer públicamente las rutas internas.
+    """
+    if es_produccion:
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+
+
 app = FastAPI(
     title="TutelApp",
     description="API para radicación automática de tutelas vía WhatsApp",
     version="0.1.0",
     lifespan=lifespan,
+    **_config_docs(settings.app_url.lower().startswith("https")),
 )
 
 # CORS restringido: jamás "*". Permite app_url + orígenes extra de CORS_ORIGINS.
