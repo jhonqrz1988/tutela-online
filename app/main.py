@@ -1,11 +1,12 @@
 import logging
+from datetime import date
 from contextlib import asynccontextmanager
 
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.api.admin import NoAuthRedirect
@@ -110,3 +111,35 @@ async def pagina_inicio(request: Request):
 @app.get("/privacidad", response_class=HTMLResponse)
 async def pagina_privacidad():
     return HTMLResponse(_PRIVACIDAD_HTML)
+
+
+@app.get("/robots.txt", response_class=Response)
+async def robots_txt():
+    base = settings.app_url.rstrip("/")
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        "Disallow: /pago\n"
+        "Disallow: /webhook\n"
+        "Disallow: /health\n"
+        "\n"
+        f"Sitemap: {base}/sitemap.xml\n"
+    )
+    return Response(content=body, media_type="text/plain")
+
+
+@app.get("/sitemap.xml", response_class=Response)
+async def sitemap_xml():
+    base = settings.app_url.rstrip("/")
+    hoy = date.today().isoformat()
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"  <url><loc>{base}/</loc><lastmod>{hoy}</lastmod>"
+        "<changefreq>weekly</changefreq><priority>1.0</priority></url>\n"
+        f"  <url><loc>{base}/privacidad</loc><lastmod>{hoy}</lastmod>"
+        "<changefreq>monthly</changefreq><priority>0.3</priority></url>\n"
+        "</urlset>\n"
+    )
+    return Response(content=body, media_type="application/xml")
