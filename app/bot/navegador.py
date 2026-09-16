@@ -587,6 +587,21 @@ class RadicadorBot:
         self._email_accionante = email
         await self._type_existing("#Email", email)
 
+        # Re-aplicar identidad (tipo documento + cédula + nombres): al resolver
+        # el AJAX del tipo de documento, el portal puede re-renderizar estos
+        # campos y dejar el select en 'Seleccione...' (queja de prod) o los
+        # nombres en blanco / autocompletados del borrador que guarda para esa
+        # cédula (queja de prod: "no selecciona el tipo de documento" y "no
+        # pone bien los nombres"). Re-escribir al final garantiza que lo que
+        # valida el correo y se confirma en "Confirmar Datos" sea NUESTRO dato.
+        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
+        await self.page.wait_for_timeout(300)
+        await self._type_existing("#NumeroDocumento", cedula)
+        await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
+        await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
+        await self._type_existing("#PrimerApellido", nombre["primer_apellido"])
+        await self._type_existing("#SegundoApellido", nombre["segundo_apellido"])
+
         # Readback: volcar qué quedó realmente en el formulario del portal
         # (tipo documento, nombres, apellidos, cédula) para diagnosticar en el
         # panel si el llenado no aplicó (quejas: "no selecciona el tipo de
@@ -594,6 +609,21 @@ class RadicadorBot:
         try:
             readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
             logger.info(f"[readback accionante] {json.dumps(readback, ensure_ascii=False)}")
+            fuente = {
+                "tipo_doc": tipo_doc,
+                "cedula": datos.get("accionante_cedula"),
+                "nombre": datos.get("accionante_nombre"),
+                "nombres": datos.get("accionante_nombres"),
+                "apellidos": datos.get("accionante_apellidos"),
+            }
+            logger.info(f"[readback fuente] {json.dumps(fuente, ensure_ascii=False)}")
+            if readback and (
+                str(readback.get("tipo_doc") or "").strip() in ("", "Seleccione...")
+                or not str(readback.get("primer_nombre") or "").strip()
+            ):
+                logger.warning(
+                    "[readback accionante] el portal NO quedó con el tipo de documento/identidad correcto"
+                )
         except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
             logger.warning(f"No se pudo leer el formulario del accionante: {e}")
 

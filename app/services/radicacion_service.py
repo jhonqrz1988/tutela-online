@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -48,6 +49,12 @@ UMBRAL_CONTINUANDO_ESTANCADO = timedelta(minutes=5)
 # respondió a tiempo. El código vence a los 10 min: 12 min dan margen a que
 # el timeout interno TIMEOUT_ESPERA_CODIGO (600s) sea quien lo abandone primero.
 UMBRAL_ESPERANDO_CODIGO = timedelta(minutes=12)
+
+# Tope para el envío + descarga de la constancia (paso 10). El portal puede
+# colgar el renderer al pulsar #enviar y `page.evaluate` NO tiene timeout en
+# Playwright: sin este tope la radicación queda 'enviando' para siempre
+# (reproducido en prod 16/09 18:03 UTC, tutela 40, tras resolver el reCAPTCHA).
+TIEMPO_MAX_ENVIO_SEG = 150
 
 # Tiempo (segundos) que el coroutine parkeado espera el código de email antes
 # de abandonarse solo: cierra el navegador, marca 'fallida' y avisa.
@@ -668,8 +675,11 @@ async def _fallar_y_avisar(bot, tutela, rad, session, motivo, aviso_usuario):
 def descolgar_radicaciones_estancadas(umbral=UMBRAL_CONTINUANDO_ESTANCADO) -> list[dict]:
     """Watchdog: marca como 'fallida' las radicaciones colgadas.
 
-    - 'continuando' más tiempo que `umbral`: navegador de Playwright pegado
-      (sin respetar el timeout) o portal sin responder.
+    - Cualquier estado en curso ('iniciando', 'continuando',
+      'completando_formulario', 'resolviendo_captcha', 'enviando') más tiempo
+      que `umbral`: el navegador de Playwright se pegó (sin respetar timeout)
+      o el portal no respondió (p. ej. renderer colgado en #enviar, que deja
+      la radicación en 'enviando' para siempre si el watchdog no la rescata).
     - 'esperando_codigo_email' más tiempo que UMBRAL_ESPERANDO_CODIGO: el
       coroutine parkeado esperando el código se perdió (proceso reiniciado) o
       el usuario no respondió; el código del portal vence a los 10 min.
@@ -682,16 +692,17 @@ def descolgar_radicaciones_estancadas(umbral=UMBRAL_CONTINUANDO_ESTANCADO) -> li
         corte = datetime.utcnow() - umbral
         estancadas = session.execute(
             select(Radicacion).where(
-                Radicacion.estado == "continuando",
+                Radicacion.estado.in_(ESTADOS_RADICACION_EN_CURSO),
                 Radicacion.updated_at < corte,
             )
         ).scalars().all()
         for rad in estancadas:
+            estado_previo = rad.estado
             rad.estado = "fallida"
-            rad.ultimo_error = "Radicación colgada en 'continuando' (watchdog)"
+            rad.ultimo_error = f"Radicación colgada en '{estado_previo}' (watchdog)"
             session.commit()
             descolgadas.append({"radicacion_id": rad.id, "tutela_id": rad.tutela_id})
-            logger.warning(f"Watchdog: radicación {rad.id} (tutela {rad.tutela_id}) colgada en 'continuando' → fallida")
+            logger.warning(f"Watchdog: radicación {rad.id} (tutela {rad.tutela_id}) colgada en '{estado_previo}' → fallida")
 
         corte_codigo = datetime.utcnow() - UMBRAL_ESPERANDO_CODIGO
         esperando_vencido = session.execute(
@@ -749,7 +760,25 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
         # Paso 10: Enviar y descargar constancia
         rad.estado = "enviando"
         session.commit()
-        resultado_envio = await bot.enviar_y_descargar()
+        try:
+            resultado_envio = await asyncio.wait_for(
+                bot.enviar_y_descargar(), timeout=TIEMPO_MAX_ENVIO_SEG
+            )
+        except asyncio.TimeoutError:
+            # El renderer del portal puede colgarse al pulsar #enviar (un
+            # page.evaluate no tiene timeout en Playwright y se queda esperando
+            # para siempre). Sin este tope la tutela quedaba 'enviando' a
+            # perpetuidad sin poder reintentarse.
+            logger.error(
+                f"Timeout enviando tutela {tutela.id}: el portal no respondió "
+                f"tras {TIEMPO_MAX_ENVIO_SEG}s (renderer colgado)."
+            )
+            rad.estado = "fallida"
+            rad.ultimo_error = f"Timeout: el portal no respondió al envío tras {TIEMPO_MAX_ENVIO_SEG}s"
+            rad.intentos = (rad.intentos or 0) + 1
+            _registrar_paso(session, rad.id, "enviar_y_descargar", "error", rad.ultimo_error)
+            session.commit()
+            return
 
         if resultado_envio.get("error"):
             rad.estado = "fallida"
@@ -809,4 +838,7 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
         _registrar_paso(session, rad.id, "completar_radicacion", "error", str(e)[:500])
         session.commit()
     finally:
-        await bot.cerrar()
+        # Cerrar el contexto del navegador acotado: tras un timeout del envío el
+        # renderer puede seguir colgado y el cierre no puede esperar indefinido.
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(bot.cerrar(), timeout=20)

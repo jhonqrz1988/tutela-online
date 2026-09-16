@@ -168,6 +168,40 @@ class TestNombresACampos(unittest.TestCase):
         self.assertEqual(campos_escritos["#PrimerApellido"], "Pérez")
         self.assertEqual(campos_escritos["#SegundoApellido"], "Gómez")
 
+    def test_el_paso_accionante_reaplica_identidad_al_final(self):
+        """El portal puede re-renderizar los campos de identidad al resolver el
+        AJAX del tipo de documento (queja de prod: queda en 'Seleccione...' y
+        nombres en blanco/autocompletados). El paso vuelve a aplicar tipo doc +
+        cédula + nombres justo antes del readback."""
+        bot = _make_bot(FakePage())
+        selecciones = []
+        veces_primer_nombre = []
+
+        async def fake_select(selector, label):
+            selecciones.append((selector, label))
+
+        async def fake_type(selector, value):
+            if selector == "#PrimerNombre":
+                veces_primer_nombre.append(value)
+
+        with mock.patch.object(bot, "_seleccionar_select", new=fake_select), \
+             mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_type_existing", new=fake_type):
+            asyncio.run(bot._paso_accionante({
+                "accionante_nombres": "María Fernanda",
+                "accionante_apellidos": "Pérez Gómez",
+                "accionante_email": "a@b.com",
+            }))
+
+        veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CC")]
+        self.assertGreaterEqual(
+            len(veces_cc), 2, "El tipo de documento debe re-aplicarse al final"
+        )
+        self.assertGreaterEqual(
+            len(veces_primer_nombre), 2, "Los nombres se re-escriben al final"
+        )
+
 
 class TestCerrarContexto(unittest.TestCase):
     def test_cerrar_cierra_el_contexto_completo_no_solo_la_pagina(self):

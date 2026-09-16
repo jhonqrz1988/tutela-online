@@ -616,6 +616,112 @@ class TestDescolgarEstancadas(unittest.TestCase):
         self.assertTrue(rad_vieja.ultimo_error)
         self.assertEqual(rad_reciente.estado, "continuando", "La reciente no debe tocarse")
 
+    def test_enviando_viejo_pasa_a_fallida(self):
+        """El watchdog también rescata 'enviando': el cuelgue real del renderer
+        del portal en #enviar deja la radicación en 'enviando' para siempre
+        (reproducido en prod). Sin esto nunca podría reintentarse."""
+        session = _nueva_sesion()
+        user_vieja = User(telefono="573001112277", estado="activo", consentimiento=True)
+        session.add(user_vieja)
+        session.flush()
+        tutela_vieja = Tutela(
+            user_id=user_vieja.id, tipo="salud", estado="enviando",
+            datos_json=json.dumps({"tipo": "salud"}),
+        )
+        session.add(tutela_vieja)
+        session.flush()
+        session.add(Radicacion(tutela_id=tutela_vieja.id, estado="enviando"))
+
+        user_reciente = User(telefono="573001112288", estado="activo", consentimiento=True)
+        session.add(user_reciente)
+        session.flush()
+        tutela_reciente = Tutela(
+            user_id=user_reciente.id, tipo="salud", estado="enviando",
+            datos_json=json.dumps({"tipo": "salud"}),
+        )
+        session.add(tutela_reciente)
+        session.flush()
+        session.add(Radicacion(tutela_id=tutela_reciente.id, estado="enviando"))
+        session.execute(
+            update(Radicacion).where(Radicacion.tutela_id == tutela_vieja.id).values(
+                updated_at=datetime.datetime.utcnow() - datetime.timedelta(minutes=20)
+            )
+        )
+        session.commit()
+
+        with mock.patch.object(radicacion_service, "SessionLocal", return_value=session), \
+             mock.patch.object(radicacion_service, "_bot", None):
+            radicacion_service.descolgar_radicaciones_estancadas()
+
+        rad_vieja = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_vieja.id)
+        ).scalar_one()
+        rad_reciente = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_reciente.id)
+        ).scalar_one()
+        self.assertEqual(rad_vieja.estado, "fallida")
+        self.assertIn("colgada", (rad_vieja.ultimo_error or "").lower())
+        self.assertEqual(rad_reciente.estado, "enviando", "La enviando reciente no debe tocarse")
+
+
+class _BotLento:
+    """Fake del bot para forzar un envío que excede el tope y verificar que la
+    radicación pasa a 'fallida' en vez de quedarse 'enviando' para siempre."""
+
+    def __init__(self, segundos_dormir: float):
+        self.segundos_dormir = segundos_dormir
+        self.cerrado = False
+
+    async def completar_post_codigo(self, datos, ruta_pdf):
+        return {"ok": True}
+
+    async def resolver_recaptcha(self):
+        return True
+
+    async def enviar_y_descargar(self):
+        await asyncio.sleep(self.segundos_dormir)
+        return {"path": None, "num_radicado": "11001-2026-00099"}
+
+    async def tomar_screenshot(self, nombre):
+        return ""
+
+    async def cerrar(self):
+        self.cerrado = True
+
+
+class TestTimeoutEnvio(unittest.TestCase):
+    def test_envio_que_excede_el_tope_marca_fallida_y_cierra(self):
+        """El renderer del portal puede colgarse en #enviar (los evaluate de
+        Playwright no tienen timeout): si el envío excede TIEMPO_MAX_ENVIO_SEG,
+        la radicación DEBE quedar 'fallida' (reintentable) y el navegador, cerrado."""
+        session = _nueva_sesion()
+        user = User(telefono="573001112299", estado="activo", consentimiento=True)
+        session.add(user)
+        session.flush()
+        tutela = Tutela(
+            user_id=user.id, tipo="salud", estado="completando_formulario",
+            datos_json=json.dumps({"tipo": "salud"}),
+        )
+        session.add(tutela)
+        session.flush()
+        rad = Radicacion(tutela_id=tutela.id, estado="resolviendo_captcha")
+        session.add(rad)
+        session.commit()
+
+        bot = _BotLento(segundos_dormir=30)
+        with mock.patch.object(radicacion_service, "TIEMPO_MAX_ENVIO_SEG", 0.05):
+            asyncio.run(
+                radicacion_service._completar_radicacion(
+                    bot, tutela, {"tipo": "salud"}, rad, session
+                )
+            )
+
+        session.refresh(rad)
+        self.assertEqual(rad.estado, "fallida")
+        self.assertIn("Timeout", rad.ultimo_error)
+        self.assertEqual(rad.intentos, 1, "El timeout cuenta como intento")
+        self.assertTrue(bot.cerrado, "El watchdog debe haber cerrado el navegador")
+
 
 class TestVerificarConexion(unittest.TestCase):
     """`page.evaluate()` de Playwright NO acepta el kwarg `timeout`; el ping
