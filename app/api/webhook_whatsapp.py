@@ -41,6 +41,7 @@ from app.services.verificacion_service import (
 )
 from app.services.whatsapp_service import enviar_botones, enviar_documento, enviar_texto
 from app.utils.file_utils import path_prueba
+from app.utils.validacion import procesar_campo_personal, validar_campo_personal
 
 router = APIRouter()
 
@@ -452,9 +453,25 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             return {"ok": True, "respuestas": respuestas}
 
         if step < len(DATOS_PERSONALES_STEPS):
-            campo, _ = DATOS_PERSONALES_STEPS[step]
-            # Si salta al siguiente (escribe adelante), detectar por comas
-            datos[campo] = raw_body or ""
+            campo, msg_campo = DATOS_PERSONALES_STEPS[step]
+            valor, accion = procesar_campo_personal(datos, campo, raw_body or "")
+            if accion == "reintento":
+                datos["_step"] = step  # no avanzar: pedir el mismo campo
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono, f"⚠️ {validar_campo_personal(campo, valor)}\n\n{msg_campo}")
+                return {"ok": True, "respuestas": respuestas}
+            datos.pop(f"_val_{campo}", None)
+            datos[campo] = valor
+            if campo in ("accionante_nombres", "accionante_apellidos"):
+                _recomponer_nombre(datos)
+            if accion == "aceptado":
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono,
+                   "⚠️ Guardé tu respuesta, pero parece inválida: "
+                   f"{validar_campo_personal(campo, valor)} "
+                   "Nuestro equipo la revisará antes de radicar.")
             step += 1
             datos["_step"] = step
             tutela.datos_json = json.dumps(datos)
@@ -510,11 +527,26 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
                    "Escribe el número del dato que quieres corregir:\n\n"
                    + _menu_campos_personales())
         else:
-            datos[campo] = raw_body or ""
+            valor, accion = procesar_campo_personal(datos, campo, raw_body or "")
+            if accion == "reintento":
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+                _r(respuestas, telefono,
+                   f"⚠️ {validar_campo_personal(campo, valor)}\n\n"
+                   + _mensaje_campo_personal(campo))
+                return {"ok": True, "respuestas": respuestas}
+            datos.pop(f"_val_{campo}", None)
+            datos[campo] = valor
+            if campo in ("accionante_nombres", "accionante_apellidos"):
+                _recomponer_nombre(datos)
             datos.pop("_campo_corregir", None)
             tutela.datos_json = json.dumps(datos)
             tutela.estado = "confirmar_datos_personales"
             session.commit()
+            if accion == "aceptado":
+                _r(respuestas, telefono,
+                   f"⚠️ Guardé tu respuesta, pero parece inválida: "
+                   f"{validar_campo_personal(campo, valor)}. La revisará el equipo.")
             _r(respuestas, telefono, "✅ *Dato actualizado.*")
             _mostrar_confirmacion_datos(telefono, respuestas, datos)
         return {"ok": True, "respuestas": respuestas}
@@ -865,7 +897,8 @@ async def _mostrar_resumen_juramento(session, tutela, datos: dict, telefono: str
 
 
 _PERSONALES_LABEL = {
-    "accionante_nombre": "👤 Nombre",
+    "accionante_nombres": "👤 Nombres",
+    "accionante_apellidos": "👤 Apellidos",
     "accionante_tipo_doc": "🪪 Tipo documento",
     "accionante_cedula": "🆔 Documento",
     "accionante_telefono": "📱 Teléfono",
@@ -887,8 +920,8 @@ def _resumen_datos_personales(datos: dict) -> str:
 
 def _menu_campos_personales() -> str:
     lineas = []
-    for i, (_, msg) in enumerate(DATOS_PERSONALES_STEPS, start=1):
-        label = msg.replace("Escribe tu ", "").replace(":", "").strip()
+    for i, (campo, _) in enumerate(DATOS_PERSONALES_STEPS, start=1):
+        label = _PERSONALES_LABEL.get(campo, campo)
         lineas.append(f"{i}. {label}")
     return "\n".join(lineas)
 
@@ -1240,7 +1273,8 @@ MENU_DEFAULT = (
 # El último paso (accionado/EPS) es la entidad que se usará como accionado
 # en los datos de la tutela; por eso está protegido en CAMPOS_PERSONALES_GUARDADOS.
 DATOS_PERSONALES_STEPS = [
-    ("accionante_nombre", "👤 Escribe tu *nombre completo*:"),
+    ("accionante_nombres", "👤 Escribe tus *nombres* (ej: María Fernanda):"),
+    ("accionante_apellidos", "👤 Ahora tus *apellidos* (ej: Pérez Gómez):"),
     ("accionante_tipo_doc", "🪪 Tipo de documento (CC, CE, Pasaporte):"),
     ("accionante_cedula", "🆔 Número de documento (sin puntos):"),
     ("accionante_telefono", "📱 Teléfono celular:"),
@@ -1250,6 +1284,29 @@ DATOS_PERSONALES_STEPS = [
     ("departamento", "🗺️ Departamento (ej: Cundinamarca, Antioquia):"),
     ("accionado", "🏥 ¿Cuál es el *nombre de tu EPS*? (Ej: Nueva EPS, Sanitas, Salud Total):"),
 ]
+
+
+def _mensaje_campo_personal(campo: str) -> str:
+    """Retorna el mensaje con el que se pregunta un campo de datos personales."""
+    for c, msg in DATOS_PERSONALES_STEPS:
+        if c == campo:
+            return msg
+    return "Reintenta por favor."
+
+
+def _recomponer_nombre(datos: dict) -> str:
+    """Compone `accionante_nombre` (el nombre completo) desde los campos
+    estructurados `accionante_nombres`/`accionante_apellidos`.
+
+    Todo el código aguas abajo (PDF, prompt de la IA, resumen, `_separar_nombre`
+    del bot) sigue leyendo `accionante_nombre`, así que no hay que tocarlo.
+    """
+    nombre = " ".join(
+        p for p in (datos.get("accionante_nombres", ""), datos.get("accionante_apellidos", "")) if p
+    ).strip()
+    if nombre:
+        datos["accionante_nombre"] = nombre
+    return nombre
 
 # Datos clínicos del caso que pregunta el bot (evita que la IA los invente): (campo, mensaje)
 DATOS_CLINICOS_STEPS = [

@@ -207,31 +207,48 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
     if not tutela:
         return {"ok": True}
 
-    if tutela.estado in ("esperando_pago", "confirmar_pago", "pago_por_confirmar"):
+    if tutela.estado not in ("esperando_pago", "confirmar_pago", "pago_por_confirmar", "pago_confirmado"):
+        return {"ok": True}
+
+    # Idempotencia: MP reenvía el webhook varias veces; ya procesado → no-op.
+    datos = json.loads(tutela.datos_json or "{}")
+    if datos.get("mercadopago_payment_id") == payment_id:
+        logger.info(f"Webhook MP duplicado (pago {payment_id}) para tutela {tutela.id}: ignorado")
+        return {"ok": True}
+
+    # Un solo registro de radicación por tutela pagada (nunca radicar dos veces).
+    rad = session.execute(
+        select(Radicacion).where(Radicacion.tutela_id == tutela.id)
+    ).scalar_one_or_none()
+    if rad is None:
         rad = Radicacion(
             tutela_id=tutela.id,
             estado="pendiente",
             num_radicado=None,
         )
         session.add(rad)
-        datos = json.loads(tutela.datos_json or "{}")
-        datos["mercadopago_payment_id"] = payment_id
-        tutela.datos_json = json.dumps(datos)
-        tutela.estado = "pago_confirmado"
-        session.commit()
-        logger.info(f"Pago confirmado vía Mercado Pago para tutela {tutela.id} (pago {payment_id})")
-        if tutela.user and tutela.user.telefono:
-            enviar_texto(
-                tutela.user.telefono,
-                f"✅ *¡Pago recibido!* Hemos confirmado tu pago de {texto_precio()}.\n\n"
-                "Nuestro equipo técnico ya está trabajando en la generación y radicación "
-                "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.",
-            )
-        # Radicar de inmediato (sin esperar los 15 min del scheduler) solo si
-        # hay horario hábil de la Rama Judicial; si no, queda en cola para el
-        # próximo ciclo del scheduler en horario laboral.
-        if es_horario_habil():
-            programar_radicacion_inmediata(tutela.id)
+
+    ya_confirmada = tutela.estado == "pago_confirmado"
+    datos["mercadopago_payment_id"] = payment_id
+    tutela.datos_json = json.dumps(datos)
+    tutela.estado = "pago_confirmado"
+    session.commit()
+    logger.info(
+        f"Pago {payment_id} confirmado vía Mercado Pago para tutela {tutela.id}"
+        f"{' (reconfirmación)' if ya_confirmada else ''}"
+    )
+    if tutela.user and tutela.user.telefono and not ya_confirmada:
+        enviar_texto(
+            tutela.user.telefono,
+            f"✅ *¡Pago recibido!* Hemos confirmado tu pago de {texto_precio()}.\n\n"
+            "Nuestro equipo técnico ya está trabajando en la generación y radicación "
+            "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.",
+        )
+    # Radicar de inmediato (sin esperar los 15 min del scheduler) solo si
+    # hay horario hábil de la Rama Judicial; si no, queda en cola para el
+    # próximo ciclo del scheduler en horario laboral.
+    if es_horario_habil() and not ya_confirmada:
+        programar_radicacion_inmediata(tutela.id)
     return {"ok": True}
 
 

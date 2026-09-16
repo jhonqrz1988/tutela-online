@@ -19,6 +19,8 @@ radicación se quedaba en 'continuando' para siempre.
 import asyncio
 import datetime
 import json
+import os
+import tempfile
 import threading
 import time
 import unittest
@@ -55,6 +57,37 @@ class _FakePage:
         return False
 
 
+_PDF_PRUEBA = None
+
+
+def _pdf_prueba() -> str:
+    """Crea (una sola vez) un PDF real temporal para pasar el pre-vuelo."""
+    global _PDF_PRUEBA
+    if _PDF_PRUEBA is None or not os.path.isfile(_PDF_PRUEBA):
+        fd, _PDF_PRUEBA = tempfile.mkstemp(suffix="_tutela_prueba.pdf")
+        os.write(fd, b"%PDF-1.4 dummy pre-vuelo")
+        os.close(fd)
+    return _PDF_PRUEBA
+
+
+def _datos_completos() -> dict:
+    """Datos mínimos que el pre-vuelo de radicación exige al bot."""
+    return {
+        "tipo": "salud",
+        "accionante_nombre": "Ana López",
+        "accionante_tipo_doc": "CC",
+        "accionante_cedula": "1030241555",
+        "accionante_telefono": "3001234567",
+        "accionante_email": "ana@correo.com",
+        "ciudad": "Bogotá",
+        "departamento": "Cundinamarca",
+        "accionado": "Nueva EPS",
+        "accionado_tipo": "juridica",
+        "hechos": "Me negaron un medicamento.",
+        "derechos_vulnerados": ["Salud"],
+    }
+
+
 def _crear_tutela_a_radicar(session, telefono="573001112233", estado="pendiente_radicacion"):
     user = User(telefono=telefono, estado="activo", consentimiento=True)
     session.add(user)
@@ -63,7 +96,8 @@ def _crear_tutela_a_radicar(session, telefono="573001112233", estado="pendiente_
         user_id=user.id,
         tipo="salud",
         estado=estado,
-        datos_json=json.dumps({"tipo": "salud"}),
+        datos_json=json.dumps(_datos_completos()),
+        pdf_path=_pdf_prueba(),
     )
     session.add(tutela)
     session.commit()
@@ -397,6 +431,53 @@ class TestParqueoCodigo(unittest.TestCase):
         with radicacion_service._parqueos_lock:
             self.assertNotIn(self.tutela_id, radicacion_service._parqueos)
             self.assertNotIn(self.tutela_id, radicacion_service._codigos_pendientes)
+
+    def test_codigo_rechazado_reintenta_automaticamente(self):
+        """(Parte 2) Si el portal rechaza el código (cajón sigue abierto), la
+        radicación NO muere en 'fallida': se re-lanza sola y vuelve a pedir un
+        código nuevo (el portal genera otro en cada corrida), igual que el
+        timeout del parqueo."""
+        class BotRechaza(_FakeBotConCodigo):
+            async def ingresar_codigo_email(self, codigo):
+                self.entradas.append(codigo)
+                return {"ok": False, "error": "codigo rechazado por el portal"}
+
+        self.bot = BotRechaza()
+        self.redespachos = []
+        with mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
+             mock.patch.object(
+                 radicacion_service,
+                 "despachar_radicacion",
+                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or {"ok": True, "despachada": True},
+             ):
+            fut = self._despachar()
+            self.assertTrue(self._esperar_parqueo())
+            res = self._señalar("0000")
+            self.assertTrue(res.get("ok"), f"El código debe señalarse: {res}")
+            resultado = fut.result(timeout=5)
+            self.assertTrue(self._esperar_despachos(1), "Debe re-despacharse para pedir un código nuevo")
+
+        self.assertFalse(resultado.get("ok"))
+        self.assertTrue(resultado.get("reintento_automatico"), f"Debe reintentar sola: {resultado}")
+        self.assertEqual(self.bot.entradas, ["0000"], "El código rechazado se intenta una sola vez")
+        self.assertTrue(self.bot.cerrado, "El navegador debe cerrarse antes de reintentar")
+        session = self.fabrica()
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == self.tutela_id)
+        ).scalar_one()
+        self.assertEqual(rad.estado, "fallida", "El intento actual se registra como fallido")
+        self.assertIn("rechazado", rad.ultimo_error or "")
+        self.assertEqual(rad.intentos, 1, "El rechazo cuenta como un intento")
+        tutela = session.get(Tutela, self.tutela_id)
+        self.assertEqual(tutela.estado, "pendiente_radicacion", "Se encola para pedir un código nuevo")
+        session.close()
+        self.assertEqual(len(self.redespachos), 1, "Un solo re-despacho automático")
+        self.assertEqual(self.redespachos[0], self.tutela_id, "El re-despacho debe apuntar a ESTA tutela")
+        self.assertTrue(
+            any("rechazado" in a.lower() for a in self.avisos) or
+            any("automáticamente" in a.lower() for a in self.avisos),
+            f"Aviso de reintento: {self.avisos}",
+        )
 
     def test_reintento_no_dobla_si_la_tutela_ya_se_radico(self):
         """El hilo de reintento revisa la BD antes de despachar: si mientras

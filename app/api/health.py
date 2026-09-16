@@ -1,3 +1,6 @@
+import os
+import shutil
+
 from fastapi import APIRouter
 from sqlalchemy import text
 
@@ -7,24 +10,62 @@ from app.database import SessionLocal
 router = APIRouter()
 
 
+def _disco() -> dict:
+    """Verifica que el storage sea escribible y reporta espacio libre.
+
+    Las constancias/PDFs/evidencias se guardan en `settings.storage_dir`; si el
+    disco no es escribible (p. ej. Persistent Disk no montado en /data en
+    Render) las descargas fallarían en silencio.
+    """
+    try:
+        os.makedirs(settings.storage_dir, exist_ok=True)
+        sonda = os.path.join(settings.storage_dir, ".health_probe")
+        with open(sonda, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(sonda)
+        uso = shutil.disk_usage(settings.storage_dir)
+        return {
+            "writable": True,
+            "path": settings.storage_dir,
+            "free_bytes": uso.free,
+            "total_bytes": uso.total,
+        }
+    except Exception as e:  # noqa: BLE001 - health nunca rompe el proceso
+        return {
+            "writable": False,
+            "path": settings.storage_dir,
+            "error": str(e)[:200],
+        }
+
+
 @router.get("/health")
 async def health():
-    """Healthcheck: valida que el proceso responde y que la BD está accesible.
+    """Healthcheck: valida que el proceso responde, la BD es accesible y el
+    disco de almacenamiento es escribible.
 
     El plan gratis de Render duerme el servicio por inactividad; un monitor
     externo (p. ej. UptimeRobot) debe hacer ping a esta ruta cada pocos
     minutos para mantenerlo despierto.
     """
+    disco = _disco()
     try:
         with SessionLocal() as session:
             session.execute(text("SELECT 1"))
+        database = "ok"
+        status = "ok" if disco.get("writable") else "degraded"
     except Exception:
         return {
             "status": "degraded",
             "database": "unreachable",
+            "disk": disco,
             "config": _config_diagnostico(),
         }
-    return {"status": "ok", "database": "ok", "config": _config_diagnostico()}
+    return {
+        "status": status,
+        "database": database,
+        "disk": disco,
+        "config": _config_diagnostico(),
+    }
 
 
 def _config_diagnostico() -> dict:

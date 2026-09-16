@@ -1,26 +1,34 @@
 # Configuración de Render (https://render.com) para TutelApp.
 # Deploy: https://tutelapp.co
 #
-# NOTA sobre el plan GRATIS:
+# NOTA sobre el plan:
 # - El servicio se duerme tras ~15 min sin tráfico entrante.
-# - Para mantenerlo despierto sin pagar, apunta un monitor externo
-#   gratuitos (p. ej. UptimeRobot con intervalo <= 10 min) a
-#   https://tutelapp.co/health
-#   y asegúrate de tener "Auto-Wake" (despertar con petición entrante) activo.
+# - Para mantenerlo despierto, un monitor externo gratuito (p. ej. UptimeRobot
+#   con intervalo <= 10 min) debe hacer ping a https://tutelapp.co/health
+#   y tener "Auto-Wake" (despertar con petición entrante) activo.
 # - El plan gratis NO dispone de Persistent Disk: los archivos en storage/
-#   se pierden en cada redeploy. Antes de radicar tutelas reales, subir a
-#   Starter (~$7/mes) y montar el Persistent Disk en /data + STORAGE_DIR=/data/storage.
+#   se pierden en cada redeploy. PRODUCCIÓN usa plan Starter (~$7/mes) con
+#   Persistent Disk montado en /data: los valores declarados aquí
+#   (STORAGE_DIR=/data/storage, SIMULATE_BOT=false, ENABLE_SCHEDULER=true,
+#   horario de radicación) reflejan esa configuración.
 #
-# MODO TEST RADICACIÓN (bot Rama Judicial): cuando vayan a hacer el test final,
-# setear en el dashboard de Render (toma precedencia sobre este archivo):
-#   SIMULATE_BOT=false, ENABLE_SCHEDULER=true,
-#   TWOCAPTCHA_API_KEY=<clave 2Captcha>, STORAGE_DIR=/data/storage,
-#   y contar con Persistent Disk montado en /data.
+# PERSISTENT DISK /data (importante, en el dashboard de Render):
+#   1. Service -> Disks -> "Create Persistent Disk".
+#   2. Mount Path: /data  — la app ya crea /data/storage automáticamente
+#      (_ensure_sqlite_dir) y el Dockerfile declara VOLUME ["/data"].
+#   3. Si la BD es SQLite local (no Postgres), apuntar DATABASE_URL a
+#      sqlite:////data/tutelas.db para que la BD también sobreviva redeploys.
+#   El /health reporta "disk.writable" y el espacio libre: si no hay disco
+#   montado, status queda en "degraded".
+#
+# ESTE ARCHIVO DECLARA DEFAULTs: las variables seteadas en el dashboard de
+# Render toman precedencia sobre este archivo (verifica /health para ver las
+# reales).
 services:
   - type: web
     name: tutela-online
     runtime: python
-    plan: free
+    plan: starter
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: python run_server.py
     healthCheckPath: /health
@@ -66,8 +74,8 @@ services:
       - key: TWOCAPTCHA_API_KEY
         sync: false
       - key: ENABLE_SCHEDULER
-        value: "false"
-      - key: SIMULATE_BOT
         value: "true"
+      - key: SIMULATE_BOT
+        value: "false"
       - key: STORAGE_DIR
-        value: storage
+        value: /data/storage

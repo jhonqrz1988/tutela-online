@@ -14,7 +14,7 @@ import json
 import unittest
 from unittest import mock
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
@@ -178,6 +178,51 @@ class TestWebhookPagoActivaRadicacion(unittest.TestCase):
         tutela = session.get(Tutela, tutela_id)
         self.assertEqual(tutela.estado, "pago_confirmado",
                          "Sin horario hábil queda en cola para el scheduler")
+
+    def test_webhook_duplicado_no_duplica_ni_reprograma(self):
+        """(Parte 4) Mercado Pago reenvía el webhook varias veces. El mismo pago
+        (o un segundo pago de la misma tutela) NO debe crear otro registro de
+        radicación ni reprogramar/avisar otra vez: radicaría dos veces."""
+        session = _nueva_sesion()
+        tutela_id, _ = _crear_tutela_pagada(session, estado="esperando_pago")
+        from app.api import pagos as pagos_mod
+
+        client = self._cliente(session)
+        programar = mock.Mock(return_value={"ok": True})
+        try:
+            with mock.patch.object(pagos_mod, "verificar_firma", return_value=True), \
+                 mock.patch.object(
+                     pagos_mod, "consultar_pago",
+                     new=mock.AsyncMock(return_value={"status": "approved", "external_reference": f"TUT-{tutela_id}"}),
+                 ), \
+                 mock.patch.object(pagos_mod, "enviar_texto") as enviar, \
+                 mock.patch.object(pagos_mod, "es_horario_habil", return_value=True), \
+                 mock.patch.object(pagos_mod, "programar_radicacion_inmediata", side_effect=programar):
+                headers = {"x-signature": "ts=1,v1=firma", "Content-Type": "application/json"}
+                # Mismo pago, reenviado por MP dos veces + un segundo pago distinto.
+                for payment_id in ("123456789", "123456789", "987654321"):
+                    client.post(
+                        "/webhook/mercadopago",
+                        content=json.dumps({"type": "payment", "data": {"id": payment_id}}),
+                        headers=headers,
+                    )
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            client.__exit__(None, None, None)
+            client.close()
+
+        self.assertEqual(programar.call_count, 1, "Un solo despacho para la tutela pagada")
+        self.assertEqual(enviar.call_count, 1, "Un solo aviso por WhatsApp al cliente")
+
+        tutela = session.get(Tutela, tutela_id)
+        self.assertEqual(tutela.estado, "pago_confirmado")
+        datos = json.loads(tutela.datos_json or "{}")
+        self.assertEqual(datos.get("mercadopago_payment_id"), "987654321",
+                         "El último pago recibido queda registrado")
+        rads = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+        ).scalars().all()
+        self.assertEqual(len(rads), 1, "Un solo registro de radicación: nunca radicar dos veces")
 
 
 class TestSchedulerSaltaTutelaEnCurso(unittest.TestCase):

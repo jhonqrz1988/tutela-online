@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 from pathlib import Path
@@ -75,14 +76,39 @@ _MAPEO_ARTICULO_CATEGORIA = {
     "11": "vida",
     "12": "vida",
     "13": "igualdad",
+    "16": "libre desarrollo",
+    "18": "libertad",
+    "20": "libertad",
     "21": "igualdad",
+    "23": "petición",
     "25": "trabajo",
+    "27": "educación",
+    "29": "debido proceso",
     "43": "igualdad",
     "48": "salud",
     "49": "salud",
     "51": "vivienda",
+    "67": "educación",
     "86": "tutela",
 }
+
+# Palabras clave del texto del derecho → categoría del portal (además del
+# número de artículo: la IA puede describir el derecho sin citar el artículo).
+_CATEGORIA_POR_KEYWORD = (
+    ("salud", ("salud", "seguridad social en salud", "eps", "medicamento")),
+    ("vida", ("vida",)),
+    ("vivienda", ("vivienda",)),
+    ("trabajo", ("trabajo", "despido")),
+    ("educación", ("educación", "educacion", "estudiante", "colegio", "universidad")),
+    ("igualdad", ("igualdad", "discriminación", "discriminacion")),
+    ("petición", ("petición", "peticion")),
+    ("debido proceso", ("debido proceso",)),
+)
+
+# Categoría de respaldo: si ninguna categoría de la IA matchea, se usa esta
+# (la más frecuente en tutelas, sobre todo de salud) en vez de abortar la
+# radicación. Nunca se inventa un derecho: es una categoría real del portal.
+_FALLBACK_DERECHO = "salud"
 
 _TEXTO_ERROR_VALIDACION = (
     "debe ", "obligatorio", "seleccione", "verifique", "no puede", "no válido",
@@ -103,6 +129,10 @@ def _candidatos_derecho(derecho: str, tipo: str) -> list[str]:
     if match:
         categoria = _MAPEO_ARTICULO_CATEGORIA.get(match.group(1))
         if categoria:
+            candidatos.append(categoria)
+    texto = derecho.lower()
+    for categoria, palabras in _CATEGORIA_POR_KEYWORD:
+        if any(p in texto for p in palabras):
             candidatos.append(categoria)
     candidatos.append(derecho)
     if tipo == "salud":
@@ -159,6 +189,23 @@ def _separar_nombre(nombre_completo: str) -> dict:
     if len(partes) == 3:
         return {"primer_nombre": partes[0], "segundo_nombre": partes[1], "primer_apellido": partes[2], "segundo_apellido": ""}
     return {"primer_nombre": partes[0], "segundo_nombre": partes[1], "primer_apellido": partes[2], "segundo_apellido": " ".join(partes[3:])}
+
+
+def _nombres_a_campos(nombres: str, apellidos: str) -> dict:
+    """Reparte nombres/apellidos estructurados (2 preguntas de WhatsApp) en los
+    4 campos del portal.
+
+    [Nombres] -> PrimerNombre (1ª palabra) + SegundoNombre (resto).
+    [Apellidos] -> PrimerApellido (1ª palabra) + SegundoApellido (resto).
+    """
+    n = [p for p in nombres.strip().split() if p]
+    a = [p for p in apellidos.strip().split() if p]
+    return {
+        "primer_nombre": n[0] if n else "",
+        "segundo_nombre": " ".join(n[1:]),
+        "primer_apellido": a[0] if a else "",
+        "segundo_apellido": " ".join(a[1:]),
+    }
 
 
 class RadicadorBot:
@@ -385,7 +432,12 @@ class RadicadorBot:
 
     async def _paso_accionante(self, datos: dict) -> bool:
         """Paso 4: Datos del accionante. Retorna True si requiere código de email."""
-        nombre = _separar_nombre(datos.get("accionante_nombre", ""))
+        nombres_s = (datos.get("accionante_nombres") or "").strip()
+        apellidos_s = (datos.get("accionante_apellidos") or "").strip()
+        if nombres_s and apellidos_s:
+            nombre = _nombres_a_campos(nombres_s, apellidos_s)
+        else:
+            nombre = _separar_nombre(datos.get("accionante_nombre", ""))
 
         # Tipo documento: se usa el que el cliente registró (CC por defecto);
         # el normalizado del alias resuelve variantes ("C.C.", "CC").
@@ -657,9 +709,10 @@ class RadicadorBot:
         """Paso 6: Agregar derechos vulnerados (mapeados a categorías del portal).
 
         La IA trae artículos ("Art. 48 CP"); el portal usa categorías ("salud").
-        Se mapea cada artículo a categoría, se deduplican y se agregan. Retorna
-        cuántos se seleccionaron; si ninguno coincide se vuelca el dropdown al
-        log y se lanza error (no se inventa un derecho que el portal no tiene).
+        Se mapea cada artículo a categoría (y se expande por palabras clave), se
+        deduplican y se agregan. Si ninguno coincide se vuelca el dropdown al
+        log y se usa la categoría de respaldo `_FALLBACK_DERECHO` (no se aborta
+        la tutela ni se inventa un derecho). Retorna cuántos se seleccionaron.
         """
         derechos = datos.get("derechos_vulnerados", [])
         tipo = datos.get("tipo", "")
@@ -671,27 +724,39 @@ class RadicadorBot:
                     value = await self._seleccionar_select("#DDLDerechos", candidato)
                 except Exception:
                     value = None
-                if value is None:
-                    continue
-                if value in elegidos:
+                if value is None or value in elegidos:
                     continue
                 elegidos.add(value)
+                await self._agregar_derecho_seleccionado(datos)
                 seleccionados += 1
-
-                if datos.get("medida_provisional") == "si":
-                    await self._js_click("#RdbSiMedida")
-                else:
-                    await self._js_click("#RdbNoMedida")
-
-                await self._cerrar_jconfirm()
-                await self._js_click("#btnAdd")
-                await self.page.wait_for_timeout(1000)
                 break
 
         if seleccionados < 1:
             await self._log_opciones_derechos()
-            raise ValueError("No se pudo seleccionar ningún derecho vulnerado en el portal")
+            logger.warning(
+                "Ningún derecho de la IA matcheó una categoría del portal: usando fallback '%s'",
+                _FALLBACK_DERECHO,
+            )
+            try:
+                value = await self._seleccionar_select("#DDLDerechos", _FALLBACK_DERECHO)
+            except Exception:
+                value = None
+            if value is None:
+                raise ValueError("No se pudo seleccionar ningún derecho vulnerado en el portal")
+            await self._capturar_evidencia("derechos_fallback")
+            await self._agregar_derecho_seleccionado(datos)
+            seleccionados = 1
         return seleccionados
+
+    async def _agregar_derecho_seleccionado(self, datos: dict):
+        """Marca medida provisional y agrega el derecho ya seleccionado a la lista."""
+        if datos.get("medida_provisional") == "si":
+            await self._js_click("#RdbSiMedida")
+        else:
+            await self._js_click("#RdbNoMedida")
+        await self._cerrar_jconfirm()
+        await self._js_click("#btnAdd")
+        await self.page.wait_for_timeout(1000)
 
     async def _log_opciones_derechos(self):
         """Vuelca las opciones reales de #DDLDerechos para diagnosticar el mapeo."""
@@ -703,8 +768,10 @@ class RadicadorBot:
 
     async def _paso_archivos(self, ruta_pdf: str):
         """Paso 7: Subir el PDF de la tutela como DEMANDA (obligatorio) y como PRUEBA."""
-        if not ruta_pdf:
-            return
+        if not ruta_pdf or not await asyncio.to_thread(os.path.isfile, ruta_pdf):
+            raise ValueError(
+                f"PDF de la tutela no disponible para subir al portal: {ruta_pdf!r}"
+            )
 
         # El portal exige el tipo de archivo DEMANDA (obligatorio) para radicar;
         # se sube primero DEMANDA, y el mismo PDF también como PRUEBA.

@@ -12,7 +12,7 @@ import asyncio
 import unittest
 from unittest import mock
 
-from app.bot.navegador import RadicadorBot
+from app.bot.navegador import RadicadorBot, _nombres_a_campos
 
 
 class FakeElement:
@@ -109,6 +109,53 @@ class TestDiscapacidad(unittest.TestCase):
         """Si no hay accionante_discapacidad, fallback a 'No Aplica'."""
         llamadas = self._capturar_discapacidad(dict(self._datos))
         self.assertIn(("#DDlTipodiscapacidad", "No Aplica"), llamadas)
+
+
+class TestNombresACampos(unittest.TestCase):
+    """Reparto de los 2 campos estructurados (nombres/apellidos) a los 4 del portal."""
+
+    def test_dos_nombres_dos_apellidos(self):
+        resultado = _nombres_a_campos("María Fernanda", "Pérez Gómez")
+        self.assertEqual(resultado, {
+            "primer_nombre": "María",
+            "segundo_nombre": "Fernanda",
+            "primer_apellido": "Pérez",
+            "segundo_apellido": "Gómez",
+        })
+
+    def test_un_solo_nombre(self):
+        resultado = _nombres_a_campos("Ana", "López Mora")
+        self.assertEqual(resultado["primer_nombre"], "Ana")
+        self.assertEqual(resultado["segundo_nombre"], "")
+        self.assertEqual(resultado["primer_apellido"], "López")
+        self.assertEqual(resultado["segundo_apellido"], "Mora")
+
+    def test_campos_vacios(self):
+        resultado = _nombres_a_campos("", "")
+        self.assertEqual(resultado["primer_nombre"], "")
+        self.assertEqual(resultado["primer_apellido"], "")
+
+    def test_el_paso_accionante_prefiere_campos_estructurados(self):
+        """Con accionante_nombres/apellidos, se escribe la partición exacta al portal."""
+        bot = _make_bot(FakePage())
+        campos_escritos = {}
+
+        async def fake_type(selector, value):
+            campos_escritos[selector] = value
+
+        with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_type_existing", new=fake_type):
+            asyncio.run(bot._paso_accionante({
+                "accionante_nombres": "María Fernanda",
+                "accionante_apellidos": "Pérez Gómez",
+                "accionante_email": "a@b.com",
+            }))
+        self.assertEqual(campos_escritos["#PrimerNombre"], "María")
+        self.assertEqual(campos_escritos["#SegundoNombre"], "Fernanda")
+        self.assertEqual(campos_escritos["#PrimerApellido"], "Pérez")
+        self.assertEqual(campos_escritos["#SegundoApellido"], "Gómez")
 
 
 if __name__ == "__main__":

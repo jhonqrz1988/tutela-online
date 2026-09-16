@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta
@@ -12,6 +13,7 @@ from app.database import SessionLocal
 from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 from app.services.whatsapp_service import enviar_texto, enviar_imagen
+from app.utils.validacion import validar_campo_personal
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,57 @@ CONEXION_TIMEOUT_SEG = 20
 # sobre la radicación. No debe arrancar una segunda instancia (ni programarla)
 # mientras esté en alguno de estos: el portal es sesión única por navegador.
 ESTADOS_RADICACION_EN_CURSO = ("iniciando", "continuando", "completando_formulario", "resolviendo_captcha", "enviando")
+
+# Campos que el bot del portal escribe literalmente en el formulario y, por
+# tanto, no pueden faltar al pre-vuelo (revisar navegador.py: _paso_lugar_envio,
+# _paso_accionante, _paso_accionado, _paso_derechos).
+REQUERIDOS_PRE_VUELO = (
+    "accionante_nombre",
+    "accionante_tipo_doc",
+    "accionante_cedula",
+    "accionante_telefono",
+    "accionante_email",
+    "ciudad",
+    "departamento",
+    "accionado",
+    "hechos",
+)
+
+# Tutelas de salud: la gente no siempre sabe qué derecho le vulneraron. Si la
+# IA no extrae ninguno, se usa el default salud/vida (categorías del portal que
+# los artículos 48 C.P. mapean en navegador._MAPEO_ARTICULO_CATEGORIA).
+DERECHOS_DEFAULT_SALUD = ("Salud", "Vida")
+
+
+def _pre_flight_radicacion(datos: dict, pdf_path: str) -> list[str]:
+    """Valida que la tutela esté lista para el bot ANTES de abrir Playwright.
+
+    Devuelve una lista de errores legibles (vacía = todo en orden). Como es un
+    dato malo (no un fallo de transición), NO debe sumar a `intentos`: el admin
+    corrige el dato y reintenta sin gastar el tope ni 2Captcha.
+
+    Efecto lateral intencional: si faltan `derechos_vulnerados` se rellena el
+    default salud/vida para tutelas de salud (y se persiste por el llamador).
+    """
+    errores: list[str] = []
+    for campo in REQUERIDOS_PRE_VUELO:
+        if not str(datos.get(campo, "")).strip():
+            errores.append(f"Falta el campo '{campo}' en los datos de la tutela")
+
+    if not datos.get("derechos_vulnerados"):
+        datos["derechos_vulnerados"] = list(DERECHOS_DEFAULT_SALUD)
+
+    for campo in ("accionante_cedula", "accionante_telefono", "accionante_email"):
+        error_campo = validar_campo_personal(campo, str(datos.get(campo, "")))
+        if error_campo:
+            errores.append(f"{campo}: {error_campo}")
+
+    if not pdf_path or not os.path.isfile(pdf_path):
+        errores.append(f"PDF de la tutela no encontrado: {pdf_path!r}")
+    elif os.path.getsize(pdf_path) == 0:
+        errores.append("PDF de la tutela está vacío (0 bytes)")
+
+    return errores
 
 
 def _correr_loop_hogar(loop: asyncio.AbstractEventLoop):
@@ -289,6 +342,25 @@ async def iniciar_radicacion(
 
         datos = json.loads(tutela.datos_json or "{}")
 
+        # Pre-vuelo: validar datos y PDF antes de abrir Playwright. Un fallo
+        # aquí NO toca `intentos` (es dato malo, no transición) y deja el
+        # motivo en `ultimo_error` para el panel admin.
+        errores_pre_vuelo = _pre_flight_radicacion(datos, tutela.pdf_path or "")
+        if errores_pre_vuelo:
+            tutela.datos_json = json.dumps(datos)  # persiste los derechos default
+            rad = session.execute(
+                select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+            ).scalar_one_or_none()
+            if not rad:
+                rad = Radicacion(tutela_id=tutela.id, estado="fallida")
+                session.add(rad)
+            else:
+                rad.estado = "fallida"
+            rad.ultimo_error = "Pre-vuelo: " + "; ".join(errores_pre_vuelo)
+            session.commit()
+            logger.warning(f"Tutela {tutela_id}: {rad.ultimo_error}")
+            return {"ok": False, "error": rad.ultimo_error}
+
         # Crear/actualizar registro de radicación
         rad = session.execute(
             select(Radicacion).where(Radicacion.tutela_id == tutela_id)
@@ -454,15 +526,23 @@ async def iniciar_radicacion(
                 return {"ok": False, "error": "No se pudo aplicar el código a tiempo. Intenta de nuevo."}
 
             if resultado is not None and not resultado.get("ok"):
-                await _fallar_y_avisar(
+                return await _manejar_fallo_codigo(
                     bot,
                     tutela,
                     rad,
                     session,
-                    resultado.get("error", "Error ingresando el código de email"),
-                    "⚠️ No se pudo ingresar tu código en el portal. Reinicia la radicación para intentarlo de nuevo.",
+                    motivo=f"Código de email rechazado por el portal: {resultado.get('error', 'error desconocido')}",
+                    error_reintento="El código fue rechazado. Reintentamos la radicación automáticamente.",
+                    aviso_reintento=(
+                        "⚠️ El código que enviaste fue rechazado por el portal y probablemente ya venció. "
+                        "Estamos reintentando la radicación automáticamente: llegará un código nuevo."
+                    ),
+                    error_final="Código de email rechazado y reintentos agotados. Reintenta desde el panel admin.",
+                    aviso_final=(
+                        "⚠️ El código de email fue rechazado varias veces y se agotaron los reintentos. "
+                        "Nuestro equipo revisará tu caso."
+                    ),
                 )
-                return {"ok": False, "error": resultado.get("error", "No se pudo ingresar el código")}
             logger.info(f"Código de email ingresado para tutela {tutela_id}")
 
             # Completar pasos restantes (5-10) con timeout de seguridad.
@@ -682,8 +762,18 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
 
         _registrar_paso(session, rad.id, "enviar_y_descargar", "ok")
 
-        # Extraer número de radicado
-        num_radicado = resultado_envio.get("num_radicado", "")
+        # Exigir número de radicado REAL: nunca marcar 'radicada' a ciegas si el
+        # portal no lo devolvió (bug en prod: tutelas 'radicada' sin número).
+        num_radicado = resultado_envio.get("num_radicado", "") or ""
+        if not num_radicado.strip():
+            rad.estado = "fallida"
+            rad.ultimo_error = "El portal no devolvió número de radicado: no se puede confirmar la radicación"
+            rad.constancia_path = resultado_envio.get("path")
+            rad.intentos = (rad.intentos or 0) + 1
+            _registrar_paso(session, rad.id, "enviar_y_descargar", "error", rad.ultimo_error)
+            session.commit()
+            return
+
         rad.num_radicado = num_radicado
         rad.constancia_path = resultado_envio.get("path")
         rad.estado = "radicada"

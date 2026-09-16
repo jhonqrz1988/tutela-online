@@ -118,6 +118,46 @@ class TestConfirmarDatosPersonales(_FlujoMixin):
         self.assertEqual(tutela.estado, "narracion")
         self.assertFalse(mock_ext.called)  # aún no se extrae nada
 
+    def test_recolectar_nombres_y_apellidos_compone_nombre_completo(self):
+        """Los 2 primeros pasos llenan accionante_nombres/apellidos y componen
+        accionante_nombre para todo el flujo aguas abajo (PDF, prompt, bot)."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_usuario_tutela(
+            session, "recogiendo_datos", {"tipo": "salud"}
+        )
+        asyncio.run(self._procesar(session, user.telefono, "María Fernanda"))
+        tutela = session.execute(select(Tutela)).scalars().all()[0]
+        self.assertEqual(tutela.estado, "recogiendo_datos")
+        self.assertEqual(json.loads(tutela.datos_json)["accionante_nombres"], "María Fernanda")
+
+        asyncio.run(self._procesar(session, user.telefono, "Pérez Gómez"))
+        tutela = session.execute(select(Tutela)).scalars().all()[0]
+        guardados = json.loads(tutela.datos_json)
+        self.assertEqual(guardados["accionante_nombres"], "María Fernanda")
+        self.assertEqual(guardados["accionante_apellidos"], "Pérez Gómez")
+        self.assertEqual(guardados["accionante_nombre"], "María Fernanda Pérez Gómez")
+
+    def test_corregir_apellidos_recompone_nombre_completo(self):
+        """Corregir 'apellidos' por su número actualiza accionante_nombre."""
+        session = _nueva_sesion()
+        datos = {
+            **_datos_personales_completos(),
+            "accionante_nombres": "Juan",
+            "accionante_apellidos": "Perez",
+            "accionante_nombre": "Juan Perez",
+        }
+        user, tutela = self._crear_usuario_tutela(
+            session, "confirmar_datos_personales", datos
+        )
+        idx = CAMPOS.index("accionante_apellidos") + 1
+        asyncio.run(self._procesar(session, user.telefono, "2"))
+        asyncio.run(self._procesar(session, user.telefono, str(idx)))
+        asyncio.run(self._procesar(session, user.telefono, "Pérez Gómez"))
+        tutela = session.execute(select(Tutela)).scalars().all()[0]
+        guardados = json.loads(tutela.datos_json)
+        self.assertEqual(guardados["accionante_apellidos"], "Pérez Gómez")
+        self.assertEqual(guardados["accionante_nombre"], "Juan Pérez Gómez")
+
     def test_corregir_solamente_escribe_el_valor_real(self):
         """Al elegir el campo y escribir el nuevo valor, `datos` cambia de verdad."""
         session = _nueva_sesion()
@@ -395,6 +435,29 @@ class TestSalirReiniciar(_FlujoMixin):
         self.assertEqual(len(session.execute(select(Tutela)).scalars().all()), 0)
         self.assertEqual(len(session.execute(select(Radicacion)).scalars().all()), 0)
         self.assertEqual(len(session.execute(select(PasoRadicacion)).scalars().all()), 0)
+
+
+class TestRecomponerNombre(unittest.TestCase):
+    def test_compone_nombre_completo(self):
+        datos = {"accionante_nombres": "María Fernanda", "accionante_apellidos": "Pérez Gómez"}
+        self.assertEqual(
+            webhook_whatsapp._recomponer_nombre(datos),
+            "María Fernanda Pérez Gómez",
+        )
+        self.assertEqual(datos["accionante_nombre"], "María Fernanda Pérez Gómez")
+
+    def test_compone_con_mismo_campo_dos_veces(self):
+        """Llamar de nuevo (ej. al corregir) sobrescribe el nombre compuesto."""
+        datos = {"accionante_nombres": "Juan", "accionante_apellidos": "Perez"}
+        webhook_whatsapp._recomponer_nombre(datos)
+        datos["accionante_apellidos"] = "Pérez Gómez"
+        webhook_whatsapp._recomponer_nombre(datos)
+        self.assertEqual(datos["accionante_nombre"], "Juan Pérez Gómez")
+
+    def test_campos_vacios_no_componen(self):
+        datos = {}
+        self.assertEqual(webhook_whatsapp._recomponer_nombre(datos), "")
+        self.assertNotIn("accionante_nombre", datos)
 
 
 class TestMapeoClinicosAlPrompt(unittest.TestCase):

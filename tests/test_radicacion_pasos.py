@@ -9,6 +9,8 @@ Cubre:
 """
 import asyncio
 import json
+import os
+import tempfile
 import unittest
 from unittest import mock
 
@@ -35,6 +37,37 @@ def _nueva_sesion():
     return TestingSession()
 
 
+_PDF_PRUEBA = None
+
+
+def _pdf_prueba() -> str:
+    """Crea (una sola vez) un PDF real temporal para pasar el pre-vuelo."""
+    global _PDF_PRUEBA
+    if _PDF_PRUEBA is None or not os.path.isfile(_PDF_PRUEBA):
+        fd, _PDF_PRUEBA = tempfile.mkstemp(suffix="_tutela_prueba.pdf")
+        os.write(fd, b"%PDF-1.4 dummy pre-vuelo")
+        os.close(fd)
+    return _PDF_PRUEBA
+
+
+def _datos_completos() -> dict:
+    """Datos mínimos que el pre-vuelo de radicación exige al bot."""
+    return {
+        "tipo": "salud",
+        "accionante_nombre": "Ana López",
+        "accionante_tipo_doc": "CC",
+        "accionante_cedula": "1030241555",
+        "accionante_telefono": "3001234567",
+        "accionante_email": "ana@correo.com",
+        "ciudad": "Bogotá",
+        "departamento": "Cundinamarca",
+        "accionado": "Nueva EPS",
+        "accionado_tipo": "juridica",
+        "hechos": "Me negaron un medicamento.",
+        "derechos_vulnerados": ["Salud"],
+    }
+
+
 def _crear_tutela(session, estado="pendiente"):
     user = User(telefono="573009990001", estado="activo", consentimiento=True)
     session.add(user)
@@ -43,7 +76,8 @@ def _crear_tutela(session, estado="pendiente"):
         user_id=user.id,
         tipo="salud",
         estado=estado,
-        datos_json=json.dumps({"tipo": "salud", "eps": "Salud Total"}),
+        datos_json=json.dumps(_datos_completos()),
+        pdf_path=_pdf_prueba(),
     )
     session.add(tutela)
     session.commit()
@@ -184,6 +218,9 @@ class TestNavegadorDerechos(unittest.TestCase):
                 clase.scripts.append(script)
                 return []
 
+            async def wait_for_timeout(self, ms):
+                return None
+
         return PageOpts()
 
     def _bot_con_select(self, resolver):
@@ -226,27 +263,82 @@ class TestNavegadorDerechos(unittest.TestCase):
         bot._js_click.assert_any_call("#RdbNoMedida")
         log_derechos.assert_not_awaited()
 
-    def test_sin_opciones_matchea_aborta_con_error_y_dumpa_opciones(self):
+    def test_sin_match_de_ia_usa_fallback_del_portal_y_dumpa_opciones(self):
+        """(Parte 3) Si la IA no mapea a ninguna categoría del portal, el bot ya
+        NO aborta la tutela: selecciona la categoría fallback (la más usada en
+        tutelas de salud), vuelca las opciones para diagnóstico y continúa."""
+        from app.bot.navegador import _candidatos_derecho
+
         page = self._pagina_que_guarda_scripts()
-        bot = self._bot_con_select(lambda sel, label: None)
+        esperados = sum(
+            len(_candidatos_derecho(d, "salud")) for d in ("Art. 48 CP", "Art. 49 CP")
+        )
+        contador = {"n": 0}
+
+        async def resolver(sel, label):
+            contador["n"] += 1
+            return label if contador["n"] > esperados else None
+
+        bot = self._bot_con_select(resolver)
         bot.page = page
         bot._js_click = mock.AsyncMock()
         bot._cerrar_jconfirm = mock.AsyncMock()
         bot._esperar_select_ajax = mock.AsyncMock()
+        bot._capturar_evidencia = mock.AsyncMock()
+        n = asyncio.run(bot._paso_derechos(self._datos_salud))
+        self.assertEqual(n, 1, "Debe seleccionarse la categoría fallback")
+        bot._js_click.assert_any_call("#btnAdd")
+        self.assertTrue(any("DDLDerechos option" in s for s in self.scripts),
+                        "Debe volcar las opciones del dropdown para diagnosticar")
+        bot._capturar_evidencia.assert_awaited_once()
+
+    def test_fallback_tambien_inexistente_aborta_con_error(self):
+        """Si ni siquiera el fallback existe en el portal, se aborta con error
+        (no se inventa un derecho): el admin revisa el mapeo con el dump."""
+        page = self._pagina_que_guarda_scripts()
+
+        async def resolver(sel, label):
+            return None
+
+        bot = self._bot_con_select(resolver)
+        bot.page = page
+        bot._js_click = mock.AsyncMock()
+        bot._cerrar_jconfirm = mock.AsyncMock()
+        bot._esperar_select_ajax = mock.AsyncMock()
+        bot._capturar_evidencia = mock.AsyncMock()
         with self.assertRaises(ValueError):
             asyncio.run(bot._paso_derechos(self._datos_salud))
         self.assertTrue(any("DDLDerechos option" in s for s in self.scripts),
                         "Debe volcar las opciones del dropdown para diagnosticar")
 
-    def test_sin_derechos_listados_no_selecciona_nada(self):
-        bot = self._bot_con_select(lambda sel, label: "salud")
+    def test_sin_derechos_listados_usa_fallback_salud(self):
+        """(Parte 3) Sin derechos listados (defensivo: el pre-vuelo ya rellena
+        salud/vida) el bot selecciona el fallback en vez de abortar."""
+
+        async def resolver(sel, label):
+            return "salud"
+
+        bot = self._bot_con_select(resolver)
         bot._js_click = mock.AsyncMock()
         bot._cerrar_jconfirm = mock.AsyncMock()
         bot._esperar_select_ajax = mock.AsyncMock()
-        with mock.patch.object(bot, "_log_opciones_derechos", new=mock.AsyncMock()), \
-             self.assertRaises(ValueError):
-            asyncio.run(bot._paso_derechos({"tipo": "salud", "derechos_vulnerados": []}))
-        bot._js_click.assert_not_awaited()
+        bot._capturar_evidencia = mock.AsyncMock()
+        with mock.patch.object(bot, "_log_opciones_derechos", new=mock.AsyncMock()):
+            n = asyncio.run(bot._paso_derechos({"tipo": "salud", "derechos_vulnerados": []}))
+        self.assertEqual(n, 1, "Debe seleccionarse el fallback")
+        bot._js_click.assert_any_call("#btnAdd")
+
+    def test_candidatos_expanden_por_articulo_y_palabras_clave(self):
+        """(Parte 3) El mapeo cubre más artículos y también expande por palabras
+        clave del texto del derecho (no solo por número de artículo)."""
+        from app.bot.navegador import _candidatos_derecho
+
+        self.assertIn("educación", _candidatos_derecho("Art. 27 CP", "salud"))
+        self.assertIn("petición", _candidatos_derecho("Art. 23 CP", "salud"))
+        self.assertIn("trabajo", _candidatos_derecho("Despido de la trabajadora", "trabajo"))
+        self.assertIn("salud", _candidatos_derecho("Seguridad social en salud", "salud"))
+        self.assertIn("vida", _candidatos_derecho("Derecho a la vida", "salud"))
+        self.assertIn("vivienda", _candidatos_derecho("Vivienda digna", "vivienda"))
 
 
 class TestNavegadorEnviarValidaExito(unittest.TestCase):
@@ -408,6 +500,53 @@ class TestServicioRegistraPasos(unittest.TestCase):
         ).scalar_one()
         self.assertEqual(rad.estado, "fallida")
         self.assertIn("ciudad", rad.ultimo_error or "")
+
+    def test_sin_numero_de_radicado_no_marco_radicada(self):
+        """(Parte 3) Si el portal no devuelve número de radicado, la tutela NO
+        se marca 'radicada' a ciegas: va a fallida con la constancia guardada y
+        mensaje claro para que el admin verifique (nunca radicado vacío)."""
+        from app.models.radicacion import Radicacion
+
+        class FakeBot:
+            def __init__(self):
+                self.on_paso = None
+
+            async def iniciar(self):
+                pass
+
+            async def navegar_portal(self):
+                pass
+
+            async def llenar_formulario(self, datos):
+                return {"ok": True, "requiere_codigo_email": False}
+
+            async def completar_post_codigo(self, datos, ruta):
+                return {"ok": True}
+
+            async def resolver_recaptcha(self):
+                return True
+
+            async def enviar_y_descargar(self):
+                return {"path": "storage/constancia_sin_num.png", "num_radicado": ""}
+
+            async def tomar_screenshot(self, nombre):
+                return None
+
+            async def cerrar(self):
+                pass
+
+        session, tutela, _ = self._fondo(FakeBot())
+
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela.id)
+        ).scalar_one()
+        self.assertEqual(rad.estado, "fallida", "Sin número no puede estar radicada")
+        self.assertEqual(rad.num_radicado or "", "", "No debe haber radicado vacío tampoco falso")
+        self.assertIn("radicado", rad.ultimo_error or "")
+        self.assertEqual(rad.constancia_path, "storage/constancia_sin_num.png",
+                         "La constancia se guarda como evidencia para el admin")
+        tutela_actual = session.get(Tutela, tutela.id)
+        self.assertNotEqual(tutela_actual.estado, "radicada")
 
 
 class TestAdminExponePasos(unittest.TestCase):

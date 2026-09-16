@@ -20,7 +20,13 @@ class TestWhatsAppEndpoints(unittest.TestCase):
     def test_health(self):
         resp = self.client.get("/health")
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json().get("status"), "ok")
+        body = resp.json()
+        self.assertEqual(body.get("status"), "ok")
+        self.assertEqual(body.get("database"), "ok")
+        self.assertIn("disk", body, "El health debe reportar el estado del disco")
+        self.assertTrue(body["disk"].get("writable"), "El storage debe ser escribible")
+        self.assertGreater(body["disk"].get("free_bytes", 0), 0,
+                           "Debe reportarse espacio libre del disco")
 
     def test_webhook_meta_verification(self):
         resp = self.client.get(
