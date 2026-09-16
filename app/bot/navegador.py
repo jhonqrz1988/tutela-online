@@ -21,6 +21,12 @@ TYPE_DELAY = 50
 # Tiempo máximo esperando el campo del código de email (antes colgaba el
 # loop de Playwright sin límite y la radicación quedaba en 'continuando').
 ESPERA_CODIGO_SELECTOR_MS = 20000
+# El portal resuelve los nombres del accionante por AJAX al escribir la cédula
+# (autofill del borrador que guarda para ese documento) y puede tardar en pisar
+# los campos tras nuestra escritura. Antes de re-escribir la identidad se espera
+# a que ese AJAX se asiente, o el autofill vuelve a borrar lo que escribimos
+# (queja de prod: "E  Ramirez Montoya" y tipo doc en "Seleccione...").
+AUTOFILL_SETTLE_MS = 1500
 
 # ¿Está abierto el CAJÓN del código de verificación? Un overlay visible
 # (jquery-confirm `.jconfirm`, `.modal`, `[role=dialog]`) con un input
@@ -544,6 +550,47 @@ class RadicadorBot:
         if ciudad:
             await self._seleccionar_select("#DDlCiudadHechos", ciudad)
 
+    async def _aplicar_identidad_accionante(self, datos: dict):
+        """(Re)escribe la identidad del accionante con NUESTRO dato.
+
+        El portal re-renderiza la sección del accionante al resolver el AJAX del
+        tipo de documento y de la verificación del correo, con resultados
+        conocidos en prod: tipo doc en 'Seleccione...', nombres autocompletados
+        del borrador por cédula ('E  Ramirez Montoya') y correo/teléfono vacíos.
+
+        A propósito NO se re-escribe la cédula: escribirla relanza el autofill
+        del portal, que vuelve a pisar los nombres (fue la causa de que el
+        readback de prod siguiera viéndose mal tras la re-aplicación vieja).
+        """
+        nombres_s = (datos.get("accionante_nombres") or "").strip()
+        apellidos_s = (datos.get("accionante_apellidos") or "").strip()
+        if nombres_s and apellidos_s:
+            nombre = _nombres_a_campos(nombres_s, apellidos_s)
+        else:
+            nombre = _separar_nombre(datos.get("accionante_nombre", ""))
+        tipo_doc = datos.get("accionante_tipo_doc", "CC")
+        email = datos.get("accionante_email", "")
+        self._email_accionante = email
+
+        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
+        await self.page.wait_for_timeout(400)
+        await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
+        await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
+        await self._type_existing("#PrimerApellido", nombre["primer_apellido"])
+        await self._type_existing("#SegundoApellido", nombre["segundo_apellido"])
+        await self._type_existing("#Telefono", datos.get("accionante_telefono", ""))
+        await self._type_existing("#Email", email)
+
+        discapacidad = datos.get("accionante_discapacidad") or "No Aplica"
+        try:
+            await self._seleccionar_select("#DDlTipodiscapacidad", discapacidad)
+        except Exception:
+            logger.warning("No se pudo seleccionar tipo discapacidad")
+
+        # El autofill del portal deja el select del tipo de documento en
+        # 'Seleccione...': re-seleccionarlo al final.
+        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
+
     async def _paso_accionante(self, datos: dict) -> bool:
         """Paso 4: Datos del accionante. Retorna True si requiere código de email."""
         nombres_s = (datos.get("accionante_nombres") or "").strip()
@@ -563,6 +610,11 @@ class RadicadorBot:
         # (un campo con valor previo truncaría o duplicaría el dato).
         cedula = re.sub(r"[\s.]", "", str(datos.get("accionante_cedula", "")))
         await self._type_existing("#NumeroDocumento", cedula)
+
+        # Esperar el autofill del portal (nombres resueltos por cédula): si
+        # escribimos los nombre antes de que asiente, el AJAX los pisa (queja
+        # de prod: nombre queda "E  Ramirez Montoya" en vez del completo).
+        await self.page.wait_for_timeout(AUTOFILL_SETTLE_MS)
 
         # Nombres (typing lento para evitar bloqueo de paste)
         await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
@@ -587,20 +639,14 @@ class RadicadorBot:
         self._email_accionante = email
         await self._type_existing("#Email", email)
 
-        # Re-aplicar identidad (tipo documento + cédula + nombres): al resolver
-        # el AJAX del tipo de documento, el portal puede re-renderizar estos
-        # campos y dejar el select en 'Seleccione...' (queja de prod) o los
-        # nombres en blanco / autocompletados del borrador que guarda para esa
-        # cédula (queja de prod: "no selecciona el tipo de documento" y "no
-        # pone bien los nombres"). Re-escribir al final garantiza que lo que
-        # valida el correo y se confirma en "Confirmar Datos" sea NUESTRO dato.
-        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
-        await self.page.wait_for_timeout(300)
-        await self._type_existing("#NumeroDocumento", cedula)
-        await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
-        await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
-        await self._type_existing("#PrimerApellido", nombre["primer_apellido"])
-        await self._type_existing("#SegundoApellido", nombre["segundo_apellido"])
+        # Re-aplicar identidad (tipo documento + nombres + teléfono + email +
+        # discapacidad): al resolver el AJAX del tipo de documento, el portal
+        # puede re-renderizar estos campos y dejar el select en 'Seleccione...'
+        # (queja de prod) o los nombres en blanco / autocompletados del borrador
+        # que guarda para esa cédula. Se re-escribe la identidad de NUESTROS
+        # datos (sin tocar de nuevo la cédula: re-escribirla relanzaría el
+        # autofill y volvería a pisar los nombres).
+        await self._aplicar_identidad_accionante(datos)
 
         # Readback: volcar qué quedó realmente en el formulario del portal
         # (tipo documento, nombres, apellidos, cédula) para diagnosticar en el
@@ -1028,6 +1074,24 @@ class RadicadorBot:
 
         try:
             logger.info("Retomando formulario post-verificación email...")
+
+            # El postback de #btnValidar (y el re-ingreso del correo) re-renderiza
+            # la sección del accionante desde el servidor y borra lo que
+            # escribimos (quejas de prod). Re-aplicar la identidad ANTES del
+            # accionado para que en "Confirmar Datos" quede NUESTRO dato.
+            await self._aplicar_identidad_accionante(datos)
+            try:
+                readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
+                logger.info(f"[readback post-email] {json.dumps(readback, ensure_ascii=False)}")
+                if readback and (
+                    str(readback.get("tipo_doc") or "").strip() in ("", "Seleccione...")
+                    or not str(readback.get("primer_nombre") or "").strip()
+                ):
+                    logger.warning(
+                        "[readback post-email] el portal NO quedó con el tipo de documento/identidad correcto"
+                    )
+            except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+                logger.warning(f"No se pudo leer el formulario del accionante post-email: {e}")
 
             # Paso 5: Accionado
             self._paso_actual = "paso_5_accionado"

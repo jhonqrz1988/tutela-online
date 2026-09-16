@@ -155,6 +155,7 @@ class TestNavegadorReportaPasos(unittest.TestCase):
         """Los pasos 5-8 se registran como ok."""
         bot, pasos = self._bot_con_colector()
         with mock.patch.object(settings_sim(), "simulate_bot", False), \
+             mock.patch.object(bot, "_aplicar_identidad_accionante", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_paso_accionado", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_paso_derechos", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_paso_archivos", new=mock.AsyncMock()), \

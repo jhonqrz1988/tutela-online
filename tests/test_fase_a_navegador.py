@@ -202,6 +202,70 @@ class TestNombresACampos(unittest.TestCase):
             len(veces_primer_nombre), 2, "Los nombres se re-escriben al final"
         )
 
+    def test_reaplicar_identidad_no_reescribe_la_cedula(self):
+        """Re-escribir la cédula relanza el autofill del portal (nombres
+        resueltos por cédula) y vuelve a pisar los nombres — la causa de que
+        el readback de prod siguiera viendo 'E  Ramirez Montoya'/'Seleccione...'
+        tras la re-aplicación. La re-aplicación escribe nombres/teléfono/email
+        pero NUNCA la cédula."""
+        bot = _make_bot(FakePage())
+        escritos = {}
+        selecciones = []
+
+        async def fake_type(selector, value):
+            escritos[selector] = value
+
+        async def fake_select(selector, label):
+            selecciones.append((selector, label))
+
+        with mock.patch.object(bot, "_seleccionar_select", new=fake_select), \
+             mock.patch.object(bot, "_type_existing", new=fake_type):
+            asyncio.run(bot._aplicar_identidad_accionante({
+                "accionante_nombres": "María Fernanda",
+                "accionante_apellidos": "Pérez Gómez",
+                "accionante_telefono": "31174598",
+                "accionante_email": "harold0.1@hotmail.com",
+            }))
+
+        self.assertNotIn(
+            "#NumeroDocumento", escritos,
+            "Re-escribir la cédula relanza el autofill y pisa los nombres",
+        )
+        self.assertEqual(escritos["#PrimerNombre"], "María")
+        self.assertEqual(escritos["#SegundoNombre"], "Fernanda")
+        self.assertEqual(escritos["#PrimerApellido"], "Pérez")
+        self.assertEqual(escritos["#SegundoApellido"], "Gómez")
+        self.assertEqual(escritos["#Telefono"], "31174598")
+        self.assertEqual(escritos["#Email"], "harold0.1@hotmail.com")
+        veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CC")]
+        self.assertGreaterEqual(
+            len(veces_cc), 1, "El tipo de documento debe seleccionarse (y re-seleccionarse al final)"
+        )
+        self.assertIn(("#DDlTipodiscapacidad", "No Aplica"), selecciones)
+
+    def test_completar_post_codigo_reaplica_identidad_tras_verificar_email(self):
+        """El postback de #btnValidar (y el re-ingreso del correo) re-renderiza
+        la sección del accionante desde el servidor y borra lo escrito. Antes
+        del paso 5 (accionado) se debe re-aplicar la identidad del accionante."""
+        bot = _make_bot(FakePage())
+        bot.on_paso = None
+        reaplicado = []
+
+        async def fake_reaplicar(datos):
+            reaplicado.append(datos)
+
+        with mock.patch("app.bot.navegador.settings.simulate_bot", False), \
+             mock.patch.object(bot, "_aplicar_identidad_accionante", new=fake_reaplicar), \
+             mock.patch.object(bot, "_paso_accionado", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_paso_derechos", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_paso_archivos", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_paso_juramento", new=mock.AsyncMock()):
+            resultado = asyncio.run(bot.completar_post_codigo({"cedula": "1029345"}, "ruta.pdf"))
+
+        self.assertTrue(resultado.get("ok"))
+        self.assertEqual(len(reaplicado), 1, "La identidad debe re-aplicarse tras la verificación del email")
+        self.assertEqual(reaplicado[0], {"cedula": "1029345"})
+
     def test_el_accionado_siempre_es_juridica(self):
         """El accionado de la tutela SIEMPRE es una EPS (persona jurídica):
         el paso selecciona 'Jurídica' en #DDlTipoSujeto + NIT aunque los datos
