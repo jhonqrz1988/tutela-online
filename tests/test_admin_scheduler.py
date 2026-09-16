@@ -99,6 +99,20 @@ class TestEstadoScheduler(unittest.TestCase):
             m_start.assert_not_called()
         settings.enable_scheduler = False
 
+    def test_cron_scheduler_evalua_en_zona_bogota(self):
+        """El cron '8-16' debe evaluarse en America/Bogota, NO en UTC: en Render
+        (UTC) el job corría 08:00-16:00 UTC (03:00-11:00 Bogotá) y la radicación
+        automática nunca disparaba en la ventana hábil (8-12/14-16 Bogotá)."""
+        from app.tasks import scheduler as sched
+
+        sched._automatico_enabled = True
+        with mock.patch.object(sched, "scheduler") as sched_mock:
+            sched_mock.get_job.return_value = None
+            sched_mock.add_job.return_value = None
+            sched._agregar_job()
+            _, kwargs = sched_mock.add_job.call_args
+            self.assertEqual(kwargs.get("timezone"), "America/Bogota")
+
 
 class TestReintentarAmpliado(unittest.TestCase):
     def _post(self, tutela_id, session):

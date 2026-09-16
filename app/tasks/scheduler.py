@@ -33,6 +33,11 @@ def _agregar_job():
         hour="8-16",
         minute="*/15",
         day_of_week="mon-fri",
+        # SIN timezone el cron se evalúa en la zona horaria del proceso (en
+        # Render es UTC): '8-16' corría de 08:00 a 16:00 UTC = 03:00-11:00
+        # Bogotá, por lo que el job jamás disparaba en la ventana hábil
+        # (8-12/14-16 Bogotá) → la radicación automática nunca arrancaba.
+        timezone="America/Bogota",
         id="radicacion_automatica",
         replace_existing=True,
         max_instances=1,
