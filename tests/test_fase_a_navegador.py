@@ -367,6 +367,14 @@ class TestDiagnosticoAccionante(unittest.TestCase):
         bot = _make_bot(FakePage())
         asyncio.run(bot._log_diagnostico_accionante())
 
+    def test_readback_accionante_no_rompe_sin_pagina(self):
+        """La sonda de readback intermedio nunca rompe el flujo aunque el
+        evaluate falle (página cerrada / elemento ausente)."""
+        bot = _make_bot(None)
+        bot.page = FakePage()
+        readback = asyncio.run(bot._readback_accionante("accionante_1_tras_cedula"))
+        self.assertIsNone(readback)
+
 
 if __name__ == "__main__":
     unittest.main()

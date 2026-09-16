@@ -579,6 +579,22 @@ class RadicadorBot:
         if ciudad:
             await self._seleccionar_select("#DDlCiudadHechos", ciudad)
 
+    async def _readback_accionante(self, tag: str) -> dict | None:
+        """Vuelca el estado real de la sección accionante en el portal.
+
+        Los usamos en cada fase del llenado para ubicar QUÉ acción la limpia
+        (los campos existen/visibles per diagnóstico, pero a veces quedan en
+        blanco): escribir la cédula dispara el autofill y cambiar el select del
+        tipo de documento puede disparar un postback que re-renderiza la sección.
+        """
+        try:
+            readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
+            logger.info(f"[readback {tag}] {json.dumps(readback, ensure_ascii=False)}")
+            return readback
+        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            logger.warning(f"No se pudo leer el accionante ({tag}): {e}")
+            return None
+
     async def _aplicar_identidad_accionante(self, datos: dict):
         """(Re)escribe la identidad del accionante con NUESTRO dato.
 
@@ -639,11 +655,13 @@ class RadicadorBot:
         # (un campo con valor previo truncaría o duplicaría el dato).
         cedula = re.sub(r"[\s.]", "", str(datos.get("accionante_cedula", "")))
         await self._type_existing("#NumeroDocumento", cedula)
+        await self._readback_accionante("accionante_1_tras_cedula")
 
         # Esperar el autofill del portal (nombres resueltos por cédula): si
         # escribimos los nombre antes de que asiente, el AJAX los pisa (queja
         # de prod: nombre queda "E  Ramirez Montoya" en vez del completo).
         await self.page.wait_for_timeout(AUTOFILL_SETTLE_MS)
+        await self._readback_accionante("accionante_2_tras_autofill")
 
         # Nombres (typing lento para evitar bloqueo de paste)
         await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
@@ -667,6 +685,7 @@ class RadicadorBot:
         # el correo y `ingresar_codigo_email` necesita re-ingresarlo.
         self._email_accionante = email
         await self._type_existing("#Email", email)
+        await self._readback_accionante("accionante_3_tras_escritura")
 
         # Re-aplicar identidad (tipo documento + nombres + teléfono + email +
         # discapacidad): al resolver el AJAX del tipo de documento, el portal
