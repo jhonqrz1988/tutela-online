@@ -461,6 +461,17 @@ def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_
     from app.services.radicacion_service import despachar_radicacion
 
     t.estado = "pendiente_radicacion"
+
+    # Al reintentar manualmente se reinicia el presupuesto de reintentos: sin
+    # esto la tutela queda muerta para siempre para el scheduler
+    # (guard `intentos >= 3` en jobs.py) aunque el admin la quiera re-lanzar.
+    rad = session.execute(
+        select(Radicacion).where(Radicacion.tutela_id == t.id)
+    ).scalar_one_or_none()
+    if rad:
+        rad.intentos = 0
+        rad.ultimo_error = None
+
     session.commit()
     try:
         resultado = despachar_radicacion(t.id, forzar=True)

@@ -171,6 +171,35 @@ class TestReintentarAmpliado(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertTrue(resp.json().get("ok"))
 
+    def test_reintentar_resetea_intentos(self):
+        """'Ejecutar bot (reintentar)' debe reiniciar el presupuesto de
+        reintentos: si no, una tutela con intentos>=3 queda para siempre fuera
+        del scheduler aunque el admin la re-lance manualmente."""
+        session = _nueva_sesion()
+        user = User(telefono="573009990104", nombre="Luz Pardo", consentimiento=True)
+        session.add(user)
+        session.flush()
+        t = Tutela(user_id=user.id, tipo="salud", estado="fallida", datos_json="{}")
+        session.add(t)
+        session.commit()
+        rad = Radicacion(tutela_id=t.id, estado="fallida", intentos=7, ultimo_error="agotado")
+        session.add(rad)
+        session.commit()
+
+        from app.services import radicacion_service as rad_svc
+
+        def fake_despachar(tutela_id, forzar=False):
+            return {"ok": True, "despachada": True}
+
+        with mock.patch.object(rad_svc, "despachar_radicacion", side_effect=fake_despachar):
+            resp = self._post(t.id, session)
+
+        self.assertEqual(resp.status_code, 200)
+        session.expire_all()
+        rad_actual = session.get(Radicacion, rad.id)
+        self.assertEqual(rad_actual.intentos, 0)
+        self.assertIsNone(rad_actual.ultimo_error)
+
 
 class TestPanelIncluyePasos(unittest.TestCase):
     def test_admin_panel_muestra_progreso_bot(self):
