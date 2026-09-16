@@ -909,34 +909,47 @@ class RadicadorBot:
             return False
 
         # Insertar el token en el textarea oculto de reCAPTCHA y disparar el
-        # callback registrado por el portal.  Google cambia los nombres de las
-        # propiedades internas (client.T, client.L, …) con cada versión; en
-        # vez de depender de un nombre fijo, buscamos el callback con BFS:
-        # recorremos el árbol de ___grecaptcha_cfg.clients y llamamos la
-        # primera función de un solo argumento que encontremos (el callback).
+        # callback registrado por el portal.  Google renombra las propiedades
+        # internas (client.T, client.L, …) con cada versión, así que no
+        # dependemos de un nombre fijo: buscamos en el árbol de
+        # ___grecaptcha_cfg.clients CUALQUIER objeto con propiedad .callback
+        # (la config del widget guarda ahí el callback del sitio, estructura
+        # estable en reCAPTCHA v2) y además disparamos eventos input/change en
+        # el textarea por si el portal lo lee directo.
         try:
             await self.page.evaluate(f"""
                 document.getElementById('g-recaptcha-response').value = '{token}';
-                (function triggerCallback() {{
+                (function() {{
+                    var hecho = false;
+                    var ta = document.getElementById('g-recaptcha-response');
+                    if (ta) {{
+                        ta.dispatchEvent(new Event('input', {{bubbles: true}}));
+                        ta.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    }}
                     if (typeof ___grecaptcha_cfg === 'undefined') return;
                     var clients = ___grecaptcha_cfg.clients;
                     for (var key in clients) {{
-                        var queue = [clients[key]];
-                        while (queue.length > 0) {{
-                            var obj = queue.shift();
+                        var cola = [clients[key]];
+                        var vistos = 0;
+                        while (cola.length > 0 && vistos < 300 && !hecho) {{
+                            var obj = cola.shift();
+                            vistos++;
                             if (!obj || typeof obj !== 'object') continue;
-                            for (var prop in obj) {{
+                            try {{
+                                if (typeof obj.callback === 'function') {{
+                                    obj.callback('{token}');
+                                    hecho = true;
+                                    break;
+                                }}
+                            }} catch(e) {{}}
+                            for (var p in obj) {{
                                 try {{
-                                    var val = obj[prop];
-                                    if (typeof val === 'function' && val.length === 1) {{
-                                        try {{ val('{token}'); return; }} catch(e) {{}}
-                                    }}
-                                    if (typeof val === 'object' && val !== null) {{
-                                        queue.push(val);
-                                    }}
+                                    var val = obj[p];
+                                    if (typeof val === 'object' && val !== null) cola.push(val);
                                 }} catch(e) {{}}
                             }}
                         }}
+                        if (hecho) break;
                     }}
                 }})();
             """)
@@ -967,6 +980,10 @@ class RadicadorBot:
             # NO se radicó — antes marcábamos 'radicada' igual (bug en prod).
             num_radicado = await self._leer_num_radicado()
             overlay_texto = await self._leer_overlay()
+            logger.info(
+                f"Tras envío tutela: num_radicado={num_radicado or '(vacío)'} "
+                f"overlay={'SÍ' if overlay_texto else 'no'}"
+            )
             if not num_radicado and overlay_texto:
                 if _parece_error_validacion(overlay_texto):
                     await self._capturar_evidencia("envio_validacion_error")
