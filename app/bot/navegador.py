@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -1228,4 +1229,13 @@ class RadicadorBot:
         if settings.simulate_bot:
             return
         if self.page:
-            await self.page.close()
+            # Cerrar TODO el contexto, no solo la pestaña: cada intento crea un
+            # contexto aislado (BrowserManager.new_page -> new_context) para
+            # "empezar de cero"; si solo cerramos la page, el contexto queda
+            # huérfano en el chromium singleton y acumula memoria entre
+            # intentos (problema real en Render con muchos reintentos).
+            with contextlib.suppress(Exception):  # contexto ya pudo estar cerrado
+                await self.page.context.close()
+            with contextlib.suppress(Exception):  # context.close ya cierra sus pages
+                await self.page.close()
+            self.page = None

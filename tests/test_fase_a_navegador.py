@@ -25,10 +25,19 @@ class FakeElement:
         return self._visible
 
 
+class FakeContext:
+    def __init__(self):
+        self._cerrado = False
+
+    async def close(self):
+        self._cerrado = True
+
+
 class FakePage:
     def __init__(self, cajon_abierto: bool = False):
         self.cajon_abierto = cajon_abierto
         self.tipodiscapacidad_argumento = None
+        self.context = FakeContext()
 
     async def wait_for_function(self, script, **kwargs):
         if self.cajon_abierto:
@@ -158,6 +167,19 @@ class TestNombresACampos(unittest.TestCase):
         self.assertEqual(campos_escritos["#SegundoNombre"], "Fernanda")
         self.assertEqual(campos_escritos["#PrimerApellido"], "Pérez")
         self.assertEqual(campos_escritos["#SegundoApellido"], "Gómez")
+
+
+class TestCerrarContexto(unittest.TestCase):
+    def test_cerrar_cierra_el_contexto_completo_no_solo_la_pagina(self):
+        """Cada intento abre su propio contexto (BrowserManager.new_context); si
+        cerrar() no lo libera, se acumulan contextos huérfanos en el chromium
+        singleton entre reintentos (memoria en Render)."""
+        page = FakePage()
+        bot = _make_bot(page)
+        with mock.patch("app.bot.navegador.settings.simulate_bot", False):
+            asyncio.run(bot.cerrar())
+        self.assertTrue(page.context._cerrado)
+        self.assertIsNone(bot.page)
 
 
 class TestInfoArchivo(unittest.TestCase):
