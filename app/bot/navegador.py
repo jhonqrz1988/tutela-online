@@ -156,6 +156,20 @@ def _parece_error_validacion(texto_overlay: str) -> bool:
     return any(p in t for p in _TEXTO_ERROR_VALIDACION)
 
 
+def _es_dialogo_confirmar_datos(texto_overlay: str) -> bool:
+    """True si el overlay es la confirmación final de datos del portal
+    ("Confirmar Datos" con resumen: lugar, registro, medida provisional) que
+    aparece tras pulsar Enviar y que hay que confirmar para radicar."""
+    t = texto_overlay.lower()
+    if "confirmar datos" in t:
+        return True
+    # Resumen de datos sin título (textContent junta todo): lugar interpuesta +
+    # registro de la tutela suele acompañar al diálogo de confirmación.
+    return "lugar donde se interpone la tutela" in t and (
+        "registro" in t or "medida provisional" in t
+    )
+
+
 def _extraer_numero_de_texto(texto: str) -> str:
     """Extrae el número de radicado del texto de un overlay si aparece
     ('Número de radicado: 11001-2026-00009')."""
@@ -378,6 +392,35 @@ class RadicadorBot:
             await self.page.wait_for_timeout(500)
         except Exception:
             pass
+
+    async def _confirmar_dialogo_final(self) -> bool:
+        """Confirma el diálogo 'Confirmar Datos' que el portal abre tras pulsar
+        Enviar. Devuelve True si se hizo clic en el botón afirmativo."""
+        try:
+            return bool(await self.page.evaluate("""
+                () => {
+                    const modals = Array.from(document.querySelectorAll('.jconfirm'))
+                        .filter(m => m.offsetParent !== null || m.style.display !== 'none');
+                    for (const m of modals) {
+                        const btns = Array.from(
+                            m.querySelectorAll('.jconfirm-buttons button, .jconfirm-buttons .btn, .btn')
+                        );
+                        if (btns.length === 0) continue;
+                        const afir = btns.find(b =>
+                            /confirmar|enviar|aceptar|continuar|s[ií]|ok|guardar/i.test(
+                                b.textContent || ''
+                            )
+                        );
+                        const target = afir || btns[btns.length - 1];
+                        target.click();
+                        return true;
+                    }
+                    return false;
+                }
+            """))
+        except Exception as e:
+            logger.warning(f"No se pudo confirmar el diálogo final: {e}")
+            return False
 
     async def _js_click(self, selector: str):
         """Click via JS, ignora overlays tipo jconfirm."""
@@ -984,6 +1027,19 @@ class RadicadorBot:
                 f"Tras envío tutela: num_radicado={num_radicado or '(vacío)'} "
                 f"overlay={'SÍ' if overlay_texto else 'no'}"
             )
+
+            # Diálogo final "Confirmar Datos": el portal pide confirmar el
+            # resumen de los datos antes de radicar. Confirmarlo y releer.
+            if not num_radicado and overlay_texto and _es_dialogo_confirmar_datos(overlay_texto):
+                logger.info("Diálogo 'Confirmar Datos' detectado — confirmando envío final")
+                if await self._confirmar_dialogo_final():
+                    await self.page.wait_for_timeout(6000)
+                    num_radicado = await self._leer_num_radicado()
+                    overlay_texto = await self._leer_overlay()
+                    logger.info(
+                        f"Tras confirmar datos: num_radicado={num_radicado or '(vacío)'} "
+                        f"overlay={'SÍ' if overlay_texto else 'no'}"
+                    )
             if not num_radicado and overlay_texto:
                 if _parece_error_validacion(overlay_texto):
                     await self._capturar_evidencia("envio_validacion_error")

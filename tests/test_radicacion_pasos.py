@@ -396,6 +396,71 @@ class TestNavegadorEnviarValidaExito(unittest.TestCase):
         self.assertNotIn("error", r)
 
 
+class TestNavegadorConfirmaDatos(unittest.TestCase):
+    """El portal abre un diálogo 'Confirmar Datos' tras pulsar #enviar (lugar,
+    registro, medida provisional) que hay que confirmar antes de radicar."""
+
+    class _PaginaConfirmacion:
+        def __init__(self, radicado="11001-2026-00010"):
+            self.radicado = radicado
+            self.lecturas_overlay = 0
+
+        async def wait_for_timeout(self, ms):
+            return None
+
+        async def evaluate(self, script):
+            if "textContent" in script and "overlays" in script:
+                self.lecturas_overlay += 1
+                if self.lecturas_overlay == 1:
+                    return ("×Confirmar DatosLugar donde se interpone la tutela "
+                            "Departamento: ANTIOQUIACiudad: RIONEGROLugar donde se "
+                            "vulneraron los derechos Departamento: ANTIOQUIACiudad: "
+                            "RIONEGRORegistro: TutelaMedida Provisional")
+                return ""
+            return None
+
+        async def query_selector(self, selector):
+            if selector == "#numRadicado":
+                valor = self.radicado if self.lecturas_overlay >= 2 else ""
+                return self._Texto(valor)
+            return None
+
+        class _Texto:
+            def __init__(self, value):
+                self._value = value
+
+            async def text_content(self):
+                return self._value
+
+    def test_dialogo_confirmar_datos_se_confirma_y_radica(self):
+        bot = _make_bot(self._PaginaConfirmacion())
+        bot._cerrar_jconfirm = mock.AsyncMock()
+        bot._js_click = mock.AsyncMock()
+        bot._capturar_evidencia = mock.AsyncMock()
+        bot.tomar_screenshot = mock.AsyncMock(return_value="storage/constancia_x.png")
+        bot._confirmar_dialogo_final = mock.AsyncMock(return_value=True)
+
+        r = asyncio.run(bot.enviar_y_descargar())
+
+        bot._confirmar_dialogo_final.assert_awaited_once()
+        self.assertNotIn("error", r)
+        self.assertEqual(r.get("num_radicado"), "11001-2026-00010")
+
+    def test_detector_no_confunde_error_con_confirmacion(self):
+        from app.bot.navegador import _es_dialogo_confirmar_datos
+
+        self.assertTrue(_es_dialogo_confirmar_datos(
+            "×Confirmar DatosLugar donde se interpone la tutela Registro: Tutela"
+        ))
+        self.assertTrue(_es_dialogo_confirmar_datos(
+            "Lugar donde se interpone la tutela Departamento: ANTIOQUIA Medida Provisional"
+        ))
+        self.assertFalse(_es_dialogo_confirmar_datos(
+            "Debe seleccionar al menos un derecho"
+        ))
+        self.assertFalse(_es_dialogo_confirmar_datos(""))
+
+
 class TestServicioRegistraPasos(unittest.TestCase):
     """El servicio persiste los pasos en la BD, con estado ok y error."""
 
