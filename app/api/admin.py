@@ -6,6 +6,7 @@ import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -617,3 +618,31 @@ def descargar_constancia(tutela_id: int, request: Request, session=Depends(get_s
         filename=f"constancia_{tutela_id}{ext}",
         media_type=media_type,
     )
+
+
+@router.get("/screenshots")
+def listar_screenshots(request: Request, _=Depends(require_admin)):
+    """Lista los screenshots de diagnóstico que toma el bot en momentos críticos
+    (rechazo del portal, código de email, constancia, etc.) ordenados por fecha
+    descendente. Sirven para ver de un vistazo en qué falla la radicación."""
+    dir_screenshots = Path(settings.storage_dir or "storage") / "screenshots"
+    if not dir_screenshots.exists():
+        return {"imagenes": []}
+    imagenes = []
+    for p in sorted(dir_screenshots.glob("*.png"), key=lambda x: x.stat().st_mtime, reverse=True)[:40]:
+        imagenes.append({
+            "nombre": p.name,
+            "modificado": _fecha_bogota(datetime.fromtimestamp(p.stat().st_mtime, tz=BOGOTA_TZ)),
+        })
+    return {"imagenes": imagenes}
+
+
+@router.get("/screenshots/{nombre}")
+def ver_screenshot(nombre: str, request: Request, _=Depends(require_admin)):
+    """Sirve un screenshot de diagnóstico del bot."""
+    nombre = Path(nombre).name
+    dir_screenshots = Path(settings.storage_dir or "storage") / "screenshots"
+    ruta = dir_screenshots / nombre
+    if not ruta.exists() or not ruta.is_file():
+        return JSONResponse({"error": "No encontrado"}, status_code=404)
+    return FileResponse(ruta, media_type="image/png")

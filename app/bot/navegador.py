@@ -170,9 +170,26 @@ def _es_dialogo_confirmar_datos(texto_overlay: str) -> bool:
     )
 
 
+def _es_dialogo_aviso_enviar(texto_overlay: str) -> bool:
+    """True si el overlay es el aviso legal que el portal muestra justo antes de
+    enviar la tutela ("A través de este portal solo se recibe la acción,
+    demanda o solicitud que luego será enviada al juez competente..."), que
+    hay que aceptar/continuar para completar la radicación.
+    """
+    t = texto_overlay.lower()
+    return (
+        "a través de este portal" in t
+        or "solo se recibe" in t
+        or "juez competente" in t
+        or "acción, demanda o solicitud" in t
+    )
+
+
 def _extraer_numero_de_texto(texto: str) -> str:
     """Extrae el número de radicado del texto de un overlay si aparece
     ('Número de radicado: 11001-2026-00009')."""
+    if not texto:
+        return ""
     m = re.search(
         r"(?:n[o°]?\.?\s*radicad[oa]|n[uú]mero\s+de\s+radicac[ió]n)\s*[:.\-]?\s*([0-9\- ]{6,})",
         texto,
@@ -180,7 +197,11 @@ def _extraer_numero_de_texto(texto: str) -> str:
     )
     if m:
         return re.sub(r"\s+", " ", m.group(1)).strip()
-    return ""
+    # Fallback por formato: el radicado colombiano usa 4-5-4/5 dígitos
+    # separados por guiones (ej. 11001-2026-00009) aunque el texto no diga
+    # "número de radicado".
+    m2 = re.search(r"\b\d{4,5}-\d{4}-\d{4,5}\b", texto)
+    return m2.group(0) if m2 else ""
 
 
 def _separar_nombre(nombre_completo: str) -> dict:
@@ -394,20 +415,29 @@ class RadicadorBot:
             pass
 
     async def _confirmar_dialogo_final(self) -> bool:
-        """Confirma el diálogo 'Confirmar Datos' que el portal abre tras pulsar
-        Enviar. Devuelve True si se hizo clic en el botón afirmativo."""
+        """Confirma el diálogo (Confirmar Datos / aviso legal) que el portal
+        abre antes de radicar. Marca checkboxes de aceptación y pulsa el botón
+        afirmativo del overlay visible. Devuelve True si hizo clic en algún
+        botón."""
         try:
             return bool(await self.page.evaluate("""
                 () => {
-                    const modals = Array.from(document.querySelectorAll('.jconfirm'))
-                        .filter(m => m.offsetParent !== null || m.style.display !== 'none');
-                    for (const m of modals) {
-                        const btns = Array.from(
-                            m.querySelectorAll('.jconfirm-buttons button, .jconfirm-buttons .btn, .btn')
-                        );
+                    const overlays = Array.from(
+                        document.querySelectorAll('.jconfirm, .modal, [role="dialog"]')
+                    ).filter(o => o.offsetParent !== null || o.style.display !== 'none');
+                    for (const m of overlays) {
+                        // Aceptar cualquier checkbox del diálogo (términos).
+                        m.querySelectorAll('input[type=checkbox]').forEach(cb => {
+                            if (!cb.checked) { try { cb.click(); } catch(e) {} }
+                        });
+                        const btns = Array.from(m.querySelectorAll('button, a.btn'))
+                            .filter(b => {
+                                const txt = (b.textContent || '').trim();
+                                return txt && !/cerrar|close|×|cancelar/i.test(txt);
+                            });
                         if (btns.length === 0) continue;
                         const afir = btns.find(b =>
-                            /confirmar|enviar|aceptar|continuar|s[ií]|ok|guardar/i.test(
+                            /confirmar|enviar|aceptar|continuar|s[ií]|ok|guardar|de acuerdo|de acuerdo/i.test(
                                 b.textContent || ''
                             )
                         );
@@ -1021,25 +1051,33 @@ class RadicadorBot:
             # Verificación de éxito REAL: si el portal quedó en un overlay de
             # validación (ej. "debe seleccionar al menos un derecho"), la tutela
             # NO se radicó — antes marcábamos 'radicada' igual (bug en prod).
-            num_radicado = await self._leer_num_radicado()
-            overlay_texto = await self._leer_overlay()
-            logger.info(
-                f"Tras envío tutela: num_radicado={num_radicado or '(vacío)'} "
-                f"overlay={'SÍ' if overlay_texto else 'no'}"
-            )
-
-            # Diálogo final "Confirmar Datos": el portal pide confirmar el
-            # resumen de los datos antes de radicar. Confirmarlo y releer.
-            if not num_radicado and overlay_texto and _es_dialogo_confirmar_datos(overlay_texto):
-                logger.info("Diálogo 'Confirmar Datos' detectado — confirmando envío final")
-                if await self._confirmar_dialogo_final():
-                    await self.page.wait_for_timeout(6000)
-                    num_radicado = await self._leer_num_radicado()
-                    overlay_texto = await self._leer_overlay()
+            # El portal además encadena diálogos antes de radicar: primero
+            # "Confirmar Datos" y luego un aviso legal ("A través de este portal
+            # solo se recibe..."). Los confirmamos en bucle hasta que salga el
+            # número de radicado.
+            num_radicado = ""
+            overlay_texto = ""
+            for intento in range(5):
+                num_radicado = await self._leer_num_radicado()
+                overlay_texto = await self._leer_overlay()
+                logger.info(
+                    f"Tras envío (ronda {intento}): num_radicado={num_radicado or '(vacío)'} "
+                    f"overlay={'SÍ' if overlay_texto else 'no'}"
+                )
+                if num_radicado:
+                    break
+                if not overlay_texto:
+                    break
+                if _es_dialogo_confirmar_datos(overlay_texto) or _es_dialogo_aviso_enviar(overlay_texto):
                     logger.info(
-                        f"Tras confirmar datos: num_radicado={num_radicado or '(vacío)'} "
-                        f"overlay={'SÍ' if overlay_texto else 'no'}"
+                        f"Diálogo previo a radicar detectado (ronda {intento}) — confirmando "
+                        f"({overlay_texto[:60]}...)"
                     )
+                    if await self._confirmar_dialogo_final():
+                        await self.page.wait_for_timeout(5000)
+                        continue
+                break
+
             if not num_radicado and overlay_texto:
                 if _parece_error_validacion(overlay_texto):
                     await self._capturar_evidencia("envio_validacion_error")

@@ -397,11 +397,13 @@ class TestNavegadorEnviarValidaExito(unittest.TestCase):
 
 
 class TestNavegadorConfirmaDatos(unittest.TestCase):
-    """El portal abre un diálogo 'Confirmar Datos' tras pulsar #enviar (lugar,
-    registro, medida provisional) que hay que confirmar antes de radicar."""
+    """El portal abre diálogos ENCADENADOS tras pulsar #enviar — primero
+    'Confirmar Datos' y luego el aviso legal ('A través de este portal solo se
+    recibe...') — que hay que confirmar antes de que salga el radicado."""
 
-    class _PaginaConfirmacion:
-        def __init__(self, radicado="11001-2026-00010"):
+    class _PaginaEncadenada:
+        def __init__(self, overlays, radicado="11001-2026-00010"):
+            self.overlays = list(overlays)
             self.radicado = radicado
             self.lecturas_overlay = 0
 
@@ -410,18 +412,14 @@ class TestNavegadorConfirmaDatos(unittest.TestCase):
 
         async def evaluate(self, script):
             if "textContent" in script and "overlays" in script:
+                idx = self.lecturas_overlay
                 self.lecturas_overlay += 1
-                if self.lecturas_overlay == 1:
-                    return ("×Confirmar DatosLugar donde se interpone la tutela "
-                            "Departamento: ANTIOQUIACiudad: RIONEGROLugar donde se "
-                            "vulneraron los derechos Departamento: ANTIOQUIACiudad: "
-                            "RIONEGRORegistro: TutelaMedida Provisional")
-                return ""
+                return self.overlays[idx] if idx < len(self.overlays) else ""
             return None
 
         async def query_selector(self, selector):
             if selector == "#numRadicado":
-                valor = self.radicado if self.lecturas_overlay >= 2 else ""
+                valor = self.radicado if self.lecturas_overlay >= len(self.overlays) else ""
                 return self._Texto(valor)
             return None
 
@@ -432,22 +430,35 @@ class TestNavegadorConfirmaDatos(unittest.TestCase):
             async def text_content(self):
                 return self._value
 
-    def test_dialogo_confirmar_datos_se_confirma_y_radica(self):
-        bot = _make_bot(self._PaginaConfirmacion())
+    def _enviar(self, overlays, radicado="11001-2026-00010"):
+        bot = _make_bot(self._PaginaEncadenada(overlays, radicado))
         bot._cerrar_jconfirm = mock.AsyncMock()
         bot._js_click = mock.AsyncMock()
         bot._capturar_evidencia = mock.AsyncMock()
         bot.tomar_screenshot = mock.AsyncMock(return_value="storage/constancia_x.png")
         bot._confirmar_dialogo_final = mock.AsyncMock(return_value=True)
+        return asyncio.run(bot.enviar_y_descargar())
 
-        r = asyncio.run(bot.enviar_y_descargar())
-
-        bot._confirmar_dialogo_final.assert_awaited_once()
+    def test_dialogo_confirmar_datos_se_confirma_y_radica(self):
+        r = self._enviar([
+            "×Confirmar DatosLugar donde se interpone la tutela Registro: Tutela"
+        ])
         self.assertNotIn("error", r)
         self.assertEqual(r.get("num_radicado"), "11001-2026-00010")
 
-    def test_detector_no_confunde_error_con_confirmacion(self):
-        from app.bot.navegador import _es_dialogo_confirmar_datos
+    def test_aviso_legal_tambien_se_confirma_antes_de_radicar(self):
+        r = self._enviar([
+            "×Confirmar DatosLugar donde se interpone la tutela Registro: Tutela",
+            "×A través de este portal solo se recibe la acción, demanda o solicitud "
+            "que luego será enviada al juez competente. Se recogen unos datos básicos "
+            "en el formulario y en los documentos que anexe debe indicar el número "
+            "de radicación...",
+        ])
+        self.assertNotIn("error", r)
+        self.assertEqual(r.get("num_radicado"), "11001-2026-00010")
+
+    def test_detector_no_confunde_error_con_confirmacion_o_aviso(self):
+        from app.bot.navegador import _es_dialogo_aviso_enviar, _es_dialogo_confirmar_datos
 
         self.assertTrue(_es_dialogo_confirmar_datos(
             "×Confirmar DatosLugar donde se interpone la tutela Registro: Tutela"
@@ -455,10 +466,18 @@ class TestNavegadorConfirmaDatos(unittest.TestCase):
         self.assertTrue(_es_dialogo_confirmar_datos(
             "Lugar donde se interpone la tutela Departamento: ANTIOQUIA Medida Provisional"
         ))
+        self.assertTrue(_es_dialogo_aviso_enviar(
+            "A través de este portal solo se recibe la acción que luego será enviada "
+            "al juez competente"
+        ))
         self.assertFalse(_es_dialogo_confirmar_datos(
             "Debe seleccionar al menos un derecho"
         ))
+        self.assertFalse(_es_dialogo_aviso_enviar(
+            "Debe seleccionar al menos un derecho"
+        ))
         self.assertFalse(_es_dialogo_confirmar_datos(""))
+        self.assertFalse(_es_dialogo_aviso_enviar(""))
 
 
 class TestServicioRegistraPasos(unittest.TestCase):
