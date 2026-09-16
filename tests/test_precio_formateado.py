@@ -40,6 +40,16 @@ class TestPrecioFormateado(unittest.TestCase):
         html = _pagina_pago("aviso")
         self.assertIn("$40.000 COP", html)
 
+    def test_pagina_pago_es_mobile_first(self):
+        """La página de pago se ve bien en celulares: viewport meta, texto grande
+        y botón con área táctil amplia (regresión: sin viewport el navegador móvil
+        encoge el texto y se ve diminuto)."""
+        html = _pagina_pago("aviso")
+        self.assertIn('name="viewport"', html)
+        self.assertIn("font-size:19px", html)
+        self.assertIn("font-size:18px", html)
+        self.assertIn("min-height:60px", html)
+
 
 if __name__ == "__main__":
     unittest.main()

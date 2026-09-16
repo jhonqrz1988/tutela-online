@@ -65,25 +65,38 @@ def _pagina_pago(
     boton = f'<a class="btn" href="{escape(init_point)}">&#128179; Continuar al pago</a>' if init_point else ""
     return f"""<!DOCTYPE html>
     <html lang="es">
-    <head><meta charset="utf-8"><title>Pago - Tutela</title>
+    <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Pago - Tutela</title>
     <style>
-      body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px;
-              color:#222; font-size:18px; }}
-      h1 {{ color:#1a5fb4; font-size:28px; }}
-      .card {{ border:1px solid #ddd; border-radius:12px; padding:28px; }}
-      .aviso {{ background:#fff3cd; border:1px solid #ffe08a; border-radius:8px; padding:14px 16px;
-                font-size:16px; color:#7a5c00; margin:18px 0; line-height:1.5; }}
+      * {{ box-sizing: border-box; }}
+      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+              max-width: 480px; margin: 0 auto; padding: 20px 18px; color:#222;
+              font-size:19px; line-height:1.55; -webkit-text-size-adjust:100%; }}
+      h1 {{ color:#1a5fb4; font-size:29px; line-height:1.2; margin:0 0 14px; }}
+      p {{ margin:0 0 16px; }}
+      .card {{ border:1px solid #e0e0e0; border-radius:16px; padding:26px 22px;
+              background:#fff; box-shadow:0 2px 10px rgba(0,0,0,.06); }}
+      .aviso {{ background:#fff3cd; border:1px solid #ffe08a; border-radius:10px; padding:18px 16px;
+                font-size:18px; color:#7a5c00; margin:18px 0; line-height:1.6; }}
       .aviso.email {{ background:#e3f2fd; border:1px solid #90caf9; color:#0d47a1; }}
-      .btn {{ display:block; text-align:center; background:linear-gradient(180deg,#00a650,#008745);
-              color:#fff; text-decoration:none; padding:18px; border-radius:12px; font-weight:800;
-              font-size:20px; margin-top:22px; box-shadow:0 4px 12px rgba(0,166,80,.35); }}
+      .aviso b {{ display:block; margin-bottom:4px; }}
+      .btn {{ display:flex; align-items:center; justify-content:center; min-height:60px;
+              background:linear-gradient(180deg,#00a650,#008745); color:#fff; text-decoration:none;
+              padding:16px 18px; border-radius:14px; font-weight:800; font-size:22px;
+              margin-top:22px; box-shadow:0 4px 14px rgba(0,166,80,.35); }}
+      @media (max-width:380px) {{
+        body {{ padding:14px 14px; font-size:18px; }}
+        .aviso, .aviso.email {{ font-size:17px; }}
+        .btn {{ font-size:20px; }}
+      }}
     </style></head>
     <body>
       <div class="card">
         <h1>Radicación de tutela</h1>
         <p style="margin-bottom:0;">Radicamos tu tutela ante la Rama Judicial por <b>{precio} COP</b>.</p>
-        <div class="aviso"><b>&#128197; Horario de radicación de la Rama Judicial</b><br>{aviso}</div>
-        <div class="aviso email"><b>&#128231; Código de verificación por correo</b><br>
+        <div class="aviso"><b>&#128197; Horario de radicación de la Rama Judicial</b>{aviso}</div>
+        <div class="aviso email"><b>&#128231; Código de verificación por correo</b>
             Al radicar, la Rama Judicial podría enviar un mensaje con un código de
             verificación a tu correo{email_txt}. <b>Una vez pagues</b>, compártenos ese
             código por WhatsApp para continuar con la radicación.</div>
@@ -116,9 +129,16 @@ async def resultado_pago(request: Request, session: Session = Depends(get_sessio
 
     html = f"""
     <!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Resultado del pago</title><style>
-      body {{ font-family: Arial; max-width: 480px; margin: 40px auto; padding: 0 16px; text-align:center; }}
-      .card {{ border:1px solid #ddd; border-radius:10px; padding:32px; }}
+      * {{ box-sizing: border-box; }}
+      body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+              max-width: 480px; margin: 0 auto; padding: 24px 18px; text-align:center;
+              font-size:20px; line-height:1.5; color:#222; -webkit-text-size-adjust:100%; }}
+      .card {{ border:1px solid #e0e0e0; border-radius:16px; padding:32px 22px; background:#fff;
+              box-shadow:0 2px 10px rgba(0,0,0,.06); }}
+      h1 {{ font-size:24px; line-height:1.35; margin:0 0 16px; color:#1a5fb4; }}
+      p {{ margin:0; font-size:18px; }}
     </style></head><body><div class="card"><h1>{mensaje}</h1>
     <p>Puedes cerrar esta página.</p></div></body></html>
     """
