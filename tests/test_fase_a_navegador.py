@@ -202,6 +202,28 @@ class TestNombresACampos(unittest.TestCase):
             len(veces_primer_nombre), 2, "Los nombres se re-escriben al final"
         )
 
+    def test_el_accionado_siempre_es_juridica(self):
+        """El accionado de la tutela SIEMPRE es una EPS (persona jurídica):
+        el paso selecciona 'Jurídica' en #DDlTipoSujeto + NIT aunque los datos
+        del chat digan 'natural'."""
+        bot = _make_bot(FakePage())
+        selecciones = []
+
+        async def fake_select(selector, label):
+            selecciones.append((selector, label))
+
+        with mock.patch.object(bot, "_seleccionar_select", new=fake_select), \
+             mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
+            asyncio.run(bot._paso_accionado({
+                "accionado_tipo": "natural",
+                "accionado": "EPS Sanitas",
+                "accionado_nit": "890123456",
+            }))
+
+        self.assertEqual(selecciones[0], ("#DDlTipoSujeto", "Jurídica"))
+        self.assertIn(("#DDlTipodocumentoAccionado", "NIT"), selecciones)
+
 
 class TestCerrarContexto(unittest.TestCase):
     def test_cerrar_cierra_el_contexto_completo_no_solo_la_pagina(self):

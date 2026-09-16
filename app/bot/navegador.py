@@ -830,24 +830,24 @@ class RadicadorBot:
             return False
 
     async def _paso_accionado(self, datos: dict):
-        """Paso 5: Agregar accionado."""
-        tipo = datos.get("accionado_tipo", "juridica")
-        await self._seleccionar_select("#DDlTipoSujeto", "Jurídica" if tipo == "juridica" else "Natural")
+        """Paso 5: Agregar accionado.
+
+        El accionado SIEMPRE es persona jurídica: la tutela se dirige contra
+        una EPS. El portal exige seleccionar "Jurídica" en #DDlTipoSujeto con
+        documento NIT, sin importar lo que cargue el cliente en el chat.
+        """
+        await self._seleccionar_select("#DDlTipoSujeto", "Jurídica")
         await self.page.wait_for_timeout(500)
 
-        if tipo == "juridica":
-            # Para persona jurídica el portal exige tipo de documento (NIT) y número
-            await self._seleccionar_select("#DDlTipodocumentoAccionado", "NIT")
-            await self.page.wait_for_timeout(500)
-            await self._type("#DocumentodeIdendificacion", datos.get("accionado_nit", ""))
-            await self._type("#NombreJuridicoAcc", datos.get("accionado", ""))
-            await self._type("#IdDireccion", datos.get("accionado_direccion", "") or "-")
-            await self._type("#IdTelefono", datos.get("accionado_telefono", "") or "-")
-            await self._type("#IdEmail", datos.get("accionado_email", ""))
-        else:
-            nombre = _separar_nombre(datos.get("accionado", ""))
-            await self._type("#PrimerNombreAcc", nombre["primer_nombre"])
-            await self._type("#PrimerApellidoAcc", nombre["primer_apellido"])
+        # Para persona jurídica el portal exige tipo de documento (NIT) y número
+        await self._seleccionar_select("#DDlTipodocumentoAccionado", "NIT")
+        await self.page.wait_for_timeout(500)
+        await self._type("#DocumentodeIdendificacion", datos.get("accionado_nit", ""))
+        await self._type("#NombreJuridicoAcc", datos.get("accionado", ""))
+
+        await self._type("#IdDireccion", datos.get("accionado_direccion", "") or "-")
+        await self._type("#IdTelefono", datos.get("accionado_telefono", "") or "-")
+        await self._type("#IdEmail", datos.get("accionado_email", ""))
 
         # La acción no involucra menores de edad en el caso estándar
         try:
