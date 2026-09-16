@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -61,6 +62,30 @@ _JS_OVERLAY_TEXTO = """() => {
     const visible = overlays.find(o => o.offsetParent !== null || o.style.display !== 'none');
     if (!visible) return "";
     return (visible.textContent || "").trim();
+}"""
+
+# Lee los valores REALES del formulario del accionante tras llenarlo (para
+# diagnosticar en el panel si el tipo de documento / nombres no aplicaron).
+_JS_READBACK_ACCIONANTE = """() => {
+    const v = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return '';
+        if (el.tagName === 'SELECT') {
+            return el.selectedIndex >= 0 && el.options[el.selectedIndex]
+                ? el.options[el.selectedIndex].text.trim() : '';
+        }
+        return el.value || '';
+    };
+    return {
+        tipo_doc: v('#DDlTipodocumento'),
+        numero: v('#NumeroDocumento'),
+        primer_nombre: v('#PrimerNombre'),
+        segundo_nombre: v('#SegundoNombre'),
+        primer_apellido: v('#PrimerApellido'),
+        segundo_apellido: v('#SegundoApellido'),
+        telefono: v('#Telefono'),
+        email: v('#Email'),
+    };
 }"""
 
 # Opciones del dropdown de derechos del portal (diagnóstico cuando el bot
@@ -240,6 +265,21 @@ def _nombres_a_campos(nombres: str, apellidos: str) -> dict:
         "segundo_nombre": " ".join(n[1:]),
         "primer_apellido": a[0] if a else "",
         "segundo_apellido": " ".join(a[1:]),
+    }
+
+
+def _info_archivo(ruta: str) -> dict:
+    """Identidad del PDF que se va a subir al portal (para verificar en el
+    panel que el archivo demandado es el correcto y no uno viejo del disco)."""
+    if not os.path.isfile(ruta):
+        return {"ruta": ruta, "error": "archivo no existe"}
+    with open(ruta, "rb") as f:
+        digest = hashlib.sha1(f.read()).hexdigest()
+    return {
+        "ruta": ruta,
+        "basename": os.path.basename(ruta),
+        "bytes": os.path.getsize(ruta),
+        "sha1": digest,
     }
 
 
@@ -546,6 +586,16 @@ class RadicadorBot:
         self._email_accionante = email
         await self._type_existing("#Email", email)
 
+        # Readback: volcar qué quedó realmente en el formulario del portal
+        # (tipo documento, nombres, apellidos, cédula) para diagnosticar en el
+        # panel si el llenado no aplicó (quejas: "no selecciona el tipo de
+        # documento" y "no pone los nombres bien").
+        try:
+            readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
+            logger.info(f"[readback accionante] {json.dumps(readback, ensure_ascii=False)}")
+        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            logger.warning(f"No se pudo leer el formulario del accionante: {e}")
+
         # Click validar correo — activa verificación
         await self._cerrar_jconfirm()
         await self._js_click("#btnValidar")
@@ -846,6 +896,12 @@ class RadicadorBot:
                 f"PDF de la tutela no disponible para subir al portal: {ruta_pdf!r}"
             )
 
+        # Identidad exacta del archivo que se va a subir (path + sha1). Sirve
+        # para confirmar/descartar que el portal recibe el PDF correcto y no
+        # uno viejo del disco con datos de otra tutela.
+        detalle_pdf = await asyncio.to_thread(_info_archivo, ruta_pdf)
+        logger.info(f"[uploads] subiendo como DEMANDA/PRUEBA: {json.dumps(detalle_pdf, ensure_ascii=False)}")
+
         # El portal exige el tipo de archivo DEMANDA (obligatorio) para radicar;
         # se sube primero DEMANDA, y el mismo PDF también como PRUEBA.
         for tipo_label in ("DEMANDA", "PRUEBA"):
@@ -857,6 +913,16 @@ class RadicadorBot:
                 await self.page.evaluate("document.querySelector('#ArchivoFile0').value=''")
                 await self.page.set_input_files("#ArchivoFile0", ruta_pdf)
                 await self.page.wait_for_timeout(1500)
+
+                # Readback: nombre real que el portal asigna al adjunto subido
+                try:
+                    nombre_input = await self.page.evaluate(
+                        "() => { const i = document.querySelector('#ArchivoFile0');"
+                        " return i && i.files && i.files[0] ? i.files[0].name : ''; }"
+                    )
+                    logger.info(f"[uploads] #{tipo_label}: input #ArchivoFile0 ahora -> {nombre_input!r}")
+                except Exception as ex:  # noqa: BLE001 - diagnóstico, nunca rompe
+                    logger.warning(f"[uploads] no se pudo leer el input tras subir {tipo_label}: {ex}")
 
                 await self._cerrar_jconfirm()
                 await self._js_click("#btnAddfile")
@@ -1069,9 +1135,12 @@ class RadicadorBot:
                 if not overlay_texto:
                     break
                 if _es_dialogo_confirmar_datos(overlay_texto) or _es_dialogo_aviso_enviar(overlay_texto):
+                    # El resumen "Confirmar Datos" muestra EXACTAMENTE lo que el
+                    # portal registró (tipo documento, nombres, cédula...):
+                    # volcarlo completo para poder contrastarlo en el panel.
                     logger.info(
-                        f"Diálogo previo a radicar detectado (ronda {intento}) — confirmando "
-                        f"({overlay_texto[:60]}...)"
+                        f"Diálogo previo a radicar detectado (ronda {intento}) — confirmando.\n"
+                        f"[overlay completo] {overlay_texto[:1500]}"
                     )
                     if await self._confirmar_dialogo_final():
                         await self.page.wait_for_timeout(5000)
@@ -1086,6 +1155,22 @@ class RadicadorBot:
                 # Success en overlay: recuperar el número del texto ("Número de
                 # radicado: 11001-2026-00009") que el selector de la página no trae.
                 num_radicado = _extraer_numero_de_texto(overlay_texto)
+
+            if not num_radicado:
+                # Tras confirmar los diálogos el portal puede tardar en pintar
+                # el radicado: sondeamos unos segundos más antes de declarar
+                # fallo (ronda 2 del último intento salió con overlay=no y el
+                # número aún vacío).
+                for _ in range(3):
+                    await self.page.wait_for_timeout(5000)
+                    num_radicado = await self._leer_num_radicado()
+                    if num_radicado:
+                        break
+                    overlay_texto = await self._leer_overlay()
+                    if overlay_texto:
+                        num_radicado = _extraer_numero_de_texto(overlay_texto)
+                        if num_radicado:
+                            break
 
             # Descargar constancia
             ruta_constancia = path_constancia()

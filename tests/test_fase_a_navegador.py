@@ -9,10 +9,12 @@ verificación siempre (bug A9). Se testea que:
   con fallback "No Aplica" (A8)
 """
 import asyncio
+import os
+import tempfile
 import unittest
 from unittest import mock
 
-from app.bot.navegador import RadicadorBot, _nombres_a_campos
+from app.bot.navegador import RadicadorBot, _info_archivo, _nombres_a_campos
 
 
 class FakeElement:
@@ -156,6 +158,27 @@ class TestNombresACampos(unittest.TestCase):
         self.assertEqual(campos_escritos["#SegundoNombre"], "Fernanda")
         self.assertEqual(campos_escritos["#PrimerApellido"], "Pérez")
         self.assertEqual(campos_escritos["#SegundoApellido"], "Gómez")
+
+
+class TestInfoArchivo(unittest.TestCase):
+    def test_entrega_identidad_del_archivo(self):
+        """El sha1/basename permiten verificar qué PDF exacto se subió al portal."""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"contenido-tutela-demo")
+            ruta = f.name
+        try:
+            info = _info_archivo(ruta)
+            self.assertEqual(info["basename"], os.path.basename(ruta))
+            self.assertEqual(info["bytes"], 21)
+            self.assertNotEqual(info["sha1"], "")
+            # Determinista y distinto para otro contenido
+            self.assertEqual(_info_archivo(ruta)["sha1"], info["sha1"])
+        finally:
+            os.remove(ruta)
+
+    def test_archivo_inexistente_no_rompe(self):
+        info = _info_archivo("no/existe.pdf")
+        self.assertIn("error", info)
 
 
 if __name__ == "__main__":
