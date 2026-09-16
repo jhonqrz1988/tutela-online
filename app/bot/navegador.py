@@ -908,20 +908,37 @@ class RadicadorBot:
             self._reportar_paso("paso_9_captcha", "error", "No se pudo resolver el reCAPTCHA")
             return False
 
-        # Insertar el token en el textarea oculto de reCAPTCHA
+        # Insertar el token en el textarea oculto de reCAPTCHA y disparar el
+        # callback registrado por el portal.  Google cambia los nombres de las
+        # propiedades internas (client.T, client.L, …) con cada versión; en
+        # vez de depender de un nombre fijo, buscamos el callback con BFS:
+        # recorremos el árbol de ___grecaptcha_cfg.clients y llamamos la
+        # primera función de un solo argumento que encontremos (el callback).
         try:
             await self.page.evaluate(f"""
                 document.getElementById('g-recaptcha-response').value = '{token}';
-                // Disparar callback de reCAPTCHA si existe
-                if (typeof ___grecaptcha_cfg !== 'undefined') {{
+                (function triggerCallback() {{
+                    if (typeof ___grecaptcha_cfg === 'undefined') return;
                     var clients = ___grecaptcha_cfg.clients;
                     for (var key in clients) {{
-                        var client = clients[key];
-                        if (client && client.T) {{
-                            client.T('{token}');
+                        var queue = [clients[key]];
+                        while (queue.length > 0) {{
+                            var obj = queue.shift();
+                            if (!obj || typeof obj !== 'object') continue;
+                            for (var prop in obj) {{
+                                try {{
+                                    var val = obj[prop];
+                                    if (typeof val === 'function' && val.length === 1) {{
+                                        try {{ val('{token}'); return; }} catch(e) {{}}
+                                    }}
+                                    if (typeof val === 'object' && val !== null) {{
+                                        queue.push(val);
+                                    }}
+                                }} catch(e) {{}}
+                            }}
                         }}
                     }}
-                }}
+                }})();
             """)
             logger.info("Token reCAPTCHA insertado en el formulario")
             self._reportar_paso("paso_9_captcha", "ok")

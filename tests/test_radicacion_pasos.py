@@ -198,8 +198,8 @@ class TestNavegadorRecaptcha(unittest.TestCase):
 
         self.assertTrue(resultado, "Debe resolver el reCAPTCHA")
         self.assertIn("g-recaptcha-response').value = 'TOKEN_123'", self.script)
-        self.assertIn("client.T('TOKEN_123')", self.script)
-        self.assertNotIn("client.T(token)", self.script, "El token no puede ser un identificador JS suelto")
+        self.assertIn("'TOKEN_123'", self.script, "El token debe aparecer como literal string en el script")
+        self.assertNotIn("client.T(", self.script, "Ya no se usa client.T — el callback se resuelve con BFS")
 
 
 class TestNavegadorDerechos(unittest.TestCase):
