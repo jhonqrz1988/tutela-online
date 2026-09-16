@@ -102,6 +102,35 @@ _JS_DERECHOS_OPCIONES = """() =>
         .map(o => o.text.trim())
         .slice(0, 80)"""
 
+# Diagnóstico de la sección accionante: opciones del select de tipo documento
+# + estado (existe/visible/habilitado) de cada campo. Cuando el readback sale
+# vacío hay que saber si escribimos en campos ocultos, si el select no cargó
+# opciones o si la sección cambió de estructura (quejas de prod).
+_JS_DIAGNOSTICO_ACCIONANTE = """() => {
+    const info = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return { selector: sel, existe: false };
+        return {
+            selector: sel,
+            existe: true,
+            disabled: el.disabled,
+            readonly: el.readOnly,
+            visible: el.offsetWidth > 0 && el.offsetHeight > 0,
+        };
+    };
+    const select = document.querySelector('#DDlTipodocumento');
+    return {
+        opciones_tipo_doc: select
+            ? Array.from(select.options).map(o => o.text.trim()).slice(0, 30)
+            : [],
+        campos: [
+            '#DDlTipodocumento', '#NumeroDocumento', '#PrimerNombre',
+            '#SegundoNombre', '#PrimerApellido', '#SegundoApellido',
+            '#Telefono', '#Email', '#DDlTipodiscapacidad', '#btnValidar',
+        ].map(info),
+    };
+}"""
+
 # La IA reporta artículos ("Art. 48 CP"); el portal usa categorías por tema.
 _MAPEO_ARTICULO_CATEGORIA = {
     "2": "dignidad",
@@ -670,6 +699,8 @@ class RadicadorBot:
                 logger.warning(
                     "[readback accionante] el portal NO quedó con el tipo de documento/identidad correcto"
                 )
+                await self._log_diagnostico_accionante()
+                await self._capturar_evidencia("accionante_vacio")
         except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
             logger.warning(f"No se pudo leer el formulario del accionante: {e}")
 
@@ -819,6 +850,17 @@ class RadicadorBot:
             logger.warning(f"[diagnóstico cajón código] {json.dumps(info)[:2500]}")
         except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
             logger.warning(f"No se pudo diagnosticar el cajón del código: {e}")
+
+    async def _log_diagnostico_accionante(self):
+        """Vuelca a los logs el estado de la sección accionante (opciones del
+        select de tipo doc + existencia/visibilidad/habilitado de cada campo)
+        para diagnosticar sin capturas por qué el llenado no aplica. Nunca
+        rompe el flujo."""
+        try:
+            info = await self.page.evaluate(_JS_DIAGNOSTICO_ACCIONANTE)
+            logger.warning(f"[diagnóstico accionante] {json.dumps(info, ensure_ascii=False)[:3500]}")
+        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            logger.warning(f"No se pudo diagnosticar la sección accionante: {e}")
 
     async def _click_continuar_cajon(self) -> bool:
         """Pulsa el botón 'Continuar' del cajón de verificación de email.
@@ -1090,6 +1132,8 @@ class RadicadorBot:
                     logger.warning(
                         "[readback post-email] el portal NO quedó con el tipo de documento/identidad correcto"
                     )
+                    await self._log_diagnostico_accionante()
+                    await self._capturar_evidencia("accionante_vacio_post_email")
             except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
                 logger.warning(f"No se pudo leer el formulario del accionante post-email: {e}")
 

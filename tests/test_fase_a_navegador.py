@@ -323,5 +323,50 @@ class TestInfoArchivo(unittest.TestCase):
         self.assertIn("error", info)
 
 
+class TestDiagnosticoAccionante(unittest.TestCase):
+    """Cuando el readback del accionante sale vacío, se vuelca el estado de la
+    sección (opciones del select + campos) y se toma screenshot, para saber de
+    dónde viene la queja de prod sin depender del panel."""
+
+    def _pagina_con_readback_vacio(self):
+        class PageReadbackVacio(FakePage):
+            async def evaluate(self, script, *args, **kwargs):
+                if isinstance(script, str) and "primer_nombre" in script:
+                    return {
+                        "tipo_doc": "Seleccione...",
+                        "numero": "",
+                        "primer_nombre": "",
+                        "segundo_nombre": "",
+                        "primer_apellido": "",
+                        "segundo_apellido": "",
+                        "telefono": "",
+                        "email": "",
+                    }
+                return None
+
+        return PageReadbackVacio(cajon_abierto=False)
+
+    def test_el_readback_vacio_dispara_diagnostico_y_screenshot(self):
+        bot = _make_bot(self._pagina_con_readback_vacio())
+        with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_log_diagnostico_accionante", new=mock.AsyncMock()) as m_diag, \
+             mock.patch.object(bot, "_capturar_evidencia", new=mock.AsyncMock()) as m_cap, \
+             mock.patch.object(bot, "_type_existing", new=mock.AsyncMock()):
+            asyncio.run(bot._paso_accionante({
+                "accionante_nombre": "Ester Ramirez Montoya",
+                "accionante_email": "harold0.1@hotmail.com",
+            }))
+
+        m_diag.assert_awaited_once()
+        m_cap.assert_awaited_once()
+        self.assertEqual(m_cap.await_args.args[0], "accionante_vacio")
+
+    def test_el_diagnostico_escribe_logs_sin_romper(self):
+        bot = _make_bot(FakePage())
+        asyncio.run(bot._log_diagnostico_accionante())
+
+
 if __name__ == "__main__":
     unittest.main()
