@@ -1,9 +1,19 @@
+import logging
+import time
 from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Reintentos de conexión en el arranque: en Render, Postgres puede recién
+# reiniciarse justo al desplegar y la primera conexión SSL falla ("SSL
+# connection has been closed unexpectedly") -> el boot abortaba con status 3.
+DB_REINTENTOS = 6
+DB_ESPERA_SEG = 8  # cubre hasta ~48 s; Render espera ~60 s por el /health
 
 
 def _ensure_sqlite_dir(db_url: str) -> None:
@@ -49,7 +59,33 @@ class Base(DeclarativeBase):
 
 def init_db():
     import app.models  # noqa: F401
-    Base.metadata.create_all(bind=engine)
+    _crear_tablas_con_reintentos()
+
+
+def _crear_tablas_con_reintentos():
+    """Crea las tablas reconectando con backoff si el gestor está reiniciando.
+
+    El fallo es transitorio: se re-intenta con una pausa corta y, si al final
+    sigue caído, se propaga (la app no debe arrancar sin base de datos).
+    """
+    from sqlalchemy import exc, text
+
+    ultimo_error = None
+    for intento in range(1, DB_REINTENTOS + 1):
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            Base.metadata.create_all(bind=engine)
+            return
+        except exc.OperationalError as e:
+            ultimo_error = e
+            logger.warning(
+                f"Base de datos no disponible (intento {intento}/{DB_REINTENTOS}): "
+                f"{e.__cause__ or e}"
+            )
+            if intento < DB_REINTENTOS:
+                time.sleep(DB_ESPERA_SEG)
+    raise ultimo_error
 
 
 def get_session():
