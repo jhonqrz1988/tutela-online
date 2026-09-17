@@ -4,6 +4,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import os
 import socket
 from urllib.parse import urlparse
 
@@ -1174,7 +1175,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
     session.commit()
 
     _r(respuestas, telefono, "✅ *¡Tutela generada!*")
-    ok = enviar_documento(telefono, ruta_pdf, f"tutela_{tutela.id}.pdf")
+    ok = enviar_documento(telefono, ruta_pdf, os.path.basename(ruta_pdf))
     if not ok:
         _r(respuestas, telefono, "⚠️ No pude enviar el PDF. Intenta de nuevo.")
     _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $29k"), ("2", "✍️ Hazlo tú mismo")])

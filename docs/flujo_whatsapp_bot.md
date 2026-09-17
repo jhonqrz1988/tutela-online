@@ -156,7 +156,7 @@ USUARIO ENVÍA "HOLA"
 | 43 | Texto | `⏳ *Generando tu tutela...* Esto puede tardar unos segundos.` | Juramento aceptado |
 | 44 | Texto | `Hubo un error técnico generando tu PDF. Escribe *juro* para reintentarlo.` | Error generación |
 | 45 | Texto | `✅ *¡Tutela generada!*` | PDF OK |
-| 46 | Documento | Envía `tutela_{id}.pdf` con caption `📄 Tutela generada` | Después de #45 |
+| 46 | Documento | Envía `{cedula}.pdf` con caption `📄 Tutela generada` | Después de #45 |
 | 47 | Texto | `⚠️ No pude enviar el PDF. Intenta de nuevo.` | Error envío documento |
 | 48 | Botones | `📄 *PDF generado y enviado*\n\nAhora tienes 2 opciones:\n\n1️⃣ *Radicación automática* — *$29.000 COP*\n   Radicamos por ti ante la Rama Judicial.\n   Entrega en máximo *4 horas hábiles*.\n   Te entregamos el número de radicado.\n\n2️⃣ *Hazlo tú mismo* — GRATIS` `[("1","💳 Radicación $29k"), ("2","✍️ Hazlo tú mismo")]` | Después de #46 |
 

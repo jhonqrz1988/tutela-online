@@ -21,7 +21,7 @@ def path_tutela_pdf() -> str:
 
 
 def path_tutela_pdf_nombre(stem: str) -> str:
-    """Ruta de la tutela con nombre legible (p.ej. '{cedula}_tutela') y sin
+    """Ruta de la tutela con nombre legible (p.ej. '{cedula}') y sin
     colisiones: si el archivo ya existe se añade _2, _3... al stem.
 
     El PDF generado se sube como DEMANDA al portal: un nombre con la cédula

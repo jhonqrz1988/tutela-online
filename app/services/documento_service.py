@@ -250,7 +250,7 @@ class TutelaPDF(FPDF):
 
 def generar_pdf(datos: dict, contenido_tutela: str | None = None) -> str:
     cedula_pdf = (datos.get("accionante_cedula") or "").strip()
-    ruta = path_tutela_pdf_nombre(f"{cedula_pdf}_tutela" if cedula_pdf else "tutela")
+    ruta = path_tutela_pdf_nombre(cedula_pdf if cedula_pdf else "tutela")
 
     pdf = TutelaPDF()
     pdf.alias_nb_pages()

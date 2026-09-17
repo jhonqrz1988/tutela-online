@@ -604,7 +604,7 @@ def descargar_pdf(tutela_id: int, request: Request, session=Depends(get_session)
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not t or not t.pdf_path or not os.path.exists(t.pdf_path):
         return JSONResponse({"error": "PDF no encontrado"}, status_code=404)
-    return FileResponse(t.pdf_path, filename=f"tutela_{tutela_id}.pdf", media_type="application/pdf")
+    return FileResponse(t.pdf_path, filename=os.path.basename(t.pdf_path), media_type="application/pdf")
 
 
 @router.get("/tutelas/{tutela_id}/constancia")
