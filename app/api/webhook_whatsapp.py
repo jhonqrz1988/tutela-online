@@ -752,8 +752,8 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_decision_radicacion":
         if body in ("1", "pagar", "radicar", "si radicar"):
-            _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, f"¿Confirmas que deseas radicar tu tutela por *{texto_precio()}*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
+            _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO,
+               [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
@@ -776,8 +776,8 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         if body in ("1", "pagar", "radicar", "quiero que la radiquen", "quiero que lo radiquen",
                     "si radicar", "mejor pagar", "lo hacen ustedes", "quiero pagar", "no puedo",
                     "me parece complejo", "es complejo", "me ayudan", "radiquenla"):
-            _r(respuestas, telefono, CONFIRMAR_PAGO_TEXTO)
-            _b(respuestas, telefono, f"¿Confirmas que deseas procesar tu tutela por *{texto_precio()}*?", [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
+            _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO,
+               [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
             tutela.estado = "confirmar_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
