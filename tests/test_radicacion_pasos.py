@@ -481,6 +481,55 @@ class TestNavegadorConfirmaDatos(unittest.TestCase):
         self.assertFalse(_es_dialogo_aviso_enviar(""))
 
 
+class TestExtraeNumeroDeTexto(unittest.TestCase):
+    """El portal confirma con fórmulas distintas según el momento: "Número de
+    radicado: ...", "Número de recibo: ..." y el aviso final "recibida con
+    éxito con el número XXX". El extractor debe reconocer todas como prueba de
+    recepción; nunca debe devolver número de un texto de validación."""
+
+    def test_recibida_con_exito_con_el_numero(self):
+        from app.bot.navegador import _extraer_numero_de_texto
+
+        texto = (
+            "Su tutela ha sido recibida con éxito con el número "
+            "11001-2026-00010. Se remitirá por correo la confirmación del recibo."
+        )
+        self.assertEqual(_extraer_numero_de_texto(texto), "11001-2026-00010")
+
+    def test_numero_de_recibo_con_guiones_y_arbitrario(self):
+        from app.bot.navegador import _extraer_numero_de_texto
+
+        self.assertEqual(_extraer_numero_de_texto("Número de recibo: 11001-2026-00009"), "11001-2026-00009")
+        self.assertEqual(_extraer_numero_de_texto("Nº recibo 20260917012345678"), "20260917012345678")
+
+    def test_numero_de_radicado_sigue_funcionando(self):
+        from app.bot.navegador import _extraer_numero_de_texto
+
+        self.assertEqual(_extraer_numero_de_texto("Número de radicado: 11001-2026-00009"), "11001-2026-00009")
+        self.assertEqual(_extraer_numero_de_texto("n° radicada 11001 2026 00009"), "11001 2026 00009")
+
+    def test_fallback_por_formato_sin_frase(self):
+        from app.bot.navegador import _extraer_numero_de_texto
+
+        self.assertEqual(_extraer_numero_de_texto("registro exitoso 11001-2026-00009"), "11001-2026-00009")
+
+    def test_error_de_validacion_no_devuelve_numero(self):
+        from app.bot.navegador import _extraer_numero_de_texto
+
+        self.assertEqual(_extraer_numero_de_texto("Debe seleccionar al menos un derecho"), "")
+        self.assertEqual(_extraer_numero_de_texto(""), "")
+        self.assertEqual(_extraer_numero_de_texto(None), "")
+
+    def test_exito_nuevo_no_se_marca_como_error_de_validacion(self):
+        from app.bot.navegador import _parece_error_validacion
+
+        self.assertFalse(_parece_error_validacion(
+            "Su tutela ha sido recibida con éxito con el número 11001-2026-00010"
+        ))
+        self.assertFalse(_parece_error_validacion("Número de recibo: 11001-2026-00009"))
+        self.assertTrue(_parece_error_validacion("Debe seleccionar al menos un derecho"))
+
+
 class TestServicioRegistraPasos(unittest.TestCase):
     """El servicio persiste los pasos en la BD, con estado ok y error."""
 

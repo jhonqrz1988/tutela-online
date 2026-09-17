@@ -175,7 +175,10 @@ _TEXTO_ERROR_VALIDACION = (
     "debe ", "obligatorio", "seleccione", "verifique", "no puede", "no válido",
     "incompleto", "requerido", "rechaz", " no se pudo", "falta ", " error",
 )
-_TEXTO_EXITO_VALIDACION = ("radicad", "éxito", "exito", "constancia", "número de radicado")
+_TEXTO_EXITO_VALIDACION = (
+    "radicad", "éxito", "exito", "constancia", "número de radicado",
+    "recibid", "recibo", "recepción", "recepcion",
+)
 
 
 def _candidatos_derecho(derecho: str, tipo: str) -> list[str]:
@@ -247,20 +250,28 @@ def _es_dialogo_aviso_enviar(texto_overlay: str) -> bool:
 
 
 def _extraer_numero_de_texto(texto: str) -> str:
-    """Extrae el número de radicado del texto de un overlay si aparece
-    ('Número de radicado: 11001-2026-00009')."""
+    """Extrae el número de confirmación de un texto/overlay del portal.
+
+    El portal usa varias fórmulas en producción, todas prueba de recepción:
+      - "Número de radicado: 11001-2026-00009"
+      - "Número de recibo: ..." (el manual habla de "recibo de la acción")
+      - aviso final "su tutela ha sido recibida con éxito con el número XXX"
+    """
     if not texto:
         return ""
     m = re.search(
-        r"(?:n[o°]?\.?\s*radicad[oa]|n[uú]mero\s+de\s+radicac[ió]n)\s*[:.\-]?\s*([0-9\- ]{6,})",
+        r"(?:n[o°º]?\.?\s*(?:radicad[oa]|recib[oa])"
+        r"|n[uú]mero\s+de\s+(?:radicac[ió]n|recibo)"
+        r"|recibida\s+con\s+[eé]xito(?:\s+con)?\s+(?:el\s+)?n[uú]mero)"
+        r"\s*[:.\-]?\s*([0-9\- ]{6,})",
         texto,
         re.IGNORECASE,
     )
     if m:
         return re.sub(r"\s+", " ", m.group(1)).strip()
-    # Fallback por formato: el radicado colombiano usa 4-5-4/5 dígitos
+    # Fallback por formato: el radicado/recibo colombiano usa 4-5-4/5 dígitos
     # separados por guiones (ej. 11001-2026-00009) aunque el texto no diga
-    # "número de radicado".
+    # "número".
     m2 = re.search(r"\b\d{4,5}-\d{4}-\d{4,5}\b", texto)
     return m2.group(0) if m2 else ""
 
