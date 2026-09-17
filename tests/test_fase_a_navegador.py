@@ -79,7 +79,7 @@ class TestVerificacionEmailCondicional(unittest.TestCase):
         """Si el portal no abre el cajón del código (correo ya registrado),
         NO requiere código."""
         bot = _make_bot(FakePage(cajon_abierto=False))
-        with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
+        with mock.patch.object(bot, "_fijar_select_sin_postback", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
@@ -88,7 +88,7 @@ class TestVerificacionEmailCondicional(unittest.TestCase):
     def test_con_cajon_retorna_true(self):
         """Si el portal abre el cajón de verificación, requiere código."""
         bot = _make_bot(FakePage(cajon_abierto=True))
-        with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
+        with mock.patch.object(bot, "_fijar_select_sin_postback", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
@@ -105,7 +105,7 @@ class TestDiscapacidad(unittest.TestCase):
         async def fake_select(selector, label):
             llamadas.append((selector, label))
 
-        with mock.patch.object(bot, "_seleccionar_select", new=fake_select), \
+        with mock.patch.object(bot, "_fijar_select_sin_postback", new=fake_select), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
             asyncio.run(bot._paso_accionante(datos))
@@ -154,7 +154,7 @@ class TestNombresACampos(unittest.TestCase):
         async def fake_type(selector, value):
             campos_escritos[selector] = value
 
-        with mock.patch.object(bot, "_seleccionar_select", new=mock.AsyncMock()), \
+        with mock.patch.object(bot, "_fijar_select_sin_postback", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_type_existing", new=fake_type):
@@ -184,7 +184,7 @@ class TestNombresACampos(unittest.TestCase):
             if selector == "#PrimerNombre":
                 veces_primer_nombre.append(value)
 
-        with mock.patch.object(bot, "_seleccionar_select", new=fake_select), \
+        with mock.patch.object(bot, "_fijar_select_sin_postback", new=fake_select), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_type_existing", new=fake_type):
@@ -215,10 +215,10 @@ class TestNombresACampos(unittest.TestCase):
         async def fake_type(selector, value):
             escritos[selector] = value
 
-        async def fake_select(selector, label):
+        async def fake_fijar(selector, label):
             selecciones.append((selector, label))
 
-        with mock.patch.object(bot, "_seleccionar_select", new=fake_select), \
+        with mock.patch.object(bot, "_fijar_select_sin_postback", new=fake_fijar), \
              mock.patch.object(bot, "_type_existing", new=fake_type):
             asyncio.run(bot._aplicar_identidad_accionante({
                 "accionante_nombres": "María Fernanda",
@@ -239,9 +239,38 @@ class TestNombresACampos(unittest.TestCase):
         self.assertEqual(escritos["#Email"], "harold0.1@hotmail.com")
         veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CC")]
         self.assertGreaterEqual(
-            len(veces_cc), 1, "El tipo de documento debe seleccionarse (y re-seleccionarse al final)"
+            len(veces_cc), 1, "El tipo de documento debe fijarse (y re-fijarse al final) sin postback"
         )
         self.assertIn(("#DDlTipodiscapacidad", "No Aplica"), selecciones)
+
+    def test_fijar_select_sin_postback_no_dispara_select_option(self):
+        """#DDlTipodocumento tiene onchange=__doPostBack: `select_option` dispara
+        el postback y el servidor re-renderiza la sección del accionante
+        BORRANDO lo escrito (readback final vacío con todo bien en el anterior).
+        El fijador setea `value` directo en el DOM sin eventos: ni postback, ni
+        borrado, y el valor viaja en el submit."""
+        class PageSelectValor(FakePage):
+            def __init__(self):
+                super().__init__()
+                self.valores = []
+
+            async def evaluate(self, script, *args, **kwargs):
+                if isinstance(script, str) and "ALIASES" in script:
+                    return "2"
+                if isinstance(script, str) and "s.value = val" in script:
+                    self.valores.append(script)
+                    return None
+                return None
+
+            async def select_option(self, *args, **kwargs):
+                raise AssertionError(
+                    "select_option dispara el postback: el accionante debe fijarse sin eventos"
+                )
+
+        bot = _make_bot(PageSelectValor())
+        value = asyncio.run(bot._fijar_select_sin_postback("#DDlTipodocumento", "CC"))
+        self.assertEqual(value, "2")
+        self.assertEqual(len(bot.page.valores), 1, "El valor se fijó en el DOM")
 
     def test_completar_post_codigo_reaplica_identidad_tras_verificar_email(self):
         """El postback de #btnValidar (y el re-ingreso del correo) re-renderiza

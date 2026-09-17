@@ -171,6 +171,39 @@ _CATEGORIA_POR_KEYWORD = (
 # radicación. Nunca se inventa un derecho: es una categoría real del portal.
 _FALLBACK_DERECHO = "salud"
 
+# Busca el value de un option en un select por texto visible, case-insensitive,
+# alias ("cc"->"cédula de ciudadanía") y normalizado ("C.C."=="CC").
+_JS_BUSCAR_OPTION_SELECT = """([sel, lbl]) => {
+    const ALIASES = {
+        'cc': 'cédula de ciudadanía',
+        'ce': 'cédula de extranjería',
+        'ti': 'tarjeta de identidad',
+        'pa': 'pasaporte',
+        'pep': 'permiso especial de permanencia',
+    };
+    const norm = (s) => s.replace(/[^a-z0-9]/g, '');
+    const s = document.querySelector(sel);
+    if (!s) return null;
+    const lower = lbl.toLowerCase().trim();
+    const expanded = ALIASES[norm(lower)] || lower;
+    const nLower = norm(lower);
+    const nExpanded = norm(expanded);
+    for (const opt of s.options) {
+        const txt = opt.text.trim().toLowerCase();
+        const nTxt = norm(txt);
+        if (txt === expanded || txt === lower ||
+            txt.includes(expanded) || expanded.includes(txt) ||
+            txt.includes(lower) || lower.includes(txt) ||
+            nTxt === nExpanded || nTxt === nLower ||
+            (nExpanded.length > 2 && nTxt.includes(nExpanded)) ||
+            (nLower.length > 2 && nTxt.includes(nLower))) {
+            return opt.value;
+        }
+    }
+    return null;
+}"""
+
+
 _TEXTO_ERROR_VALIDACION = (
     "debe ", "obligatorio", "seleccione", "verifique", "no puede", "no válido",
     "incompleto", "requerido", "rechaz", " no se pudo", "falta ", " error",
@@ -436,42 +469,45 @@ class RadicadorBot:
         await self._esperar_select_ajax(selector)
 
         # Buscar el value por JS (case-insensitive / parcial / alias / normalizado)
-        match_value = await self.page.evaluate(
-            """([sel, lbl]) => {
-                const ALIASES = {
-                    'cc': 'cédula de ciudadanía',
-                    'ce': 'cédula de extranjería',
-                    'ti': 'tarjeta de identidad',
-                    'pa': 'pasaporte',
-                    'pep': 'permiso especial de permanencia',
-                };
-                const norm = (s) => s.replace(/[^a-z0-9]/g, '');
-                const s = document.querySelector(sel);
-                if (!s) return null;
-                const lower = lbl.toLowerCase().trim();
-                const expanded = ALIASES[norm(lower)] || lower;
-                const nLower = norm(lower);
-                const nExpanded = norm(expanded);
-                for (const opt of s.options) {
-                    const txt = opt.text.trim().toLowerCase();
-                    const nTxt = norm(txt);
-                    if (txt === expanded || txt === lower ||
-                        txt.includes(expanded) || expanded.includes(txt) ||
-                        txt.includes(lower) || lower.includes(txt) ||
-                        nTxt === nExpanded || nTxt === nLower ||
-                        (nExpanded.length > 2 && nTxt.includes(nExpanded)) ||
-                        (nLower.length > 2 && nTxt.includes(nLower))) {
-                        return opt.value;
-                    }
-                }
-                return null;
-            }""",
-            [selector, label],
-        )
+        match_value = await self.page.evaluate(_JS_BUSCAR_OPTION_SELECT, [selector, label])
 
         if match_value is not None:
             await self.page.select_option(selector, value=match_value)
             return match_value
+        logger.warning(f"No se encontró '{label}' en {selector}")
+        return None
+
+    async def _fijar_select_sin_postback(self, selector: str, label: str) -> str | None:
+        """Fija el value de un option en un select SIN disparar el evento change.
+
+        En este portal #DDlTipodocumento (y los selects del accionante en
+        general) tienen `onchange=__doPostBack`: `page.select_option` dispara el
+        postback y el servidor re-renderiza la sección, BORRANDO todo lo escrito
+        (cédula, nombres, teléfono, email) y dejando el select en 'Seleccione...'.
+
+        Evidencia del plantel (corrida 20:15 y reintentos): el readback
+        "accionante_3_tras_escritura" salía con TODO bien escrito, y el readback
+        final con TODO vacío — la única diferencia era la re-selección del tipo
+        de documento vía `select_option`.
+
+        Al fijar `value` directo en el DOM (sin eventos) el valor se envía con el
+        formulario en el submit y la sección no se re-renderiza. Retorna el value
+        fijado, o None si no se encontró la opción.
+        """
+        match_value = await self.page.evaluate(_JS_BUSCAR_OPTION_SELECT, [selector, label])
+        if match_value is not None:
+            try:
+                await self.page.evaluate(
+                    """([sel, val]) => {
+                        const s = document.querySelector(sel);
+                        if (s) s.value = val;
+                    }""",
+                    [selector, match_value],
+                )
+                return match_value
+            except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+                logger.warning(f"No se pudo fijar {selector} = '{label}': {e}")
+                return None
         logger.warning(f"No se encontró '{label}' en {selector}")
         return None
 
@@ -628,7 +664,10 @@ class RadicadorBot:
         email = datos.get("accionante_email", "")
         self._email_accionante = email
 
-        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
+        # Se fija el tipo documento SIN disparar postback: en este portal el
+        # select tiene onchange=__doPostBack y re-renderizar la sección borra
+        # todo lo escrito (ver _fijar_select_sin_postback).
+        await self._fijar_select_sin_postback("#DDlTipodocumento", tipo_doc)
         await self.page.wait_for_timeout(400)
         await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
         await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
@@ -639,13 +678,13 @@ class RadicadorBot:
 
         discapacidad = datos.get("accionante_discapacidad") or "No Aplica"
         try:
-            await self._seleccionar_select("#DDlTipodiscapacidad", discapacidad)
+            await self._fijar_select_sin_postback("#DDlTipodiscapacidad", discapacidad)
         except Exception:
             logger.warning("No se pudo seleccionar tipo discapacidad")
 
         # El autofill del portal deja el select del tipo de documento en
-        # 'Seleccione...': re-seleccionarlo al final.
-        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
+        # 'Seleccione...': re-fijarlo al final (sin postback, no borra nada).
+        await self._fijar_select_sin_postback("#DDlTipodocumento", tipo_doc)
 
     async def _paso_accionante(self, datos: dict) -> bool:
         """Paso 4: Datos del accionante. Retorna True si requiere código de email."""
@@ -657,9 +696,11 @@ class RadicadorBot:
             nombre = _separar_nombre(datos.get("accionante_nombre", ""))
 
         # Tipo documento: se usa el que el cliente registró (CC por defecto);
-        # el normalizado del alias resuelve variantes ("C.C.", "CC").
+        # el normalizado del alias resuelve variantes ("C.C.", "CC"). Se fija
+        # SIN postback: `select_option` dispara __doPostBack y el portal
+        # re-renderiza la sección del accionante borrando lo escrito.
         tipo_doc = datos.get("accionante_tipo_doc", "CC")
-        await self._seleccionar_select("#DDlTipodocumento", tipo_doc)
+        await self._fijar_select_sin_postback("#DDlTipodocumento", tipo_doc)
         await self.page.wait_for_timeout(500)
 
         # Número documento: sin puntos ni espacios, limpiando el campo primero
@@ -686,7 +727,7 @@ class RadicadorBot:
         # Tipo discapacidad (si el usuario declaró una, se usa; si no, "No Aplica")
         discapacidad = datos.get("accionante_discapacidad") or "No Aplica"
         try:
-            await self._seleccionar_select("#DDlTipodiscapacidad", discapacidad)
+            await self._fijar_select_sin_postback("#DDlTipodiscapacidad", discapacidad)
         except Exception:
             logger.warning("No se pudo seleccionar tipo discapacidad")
 
