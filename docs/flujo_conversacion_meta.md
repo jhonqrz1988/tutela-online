@@ -76,8 +76,8 @@ https://tutelapp.co/privacidad
 [BOT]      → 🏙️ ¿En qué ciudad vives?
 [USUARIO]  → "Bogotá"
 
-[BOT]      → 📍 Dirección de residencia completa (calle, número, barrio, ciudad):
-[USUARIO]  → "Calle 123 #45-67, Barrio Norte, Bogotá"
+[BOT]      → 📍 Dirección de residencia (calle y número):
+[USUARIO]  → "Calle 123 #45-67"
 
 [BOT]      → 🗺️ Departamento (ej: Cundinamarca, Antioquia):
 [USUARIO]  → "Cundinamarca"

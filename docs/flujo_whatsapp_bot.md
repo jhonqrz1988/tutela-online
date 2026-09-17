@@ -93,7 +93,7 @@ USUARIO ENVÍA "HOLA"
 | 10 | Texto | `📱 Teléfono celular:` | Paso 3 |
 | 11 | Texto | `📧 Correo electrónico (para notificaciones del juzgado):` | Paso 4 |
 | 12 | Texto | `🏙️ ¿En qué ciudad vives?:` | Paso 5 |
-| 13 | Texto | `📍 Dirección de residencia completa (calle, número, barrio, ciudad):` | Paso 6 |
+| 13 | Texto | `📍 Dirección de residencia (calle y número):` | Paso 6 |
 | 14 | Texto | `🗺️ Departamento (ej: Cundinamarca, Antioquia):` | Paso 7 |
 | 15 | Texto | `Por favor responde con texto: {msg}` | Envía media durante recolección |
 | 16 | Texto | `✅ *Datos personales registrados.*` | 8 pasos completados |
