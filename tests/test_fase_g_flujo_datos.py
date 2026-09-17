@@ -253,7 +253,7 @@ class TestPreguntasClinicas(_FlujoMixin):
         resp, mock_b, _ = asyncio.run(self._procesar(session, user.telefono, "1"))
         tutela = session.execute(select(Tutela)).scalars().all()[0]
         self.assertEqual(tutela.estado, "preguntas_clinicas")
-        # Pregunta el primer campo clínico (tipo de afiliación)
+        # Pregunta el primer campo clínico (servicio negado)
         ds = json.loads(tutela.datos_json)
         self.assertEqual(ds["_step_clinico"], 1)
 
@@ -264,14 +264,14 @@ class TestPreguntasClinicas(_FlujoMixin):
                  "derechos_vulnerados": ["Art. 49 CP"], "peticion": "Que autoricen la cita."}
         user, tutela = self._crear_usuario_tutela(session, "preguntas_clinicas", datos)
 
-        # primeros 3 pasos clínicos
-        for body in ("contributivo", "Cita de medicina general", "10/01/2026"):
+        # pasos clínicos intermedios (sin afiliación, ya eliminada del flujo)
+        for body in ("Cita de medicina general", "10/01/2026"):
             resp, _, _ = asyncio.run(self._procesar(session, user.telefono, body))
         tutela = session.execute(select(Tutela)).scalars().all()[0]
         guardados = json.loads(tutela.datos_json)
-        self.assertEqual(guardados["tipo_afiliacion"], "contributivo")
         self.assertEqual(guardados["medicamentos_o_servicio"], "Cita de medicina general")
         self.assertEqual(guardados["fecha_solicitud"], "10/01/2026")
+        self.assertNotIn("tipo_afiliacion", guardados, "La afiliación ya no se pregunta")
 
         # último paso clínico (fecha negativa) → pasa a pruebas_pendiente
         resp, _, _ = asyncio.run(self._procesar(session, user.telefono, "no recuerdo"))

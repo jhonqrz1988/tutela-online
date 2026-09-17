@@ -1310,7 +1310,6 @@ def _recomponer_nombre(datos: dict) -> str:
 
 # Datos clínicos del caso que pregunta el bot (evita que la IA los invente): (campo, mensaje)
 DATOS_CLINICOS_STEPS = [
-    ("tipo_afiliacion", "🏥 ¿Estás afiliado al *régimen contributivo* o al *subsidiado*?"),
     ("medicamentos_o_servicio", "💉 ¿Qué *tratamiento, medicamento o servicio* te negaron o no autorizaron?"),
     ("fecha_solicitud", "📅 ¿En qué *fecha* lo solicitaste? (ej: 10/01/2026)"),
     ("fecha_negativa", "🚫 ¿En qué *fecha* te negaron o no dieron respuesta? (ej: 15/01/2026 o *no recuerdo*)"),
