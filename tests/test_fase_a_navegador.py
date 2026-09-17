@@ -77,13 +77,18 @@ class TestVerificacionEmailCondicional(unittest.TestCase):
 
     def test_sin_cajon_retorna_false(self):
         """Si el portal no abre el cajón del código (correo ya registrado),
-        NO requiere código."""
+        NO requiere código, pero de todas formas completa la confirmación del
+        correo (re-ingresa email + #IdEmail1 + Validar) — queja de prod:
+        "Debe Confirmar el correo electrónico" al enviar."""
         bot = _make_bot(FakePage(cajon_abierto=False))
+        reingresar = mock.AsyncMock()
         with mock.patch.object(bot, "_fijar_select_sin_postback", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
-             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_reingresar_email", new=reingresar):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
         self.assertFalse(requiere, "Si el portal no abre el cajón, debe retornar False")
+        reingresar.assert_awaited_once_with("a@b.com")
 
     def test_con_cajon_retorna_true(self):
         """Si el portal abre el cajón de verificación, requiere código."""
@@ -260,6 +265,8 @@ class TestNombresACampos(unittest.TestCase):
                 if isinstance(script, str) and "s.value = val" in script:
                     self.valores.append(script)
                     return None
+                if isinstance(script, str) and "options[i]" in script:
+                    return "CÉDULA DE CIUDADANÍA"
                 return None
 
             async def select_option(self, *args, **kwargs):
@@ -271,6 +278,26 @@ class TestNombresACampos(unittest.TestCase):
         value = asyncio.run(bot._fijar_select_sin_postback("#DDlTipodocumento", "CC"))
         self.assertEqual(value, "2")
         self.assertEqual(len(bot.page.valores), 1, "El valor se fijó en el DOM")
+
+    def test_fijar_select_sin_postback_devuelve_none_si_widget_no_sincroniza(self):
+        """Si tras fijar `value` el select sigue mostrando 'Seleccione...' (un
+        widget del portal que no refleja el DOM), devuelve None para que el
+        flujo lo diagnóstique en lugar de asumir que quedó bien."""
+        class PageSelectWidget(FakePage):
+            def __init__(self):
+                super().__init__()
+                self.valores = []
+
+            async def evaluate(self, script, *args, **kwargs):
+                if isinstance(script, str) and "ALIASES" in script:
+                    return "2"
+                if isinstance(script, str) and "options[i]" in script:
+                    return "Seleccione..."
+                return None
+
+        bot = _make_bot(PageSelectWidget())
+        value = asyncio.run(bot._fijar_select_sin_postback("#DDlTipodocumento", "CC"))
+        self.assertIsNone(value, "Si el select quedó en 'Seleccione...' no debe afirmar éxito")
 
     def test_completar_post_codigo_reaplica_identidad_tras_verificar_email(self):
         """El postback de #btnValidar (y el re-ingreso del correo) re-renderiza

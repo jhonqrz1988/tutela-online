@@ -28,6 +28,11 @@ ESPERA_CODIGO_SELECTOR_MS = 20000
 # (queja de prod: "E  Ramirez Montoya" y tipo doc en "Seleccione...").
 AUTOFILL_SETTLE_MS = 1500
 
+# Tope en MS para sonDEar que el autofill del portal ya llenó los nombres tras
+# escribir la cédula (puede tardar más de AUTOFILL_SETTLE_MS; se espera hasta
+# que aparezcan o este tope).
+AUTOFILL_POLL_MAX_MS = 7000
+
 # ¿Está abierto el CAJÓN del código de verificación? Un overlay visible
 # (jquery-confirm `.jconfirm`, `.modal`, `[role=dialog]`) con un input
 # habilitado es el indicador real: `#IdEmail1` es el 'confirmar correo' y
@@ -500,11 +505,34 @@ class RadicadorBot:
                 await self.page.evaluate(
                     """([sel, val]) => {
                         const s = document.querySelector(sel);
-                        if (s) s.value = val;
+                        if (!s) return;
+                        s.value = val;
+                        for (let i = 0; i < s.options.length; i++) {
+                            if (String(s.options[i].value) === String(val)) {
+                                s.selectedIndex = i;
+                                break;
+                            }
+                        }
                     }""",
                     [selector, match_value],
                 )
-                return match_value
+                # Verificar que SÍ quedó seleccionado (el portal puede estar
+                # usando un widget que no refleja el value directo).
+                verificado = await self.page.evaluate(
+                    """([sel]) => {
+                        const s = document.querySelector(sel);
+                        if (!s) return null;
+                        const i = s.selectedIndex;
+                        return i >= 0 && s.options[i] ? s.options[i].text.trim() : null;
+                    }""",
+                    [selector],
+                )
+                if verificado and str(verificado).strip() not in ("", "Seleccione..."):
+                    return match_value
+                logger.warning(
+                    f"Fijado {selector}='{label}' pero el select quedó en '{verificado}' — widget no sincronizado"
+                )
+                return None
             except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
                 logger.warning(f"No se pudo fijar {selector} = '{label}': {e}")
                 return None
@@ -712,7 +740,18 @@ class RadicadorBot:
         # Esperar el autofill del portal (nombres resueltos por cédula): si
         # escribimos los nombre antes de que asiente, el AJAX los pisa (queja
         # de prod: nombre queda "E  Ramirez Montoya" en vez del completo).
-        await self.page.wait_for_timeout(AUTOFILL_SETTLE_MS)
+        # Sondeamos hasta que el primer nombre aparezca (o un tope) en vez de
+        # una espera fija: el autofill puede tardar más de AUTOFILL_SETTLE_MS.
+        try:
+            for _ in range(int(AUTOFILL_POLL_MAX_MS / 500)):
+                value = await self.page.evaluate(
+                    "() => (document.querySelector('#PrimerNombre') || {}).value || ''"
+                )
+                if str(value or "").strip():
+                    break
+                await self.page.wait_for_timeout(500)
+        except Exception:  # noqa: BLE001 - el autofill es solo una espera
+            pass
         await self._readback_accionante("accionante_2_tras_autofill")
 
         # Nombres (typing lento para evitar bloqueo de paste)
@@ -790,6 +829,17 @@ class RadicadorBot:
             return True
         except Exception:
             logger.info("Correo ya verificado, no se requiere código de email")
+            # Aún así el portal exige cerrar el paso de confirmación del correo:
+            # hay que re-ingresar el email + confirmar (#IdEmail1) + Validar de
+            # nuevo (quejas de prod: "Debe Confirmar el correo electrónico" al
+            # enviar). Esta re-validación usa campos habilitados, no reabre el
+            # cajón del código.
+            email = getattr(self, "_email_accionante", "")
+            if email:
+                try:
+                    await self._reingresar_email(email)
+                except Exception as e:  # noqa: BLE001 - el flujo continúa igual
+                    logger.warning(f"No se pudo completar la confirmación del correo: {e}")
             return False
 
     async def ingresar_codigo_email(self, codigo: str) -> dict:
