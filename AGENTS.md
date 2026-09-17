@@ -46,14 +46,14 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 10. `recibiendo_pruebas` - Receive attachments
 11. `datos_listos` - Show summary + get juramento
 12. `pdf_generado` - PDF generated (transient, goes to next)
-13. `esperando_decision_radicacion` - Awaiting radicacion result
-14. `confirmar_pago` - Payment flow
+13. `esperando_decision_radicacion` - Ask user: radicar por el equipo ($29k) o hazlo tú mismo; si elige pagar, envía directo el link (`/pago/{id}`) y pasa a `esperando_pago` sin confirmación previa
+14. `confirmar_pago` - Legacy: se entra si una tutela quedó en ese estado; el flujo nuevo salta directo de `esperando_decision_radicacion`/`hazlo_tu_mismo` a `esperando_pago` (mensaje único con link)
 15. `esperando_pago` - Payment link sent, awaiting user confirmation
 16. `pago_por_confirmar` - User reported payment, human verifies in admin
 17. `pago_confirmado` - Payment confirmed, awaiting manual radicacion by team
 18. `radicada` - Radicado number registered from admin panel
 19. `completado` - Done
-20. `hazlo_tu_mismo` - User chose to radicate it themselves; can switch back to `confirmar_pago` (writes "Quiero que la radiquen") without restarting the flow
+20. `hazlo_tu_mismo` - User chose to radicate it themselves; if they later say "Quiero que la radiquen", bot sends link directo y pasa a `esperando_pago` (sin confirmación previa) — mismo flujo que `esperando_decision_radicacion`
 21. `pendiente_radicacion` - Retry queued (Reintentar, nightly job o **reintento automático del código**: si el código no llega a tiempo o el navegador muere al recibirlo, `_manejar_fallo_codigo` re-lanza sola tras `RETRY_ESPERA_SEG` y pide un código nuevo; tope `MAX_REINTENTOS_CODIGO=3` vía `Radicacion.intentos`, al agotarlos → `fallida` para revisión del admin; el hilo de reintento re-chequea la BD antes de despachar para no doblar una radicación ya hecha; al despertar, `_sondeo_tolerante` (3 pings espaciados, `CONEXION_PAUSA_SEG=2s`) evita matar el parqueo por un ping lento del portal).
 
 **Cajón del código de email (Rama Judicial)**: `#IdEmail1` es el campo "confirmar correo" y permanece `disabled` hasta validar — NUNCA es el input del código. La verificación funciona así: `#Email` → `#btnValidar` → el portal abre un cajón (`.jconfirm`/`.modal`/`[role=dialog]`) con un input habilitado y botón "Continuar". `ingresar_codigo_email()` espera el cajón (`_JS_CAJON_ABIERTO`), identifica el input único visible+habilitado (`_JS_SELECTOR_CODIGO` → selector CSS o error), escribe el código, pulsa Continuar, re-ingresa correo (`_reingresar_email`: `#Email` + `#IdEmail1` si habilitados + `#btnValidar`) y verifica que el cajón cerró. `_paso_accionante` decide "¿pide código?" por **cajón abierto** (no por `#IdEmail1` visible, que siempre está en el DOM); si el correo ya estaba verificado el cajón no abre y continúa directo. Fallos con límite de tiempo (`ESPERA_CODIGO_SELECTOR_MS=20000`) + screenshot y `_log_diagnostico_cajon()` (dump de inputs de overlays). El ping de `verificar_conexion` se acota con `asyncio.wait_for` (Playwright NO acepta `timeout` en `page.evaluate` — bug que hizo parecer muerto al navegador vivo).
