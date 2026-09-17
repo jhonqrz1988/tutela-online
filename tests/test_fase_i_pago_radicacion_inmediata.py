@@ -10,6 +10,7 @@ Cubre:
 - El scheduler salta tutelas cuya radicación ya está en curso (evita abrir un
   segundo navegador mientras el bot radica).
 """
+import asyncio
 import json
 import unittest
 from unittest import mock
@@ -19,11 +20,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
 
+from app.config import settings
 from app.database import Base, get_session
 from app.main import app
 from app.models.radicacion import Radicacion
 from app.models.tutela import Tutela
 from app.models.user import User
+from app.api import webhook_whatsapp
 
 
 def _nueva_sesion():
@@ -223,6 +226,55 @@ class TestWebhookPagoActivaRadicacion(unittest.TestCase):
             select(Radicacion).where(Radicacion.tutela_id == tutela_id)
         ).scalars().all()
         self.assertEqual(len(rads), 1, "Un solo registro de radicación: nunca radicar dos veces")
+
+
+class TestMensajeUnicoLinkPago(unittest.TestCase):
+    """Al decir 'radicar', el bot envía directo el link de pago y pasa a
+    esperando_pago, sin la confirmación previa (CONFIRMAR_PAGO_TEXTO)."""
+
+    def _crear_tutela(self, session, estado="esperando_decision_radicacion"):
+        user = User(telefono="573009990010", nombre="Test", consentimiento=True, estado="activo")
+        session.add(user)
+        session.flush()
+        tutela = Tutela(user_id=user.id, tipo="salud", estado=estado, datos_json="{}")
+        session.add(tutela)
+        session.commit()
+        return user, tutela
+
+    async def _procesar(self, session, telefono, body):
+        with mock.patch.object(webhook_whatsapp, "enviar_texto", return_value=True), \
+             mock.patch.object(webhook_whatsapp, "enviar_botones", return_value=True):
+            return await webhook_whatsapp.procesar_mensaje(session, telefono, body, 0, "", False)
+
+    def test_radicar_va_directo_al_link_de_pago(self):
+        """'radicar' omite la confirmación previa y salta a esperando_pago con el link."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_tutela(session)
+
+        resp = asyncio.run(self._procesar(session, user.telefono, "1"))
+        session.refresh(tutela)
+
+        self.assertEqual(tutela.estado, "esperando_pago")
+        mensajes = resp.get("respuestas", [])
+        link = f"{settings.app_url}/pago/{tutela.id}"
+        self.assertTrue(any(link in m for m in mensajes), f"Debe contener el link de pago: {mensajes}")
+        self.assertFalse(
+            any("¿Quieres continuar con el pago?" in m for m in mensajes),
+            "No debe enviarse la confirmación previa (CONFIRMAR_PAGO_TEXTO)",
+        )
+
+    def test_radicar_directo_desde_hazlo_tu_mismo(self):
+        """En hazlo_tu_mismo, cambiar de opinión también va directo al link de pago."""
+        session = _nueva_sesion()
+        user, tutela = self._crear_tutela(session, estado="hazlo_tu_mismo")
+
+        resp = asyncio.run(self._procesar(session, user.telefono, "quiero pagar"))
+        session.refresh(tutela)
+
+        self.assertEqual(tutela.estado, "esperando_pago")
+        mensajes = resp.get("respuestas", [])
+        link = f"{settings.app_url}/pago/{tutela.id}"
+        self.assertTrue(any(link in m for m in mensajes), f"Debe contener el link de pago: {mensajes}")
 
 
 class TestSchedulerSaltaTutelaEnCurso(unittest.TestCase):

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.config import settings
 from app.database import get_session
@@ -657,3 +657,49 @@ def ver_screenshot(nombre: str, request: Request, _=Depends(require_admin)):
     if not ruta.exists() or not ruta.is_file():
         return JSONResponse({"error": "No encontrado"}, status_code=404)
     return FileResponse(ruta, media_type="image/png")
+
+
+@router.post("/api/limpiar-historial")
+def limpiar_historial(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    """Borra el historial de radicaciones de los intentos previos (fallidas y
+    pendientes/intermedias) junto con sus pasos y los screenshots de diagnóstico
+    sueltos. Conserva: tutelas, usuarios, PDFs, constancias de radicadas y
+    mensajes. Util para que la próxima radicación (ej. reintento de una tutela
+    pendiente) aparezca como limpie en el panel admin."""
+    # 1) Radicaciones que NO terminaron radicadas (intentos pasados) + sus pasos
+    radicaciones = session.execute(
+        select(Radicacion).where(Radicacion.estado != "radicada")
+    ).scalars().all()
+    ids_a_borrar = [r.id for r in radicaciones]
+    n_pasos = 0
+    if ids_a_borrar:
+        res_pasos = session.execute(
+            delete(PasoRadicacion).where(PasoRadicacion.radicacion_id.in_(ids_a_borrar))
+        )
+        n_pasos = res_pasos.rowcount
+        session.execute(delete(Radicacion).where(Radicacion.id.in_(ids_a_borrar)))
+
+    # 2) Screenshots sueltos que no pertenecen a una constancia de radicada
+    dir_screenshots = Path(settings.storage_dir or "storage") / "screenshots"
+    constancias = set()
+    for p in session.execute(select(Radicacion.constancia_path).where(
+        Radicacion.estado == "radicada", Radicacion.constancia_path.isnot(None)
+    )).scalars().all():
+        constancias.add(Path(p).resolve())
+    n_screens = 0
+    if dir_screenshots.exists():
+        for archivo in dir_screenshots.glob("*.png"):
+            try:
+                if archivo.resolve() not in constancias:
+                    archivo.unlink()
+                    n_screens += 1
+            except OSError:
+                logger.warning(f"No se pudo eliminar screenshot {archivo}")
+
+    session.commit()
+    return JSONResponse({
+        "ok": True,
+        "radicaciones_eliminadas": len(ids_a_borrar),
+        "pasos_eliminados": n_pasos,
+        "screenshots_eliminados": n_screens,
+    })

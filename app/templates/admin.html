@@ -73,6 +73,7 @@
   <h1>&#x2696;&#xFE0F; TutelApp</h1>
   <div>
     <a href="#" class="toggle-sched" id="scheduler-toggle" onclick="toggleScheduler(event)" title="Activa o desactiva la radicaci&oacute;n autom&aacute;tica (bot)">Cargando...</a>
+    &nbsp; <a href="#" class="toggle-sched" onclick="limpiarHistorial(event)" title="Borra radicaciones de intentos previos y screenshots sueltos">&#x1F9F9; Limpiar historial</a>
     &nbsp; <span>N&deg; de tutela actual: <strong>{{ total_tutelas }}</strong></span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a>
   </div>
 </div>
@@ -492,6 +493,21 @@ async function toggleScheduler(e) {
   } catch(e) {
     alert('Error de conexi\u00f3n: ' + e.message);
     cargarEstadoScheduler();
+  }
+}
+
+async function limpiarHistorial(e) {
+  e.preventDefault();
+  if (!confirm('Est\u00e1s por borrar el historial de radicaciones de los intentos previos (fallidas/pendientes) y los screenshots sueltos.\nConservar\u00e1 tutelas, PDFs y constancias ya radicadas.\n\u00bfContinuar?')) return;
+  const res = await fetch('/admin/api/limpiar-historial', { method: 'POST' });
+  const data = await res.json();
+  if (data.ok) {
+    alert('Historial limpiado.\nRadicaciones eliminadas: ' + (data.radicaciones_eliminadas || 0) +
+          '\nPasos eliminados: ' + (data.pasos_eliminados || 0) +
+          '\nScreenshots eliminados: ' + (data.screenshots_eliminados || 0));
+    location.reload();
+  } else {
+    alert('Error: ' + (data.error || data.detail || 'desconocido'));
   }
 }
 

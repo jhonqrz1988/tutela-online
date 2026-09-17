@@ -752,9 +752,8 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_decision_radicacion":
         if body in ("1", "pagar", "radicar", "si radicar"):
-            _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO,
-               [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, hazlo yo mismo")])
-            tutela.estado = "confirmar_pago"
+            _enviar_link_pago(respuestas, telefono, tutela)
+            tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
@@ -776,9 +775,8 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         if body in ("1", "pagar", "radicar", "quiero que la radiquen", "quiero que lo radiquen",
                     "si radicar", "mejor pagar", "lo hacen ustedes", "quiero pagar", "no puedo",
                     "me parece complejo", "es complejo", "me ayudan", "radiquenla"):
-            _b(respuestas, telefono, CONFIRMAR_PAGO_TEXTO,
-               [("confirmar_pago", "✅ Sí, pagar ahora"), ("2", "❌ No, lo intento yo")])
-            tutela.estado = "confirmar_pago"
+            _enviar_link_pago(respuestas, telefono, tutela)
+            tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "no", "lo intento yo", "hacer yo mismo", "ya lo logre", "no necesito"):
@@ -865,6 +863,17 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
 def _r(respuestas: list[str], telefono: str, mensaje: str) -> None:
     enviar_texto(telefono, mensaje)
     respuestas.append(mensaje)
+
+
+def _enviar_link_pago(respuestas: list[str], telefono: str, tutela) -> None:
+    """Envía el mensaje con el link de pago de Mercado Pago."""
+    link_pago = f"{settings.app_url}/pago/{tutela.id}"
+    _r(respuestas, telefono,
+       f"💰 *Procesamiento automático*\n\n"
+       f"Para completar el pago de *{texto_precio()}*:\n\n"
+       f"🔗 {link_pago}\n\n"
+       f"⚠️ *Importante:* Procesamos tu tutela y te entregamos el "
+       f"*número de seguimiento* en máximo *4 horas hábiles* (lun-vie 8am-5pm).")
 
 
 def _b(respuestas: list[str], telefono: str, texto: str, botones: list[tuple[str, str]]) -> None:
