@@ -932,5 +932,71 @@ class TestIngresarCodigoEmailAcotado(unittest.TestCase):
         self.assertIn("volvió a pedir", resultado.get("error", "").lower())
 
 
+class TestGuardDobleNavegador(unittest.TestCase):
+    """despachar_radicacion no abre una segunda instancia del navegador si la
+    tutela ya tiene una radicación en curso (el portal es sesión única por
+    navegador: dos a la vez duplicarían la solicitud)."""
+
+    def setUp(self):
+        with radicacion_service._parqueos_lock:
+            radicacion_service._parqueos.clear()
+            radicacion_service._codigos_pendientes.clear()
+        self.fabrica = _nueva_fabrica()
+        session = self.fabrica()
+        self.user, self.tutela = _crear_tutela_a_radicar(session)
+        self.tutela_id = self.tutela.id
+        session.close()
+        self._patch_session = mock.patch.object(radicacion_service, "SessionLocal", self.fabrica)
+        self._patch_session.start()
+
+    def tearDown(self):
+        self._patch_session.stop()
+        with radicacion_service._parqueos_lock:
+            radicacion_service._parqueos.clear()
+            radicacion_service._codigos_pendientes.clear()
+
+    def _radicacion_en(self, estado: str):
+        session = self.fabrica()
+        try:
+            rad = session.execute(
+                select(Radicacion).where(Radicacion.tutela_id == self.tutela_id)
+            ).scalar_one_or_none()
+            if rad is None:
+                rad = Radicacion(tutela_id=self.tutela_id, estado=estado)
+                session.add(rad)
+            else:
+                rad.estado = estado
+            session.commit()
+        finally:
+            session.close()
+
+    def test_no_despacha_si_hay_radicacion_en_curso(self):
+        self._radicacion_en("continuando")
+        with mock.patch.object(
+            radicacion_service, "_get_loop_hogar",
+            side_effect=AssertionError("No debe despachar: ya hay una radicación en curso"),
+        ):
+            res = radicacion_service.despachar_radicacion(self.tutela_id)
+        self.assertFalse(res.get("ok"), res)
+        self.assertFalse(res.get("despachada", False), res)
+        self.assertIn("en curso", res.get("error", "").lower())
+
+    def test_despacha_si_no_hay_radicacion_en_curso(self):
+        self._radicacion_en("fallida")
+
+        async def fake_iniciar(tutela_id, **kw):
+            return {"ok": True}
+
+        loop_hogar = _LoopHogarTest()
+        try:
+            with mock.patch.object(radicacion_service, "iniciar_radicacion", side_effect=fake_iniciar), \
+                 mock.patch.object(radicacion_service, "_get_loop_hogar", return_value=loop_hogar.loop):
+                res = radicacion_service.despachar_radicacion(self.tutela_id)
+            self.assertTrue(res.get("ok"), res)
+            self.assertTrue(res.get("despachada"), res)
+        finally:
+            loop_hogar.detener()
+
+
 if __name__ == "__main__":
     unittest.main()

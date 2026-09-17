@@ -177,6 +177,19 @@ def despachar_radicacion(tutela_id: int, *, forzar: bool = False) -> dict:
     with _parqueos_lock:
         if tutela_id in _parqueos:
             return {"ok": True, "ya_en_espera": True, "despachada": False}
+    # Guard anti-doble-navegador: si el bot ya está físicamente trabajando
+    # sobre el portal para esta tutela (iniciando/continuando/...), no abrir
+    # una segunda instancia — el portal es sesión única por navegador y dos
+    # navegadores a la vez duplicarían la solicitud.
+    session = SessionLocal()
+    try:
+        rad = session.execute(
+            select(Radicacion).where(Radicacion.tutela_id == tutela_id)
+        ).scalar_one_or_none()
+        if rad and rad.estado in ESTADOS_RADICACION_EN_CURSO:
+            return {"ok": False, "error": "Ya hay una radicación en curso para esta tutela", "despachada": False}
+    finally:
+        session.close()
     loop = _get_loop_hogar()
     envio = asyncio.run_coroutine_threadsafe(iniciar_radicacion(tutela_id, forzar=forzar), loop)
     envio.add_done_callback(lambda f: _registrar_resultado_despacho(tutela_id, f))

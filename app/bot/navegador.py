@@ -847,32 +847,40 @@ class RadicadorBot:
         # autofill y volvería a pisar los nombres).
         await self._aplicar_identidad_accionante(datos)
 
-        # Readback: volcar qué quedó realmente en el formulario del portal
-        # (tipo documento, nombres, apellidos, cédula) para diagnosticar en el
-        # panel si el llenado no aplicó (quejas: "no selecciona el tipo de
-        # documento" y "no pone los nombres bien").
-        try:
-            readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
-            logger.info(f"[readback accionante] {json.dumps(readback, ensure_ascii=False)}")
-            fuente = {
-                "tipo_doc": tipo_doc,
-                "cedula": datos.get("accionante_cedula"),
-                "nombre": datos.get("accionante_nombre"),
-                "nombres": datos.get("accionante_nombres"),
-                "apellidos": datos.get("accionante_apellidos"),
-            }
-            logger.info(f"[readback fuente] {json.dumps(fuente, ensure_ascii=False)}")
-            if readback and (
-                str(readback.get("tipo_doc") or "").strip() in ("", "Seleccione...")
-                or not str(readback.get("primer_nombre") or "").strip()
-            ):
+        # Readback + recuperación acotada: volcar qué quedó realmente en el
+        # formulario del portal (tipo documento, nombres, apellidos, cédula).
+        # Si el portal dejó el tipo de documento o la identidad mal (wipe por
+        # un listener delegado del select, o autofill tardío), se re-aplica la
+        # identidad una vez más (sin tocar la cédula) y se re-fija el select de
+        # último. Máximo 2 pasadas para no infinitar.
+        fuente = {
+            "tipo_doc": tipo_doc,
+            "cedula": datos.get("accionante_cedula"),
+            "nombre": datos.get("accionante_nombre"),
+            "nombres": datos.get("accionante_nombres"),
+            "apellidos": datos.get("accionante_apellidos"),
+        }
+        logger.info(f"[readback fuente] {json.dumps(fuente, ensure_ascii=False)}")
+        for pasada in range(2):
+            try:
+                readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
+                tag = "accionante" if pasada == 0 else "accionante_retry"
+                logger.info(f"[readback {tag}] {json.dumps(readback, ensure_ascii=False)}")
+                if readback and (
+                    str(readback.get("tipo_doc") or "").strip() not in ("", "Seleccione...")
+                    and str(readback.get("primer_nombre") or "").strip()
+                ):
+                    break  # quedó bien
                 logger.warning(
                     "[readback accionante] el portal NO quedó con el tipo de documento/identidad correcto"
                 )
-                await self._log_diagnostico_accionante()
-                await self._capturar_evidencia("accionante_vacio")
-        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
-            logger.warning(f"No se pudo leer el formulario del accionante: {e}")
+                if pasada == 0:
+                    await self._log_diagnostico_accionante()
+                    await self._capturar_evidencia("accionante_vacio")
+                    await self._aplicar_identidad_accionante(datos)
+            except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+                logger.warning(f"No se pudo leer el formulario del accionante: {e}")
+                break
 
         # Click validar correo — activa verificación
         await self._cerrar_jconfirm()
@@ -1499,7 +1507,7 @@ class RadicadorBot:
             num_radicado = ""
             overlay_texto = ""
             reintentos_correo = 0
-            for intento in range(6):
+            for intento in range(8):
                 num_radicado = await self._leer_num_radicado()
                 overlay_texto = await self._leer_overlay()
                 logger.info(
