@@ -415,7 +415,7 @@ class TestDiagnosticoAccionante(unittest.TestCase):
                 "accionante_email": "harold0.1@hotmail.com",
             }))
 
-        m_diag.assert_awaited_once()
+        m_diag.assert_awaited()
         m_cap.assert_awaited_once()
         self.assertEqual(m_cap.await_args.args[0], "accionante_vacio")
 

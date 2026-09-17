@@ -124,10 +124,34 @@ _JS_DIAGNOSTICO_ACCIONANTE = """() => {
         };
     };
     const select = document.querySelector('#DDlTipodocumento');
+    const html = (sel) => {
+        const el = document.querySelector(sel);
+        return el ? el.outerHTML.slice(0, 1200) : null;
+    };
     return {
         opciones_tipo_doc: select
             ? Array.from(select.options).map(o => o.text.trim()).slice(0, 30)
             : [],
+        duplicados_tipo_doc: document.querySelectorAll('#DDlTipodocumento').length,
+        html_tipo_doc: html('#DDlTipodocumento'),
+        html_parent_tipo_doc: (() => {
+            const el = document.querySelector('#DDlTipodocumento');
+            return el && el.parentElement ? el.parentElement.outerHTML.slice(0, 2000) : null;
+        })(),
+        estado_correo: {
+            email: (document.querySelector('#Email') || {}).value || '',
+            idemail1: {
+                existe: !!document.querySelector('#IdEmail1'),
+                disabled: (document.querySelector('#IdEmail1') || {}).disabled,
+                value: (document.querySelector('#IdEmail1') || {}).value || '',
+                visible: (() => { const e = document.querySelector('#IdEmail1'); return !!e && e.offsetWidth > 0 && e.offsetHeight > 0; })(),
+            },
+            btn_validar: {
+                existe: !!document.querySelector('#btnValidar'),
+                disabled: (document.querySelector('#btnValidar') || {}).disabled,
+                value: (document.querySelector('#btnValidar') || {}).value || '',
+            },
+        },
         campos: [
             '#DDlTipodocumento', '#NumeroDocumento', '#PrimerNombre',
             '#SegundoNombre', '#PrimerApellido', '#SegundoApellido',
@@ -836,6 +860,15 @@ class RadicadorBot:
             # cajón del código.
             email = getattr(self, "_email_accionante", "")
             if email:
+                try:
+                    overlay = await self.page.evaluate(_JS_OVERLAY_TEXTO)
+                    logger.warning(
+                        "[diag correo] 'ya verificado' pero overlay ahora: "
+                        f"{json.dumps(overlay, ensure_ascii=False)[:400]!r} — dump del accionante:"
+                    )
+                    await self._log_diagnostico_accionante()
+                except Exception:  # noqa: BLE001 - el diagnóstico nunca rompe
+                    pass
                 try:
                     await self._reingresar_email(email)
                 except Exception as e:  # noqa: BLE001 - el flujo continúa igual
