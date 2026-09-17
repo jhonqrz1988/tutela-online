@@ -261,8 +261,8 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
         enviar_texto(
             tutela.user.telefono,
             f"✅ *¡Pago recibido!* Hemos confirmado tu pago de {texto_precio()}.\n\n"
-            "Nuestro equipo técnico ya está trabajando en la generación y radicación "
-            "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.",
+            "Ya iniciamos la radicación de tu tutela ante la Rama Judicial. "
+            "En cuanto quede *radicada* te enviaremos el *número de radicado* por este chat.",
         )
     # Radicar de inmediato (sin esperar los 15 min del scheduler) solo si
     # hay horario hábil de la Rama Judicial; si no, queda en cola para el

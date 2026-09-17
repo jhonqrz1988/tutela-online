@@ -827,8 +827,8 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             _r(respuestas, telefono,
                "✅ *¡Pago recibido!*\n\n"
                f"Hemos confirmado tu pago por {texto_precio()}. "
-               "Nuestro equipo técnico ya está trabajando en la generación y radicación "
-               "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.\n\n"
+               "Ya iniciamos la radicación de tu tutela ante la Rama Judicial. "
+               "En cuanto quede *radicada* te enviaremos el *número de radicado* por este chat.\n\n"
                "Gracias por confiar en nosotros.")
             tutela.estado = "pago_por_confirmar"
             session.commit()
@@ -842,9 +842,9 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado in ("pago_por_confirmar", "pago_confirmado"):
         _r(respuestas, telefono,
-           "✅ *Tu pago está en proceso.*\n\n"
-           "Nuestro equipo técnico ya está trabajando en la generación y radicación "
-           "de tu documento. Te notificaremos por este medio en cuanto el proceso finalice.")
+           "✅ *Tu pago está confirmado.*\n\n"
+           "Ya iniciamos la radicación de tu tutela ante la Rama Judicial. "
+           "En cuanto quede *radicada* te enviaremos el *número de radicado* por este chat.")
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
