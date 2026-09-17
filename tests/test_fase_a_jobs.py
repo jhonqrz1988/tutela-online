@@ -60,8 +60,9 @@ class TestEsHorarioHabil(unittest.TestCase):
         self.assertTrue(jobs.es_horario_habil(datetime(2024, 5, 6, 8, 0, tzinfo=bogota)))
         self.assertTrue(jobs.es_horario_habil(datetime(2024, 5, 6, 11, 59, tzinfo=bogota)))
         self.assertTrue(jobs.es_horario_habil(datetime(2024, 5, 6, 14, 0, tzinfo=bogota)))
+        self.assertTrue(jobs.es_horario_habil(datetime(2024, 5, 6, 16, 59, tzinfo=bogota)))  # hasta 5pm hábil
         self.assertFalse(jobs.es_horario_habil(datetime(2024, 5, 6, 12, 0, tzinfo=bogota)))  # fuera (break)
-        self.assertFalse(jobs.es_horario_habil(datetime(2024, 5, 6, 16, 0, tzinfo=bogota)))   # fuera
+        self.assertFalse(jobs.es_horario_habil(datetime(2024, 5, 6, 17, 0, tzinfo=bogota)))   # fuera
         self.assertTrue(jobs.es_horario_habil(datetime(2024, 5, 7, 10, 0, tzinfo=bogota)))   # martes hábil
         self.assertFalse(jobs.es_horario_habil(datetime(2024, 5, 11, 10, 0, tzinfo=bogota)))  # sábado
 

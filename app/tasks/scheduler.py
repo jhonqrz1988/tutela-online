@@ -30,13 +30,13 @@ def _agregar_job():
     scheduler.add_job(
         _job_con_switch,
         trigger="cron",
-        hour="8-16",
+        hour="8-17",
         minute="*/15",
         day_of_week="mon-fri",
         # SIN timezone el cron se evalúa en la zona horaria del proceso (en
-        # Render es UTC): '8-16' corría de 08:00 a 16:00 UTC = 03:00-11:00
+        # Render es UTC): '8-17' corría de 08:00 a 17:00 UTC = 03:00-12:00
         # Bogotá, por lo que el job jamás disparaba en la ventana hábil
-        # (8-12/14-16 Bogotá) → la radicación automática nunca arrancaba.
+        # (8-12/14-17 Bogotá) → la radicación automática nunca arrancaba.
         timezone="America/Bogota",
         id="radicacion_automatica",
         replace_existing=True,
@@ -49,7 +49,7 @@ def iniciar_scheduler():
     """Scheduler de radicación automática.
 
     Ejecuta la cola de radicación cada 15 minutos durante horario hábil
-    (8am-12pm y 2pm-4pm, lunes a viernes). El job ya valida horario internamente.
+    (8am-12pm y 2pm-5pm, lunes a viernes). El job ya valida horario internamente.
     Si enable_scheduler=False el scheduler no se arranca (no crea hilos) pero
     queda disponible para activarlo en caliente desde el panel admin.
     """

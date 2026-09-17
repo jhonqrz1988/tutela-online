@@ -27,14 +27,14 @@ ESTADOS_EN_COLA = ("pendiente_radicacion", "fallida", "pendiente", "pago_confirm
 def es_horario_habil(ahora: datetime | None = None) -> bool:
     """Verifica si la hora actual (zona Bogotá) está dentro del horario hábil.
 
-    Horario: 8am-12pm y 2pm-4pm, lunes a viernes.
+    Horario: 8am-12pm y 2pm-5pm, lunes a viernes.
     """
     if ahora is None:
         ahora = datetime.now(BOGOTA_TZ)
     if ahora.weekday() > 4:  # 5=sábado, 6=domingo
         return False
     hora = ahora.hour
-    return (8 <= hora < 12) or (14 <= hora < 16)
+    return (8 <= hora < 12) or (14 <= hora < 17)
 
 
 def procesar_cola_radicacion():

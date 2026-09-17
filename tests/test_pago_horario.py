@@ -76,7 +76,7 @@ class TestPaginaPagoHorario(unittest.TestCase):
         html = resp.text.lower()
         self.assertIn("lun a vie", html, "El aviso debe mencionar los días hábiles")
         self.assertIn("8:00 am", html, "El aviso debe mencionar la hora de apertura")
-        self.assertIn("4:00 pm", html, "El aviso debe mencionar el cierre de horario")
+        self.assertIn("5:00 pm", html, "El aviso debe mencionar el cierre de horario")
         self.assertIn("$29.000", resp.text, "Debe mostrar el monto junto al aviso")
 
     def test_con_mp_muestra_pagina_intermedia_con_checkout(self):

@@ -36,12 +36,12 @@ def texto_aviso_horario(habile: bool) -> str:
     if habile:
         return (
             "Horario de radicación de la Rama Judicial: lun a vie 8:00 am - 12:00 m y "
-            "2:00 pm - 4:00 pm (hora de Bogotá). Estamos *en horario*, radicaremos tu "
+            "2:00 pm - 5:00 pm (hora de Bogotá). Estamos *en horario*, radicaremos tu "
             "tutela de inmediato y te pediremos el código de verificación aquí mismo."
         )
     return (
         "Horario de radicación de la Rama Judicial: lun a vie 8:00 am - 12:00 m y "
-        "2:00 pm - 4:00 pm (hora de Bogotá). Ahora estamos *fuera de horario*: tu pago "
+        "2:00 pm - 5:00 pm (hora de Bogotá). Ahora estamos *fuera de horario*: tu pago "
         "quedará en cola y se procesará el próximo día hábil, cuando te pediremos el "
         "código de verificación aquí mismo."
     )

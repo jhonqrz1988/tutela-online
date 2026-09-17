@@ -362,7 +362,7 @@ async def iniciar_radicacion(
         if not forzar:
             from app.tasks.jobs import es_horario_habil
             if not es_horario_habil():
-                return {"ok": False, "error": "Fuera de horario hábil (8am-12pm, 2pm-4pm). Use forzar=True desde admin."}
+                return {"ok": False, "error": "Fuera de horario hábil (8am-12pm, 2pm-5pm). Use forzar=True desde admin."}
 
         datos = json.loads(tutela.datos_json or "{}")
 
