@@ -14,7 +14,12 @@ import tempfile
 import unittest
 from unittest import mock
 
-from app.bot.navegador import RadicadorBot, _info_archivo, _nombres_a_campos
+from app.bot.navegador import (
+    RadicadorBot,
+    _es_error_correo,
+    _info_archivo,
+    _nombres_a_campos,
+)
 
 
 class FakeElement:
@@ -77,18 +82,18 @@ class TestVerificacionEmailCondicional(unittest.TestCase):
 
     def test_sin_cajon_retorna_false(self):
         """Si el portal no abre el cajón del código (correo ya registrado),
-        NO requiere código, pero de todas formas completa la confirmación del
-        correo (re-ingresa email + #IdEmail1 + Validar) — queja de prod:
-        "Debe Confirmar el correo electrónico" al enviar."""
+        NO requiere código, pero de todas formas cierra el paso de confirmación
+        del correo de forma forzada (queja de prod: "Debe Confirmar el correo
+        electrónico" al enviar)."""
         bot = _make_bot(FakePage(cajon_abierto=False))
-        reingresar = mock.AsyncMock()
+        confirmado = mock.AsyncMock(return_value=False)
         with mock.patch.object(bot, "_fijar_select_sin_postback", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_cerrar_jconfirm", new=mock.AsyncMock()), \
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()), \
-             mock.patch.object(bot, "_reingresar_email", new=reingresar):
+             mock.patch.object(bot, "_confirmar_correo_forzado", new=confirmado):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
         self.assertFalse(requiere, "Si el portal no abre el cajón, debe retornar False")
-        reingresar.assert_awaited_once_with("a@b.com")
+        confirmado.assert_awaited_once_with("a@b.com")
 
     def test_con_cajon_retorna_true(self):
         """Si el portal abre el cajón de verificación, requiere código."""
@@ -98,6 +103,83 @@ class TestVerificacionEmailCondicional(unittest.TestCase):
              mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
             requiere = self._ejecutar_paso_accionante(bot, self._datos)
         self.assertTrue(requiere, "Si el portal abre el cajón del código, debe retornar True")
+
+
+class TestCorreoForzado(unittest.TestCase):
+    """El paso 'confirmar correo' del portal (queja de prod: "Debe Confirmar el
+    correo electrónico") se cierra forzando #IdEmail1 por JS, y se re-detecta si
+    con eso el portal pide el código."""
+
+    def test_confirmar_correo_forzado_obliga_dos_ciclos_y_no_pide_codigo(self):
+        bot = _make_bot(FakePage(cajon_abierto=False))
+        llamadas = []
+
+        async def fake_reingresar(email, forzar=False):
+            llamadas.append((email, forzar))
+
+        with mock.patch.object(bot, "_reingresar_email", new=fake_reingresar), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
+            resultado = asyncio.run(bot._confirmar_correo_forzado("a@b.com"))
+        self.assertFalse(resultado)
+        self.assertEqual(llamadas, [("a@b.com", True), ("a@b.com", True)])
+
+    def test_confirmar_correo_forzado_devuelve_true_si_el_portal_abre_cajon(self):
+        """Si tras el re-ingreso forzado SÍ se abre el cajón del código, el paso
+        4 debe reportar que requiere código (retorna True)."""
+        class PageCajonTardio(FakePage):
+            def __init__(self):
+                super().__init__(cajon_abierto=False)
+                self.chequeos = 0
+
+            async def wait_for_function(self, script, **kwargs):
+                self.chequeos += 1
+                if self.chequeos >= 2:
+                    return True
+                raise TimeoutError("cajón aún no")
+
+        bot = _make_bot(PageCajonTardio())
+        with mock.patch.object(bot, "_reingresar_email", new=mock.AsyncMock()), \
+             mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
+            resultado = asyncio.run(bot._confirmar_correo_forzado("a@b.com"))
+        self.assertTrue(resultado)
+
+    def test_reingresar_email_forzar_habilita_campo_por_js(self):
+        """Con forzar=True el correo se escribe en #Email/#IdEmail1 aunque el
+        portal los deje disabled: valor + eventos input/change (sin depender de
+        page.fill que exige campo habilitado)."""
+        class PageGraba(FakePage):
+            def __init__(self):
+                super().__init__()
+                self.scripts = []
+
+            async def evaluate(self, script, *args, **kwargs):
+                self.scripts.append(script if isinstance(script, str) else str(script))
+                return None
+
+        bot = _make_bot(PageGraba())
+        with mock.patch.object(bot, "_js_click", new=mock.AsyncMock()):
+            asyncio.run(bot._reingresar_email("a@b.com", forzar=True))
+        join = " ".join(bot.page.scripts)
+        self.assertIn("el.value = texto", join)
+        self.assertIn("removeAttribute('disabled')", join)
+        self.assertIn("dispatchEvent(new Event('input'", join)
+
+
+class TestErrorCorreo(unittest.TestCase):
+    def test_detecta_el_rechazo_por_correo(self):
+        for texto in (
+            "×Debe Confirmar el correo electrónico.Continuar",
+            "Debe confirmar el correo electrónico",
+        ):
+            self.assertTrue(_es_error_correo(texto), texto)
+
+    def test_no_confunde_con_dialogo_normal(self):
+        for texto in (
+            "Confirmar DatosLugar donde se interpone la tutela...",
+            "tu tutela ha sido recibida con éxito con el número 11001-2026-00009",
+            "A través de este portal solo se recibe la acción...",
+        ):
+            self.assertFalse(_es_error_correo(texto), texto)
 
 
 class TestDiscapacidad(unittest.TestCase):
@@ -252,37 +334,41 @@ class TestNombresACampos(unittest.TestCase):
         """#DDlTipodocumento tiene onchange=__doPostBack: `select_option` dispara
         el postback y el servidor re-renderiza la sección del accionante
         BORRANDO lo escrito (readback final vacío con todo bien en el anterior).
-        El fijador setea `value` directo en el DOM sin eventos: ni postback, ni
-        borrado, y el valor viaja en el submit."""
+        El fijador QUITA onchange y usa `select_option` (el change nativo
+        sincroniza el widget del portal), de modo que el valor SÍ queda
+        seleccionado y, sin `__doPostBack`, no hay postback ni borrado."""
         class PageSelectValor(FakePage):
             def __init__(self):
                 super().__init__()
-                self.valores = []
+                self.eventos = []
 
             async def evaluate(self, script, *args, **kwargs):
                 if isinstance(script, str) and "ALIASES" in script:
+                    self.eventos.append("match")
                     return "2"
-                if isinstance(script, str) and "s.value = val" in script:
-                    self.valores.append(script)
+                if isinstance(script, str) and "removeAttribute('onchange')" in script:
+                    self.eventos.append("strip-onchange")
                     return None
                 if isinstance(script, str) and "options[i]" in script:
                     return "CÉDULA DE CIUDADANÍA"
                 return None
 
             async def select_option(self, *args, **kwargs):
-                raise AssertionError(
-                    "select_option dispara el postback: el accionante debe fijarse sin eventos"
-                )
+                self.eventos.append("select_option")
 
         bot = _make_bot(PageSelectValor())
         value = asyncio.run(bot._fijar_select_sin_postback("#DDlTipodocumento", "CC"))
         self.assertEqual(value, "2")
-        self.assertEqual(len(bot.page.valores), 1, "El valor se fijó en el DOM")
+        self.assertEqual(
+            bot.page.eventos,
+            ["match", "strip-onchange", "select_option"],
+            "El onchange se quita ANTES de select_option para evitar el postback",
+        )
 
     def test_fijar_select_sin_postback_devuelve_none_si_widget_no_sincroniza(self):
-        """Si tras fijar `value` el select sigue mostrando 'Seleccione...' (un
-        widget del portal que no refleja el DOM), devuelve None para que el
-        flujo lo diagnóstique en lugar de asumir que quedó bien."""
+        """Si ni select_option ni el fijado directo quedan reflejados (el select
+        sigue mostrando 'Seleccione...'), devuelve None para que el flujo lo
+        diagnóstique en lugar de asumir que quedó bien."""
         class PageSelectWidget(FakePage):
             def __init__(self):
                 super().__init__()
@@ -293,6 +379,9 @@ class TestNombresACampos(unittest.TestCase):
                     return "2"
                 if isinstance(script, str) and "options[i]" in script:
                     return "Seleccione..."
+                return None
+
+            async def select_option(self, *args, **kwargs):
                 return None
 
         bot = _make_bot(PageSelectWidget())

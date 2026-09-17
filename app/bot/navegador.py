@@ -311,6 +311,17 @@ def _es_dialogo_aviso_enviar(texto_overlay: str) -> bool:
     )
 
 
+def _es_error_correo(texto_overlay: str) -> bool:
+    """True si el portal rechazó el envío porque el paso de confirmación del
+    correo quedó incompleto ("Debe Confirmar el correo electrónico"). Habilita
+    el self-heal: re-confirmar el correo forzado y volver a enviar, en vez de
+    declarar la tutela fallida."""
+    t = texto_overlay.lower()
+    return "confirmar el correo" in t or (
+        "correo electrónico" in t and ("confirm" in t or "debe" in t)
+    )
+
+
 def _extraer_numero_de_texto(texto: str) -> str:
     """Extrae el número de confirmación de un texto/overlay del portal.
 
@@ -507,61 +518,86 @@ class RadicadorBot:
         return None
 
     async def _fijar_select_sin_postback(self, selector: str, label: str) -> str | None:
-        """Fija el value de un option en un select SIN disparar el evento change.
+        """Fija un option en un select SIN el postback que borra la sección.
 
-        En este portal #DDlTipodocumento (y los selects del accionante en
-        general) tienen `onchange=__doPostBack`: `page.select_option` dispara el
-        postback y el servidor re-renderiza la sección, BORRANDO todo lo escrito
-        (cédula, nombres, teléfono, email) y dejando el select en 'Seleccione...'.
+        En este portal #DDlTipodocumento tiene `onchange=__doPostBack`:
+        `page.select_option` dispara el postback y el servidor re-renderiza la
+        sección del accionante, BORRANDO lo escrito. Evidencia de plantel
+        (corrida 19:40): `select_option` SÍ selecciona (el postback se dispara),
+        pero a costa de borrar todo.
 
-        Evidencia del plantel (corrida 20:15 y reintentos): el readback
-        "accionante_3_tras_escritura" salía con TODO bien escrito, y el readback
-        final con TODO vacío — la única diferencia era la re-selección del tipo
-        de documento vía `select_option`.
+        Estrategia (dos pasadas que se auto-verifican en vivo):
+          1. Se QUITA `onchange` (atributo + propiedad) y se usa `select_option`:
+             el evento `change` nativo sincroniza el widget del portal (sin el
+             evento real el portal no "ve" el value directo, ver corrida 19:19),
+             pero al no existir `__doPostBack` no hay postback ni borrado.
+          2. Si la verificación falla, cae en el fijado directo value+selectedIndex
+             (sin eventos) como respaldo, que también se verifica.
 
-        Al fijar `value` directo en el DOM (sin eventos) el valor se envía con el
-        formulario en el submit y la sección no se re-renderiza. Retorna el value
-        fijado, o None si no se encontró la opción.
+        Retorna el value fijado, o None si no quedó seleccionado.
         """
         match_value = await self.page.evaluate(_JS_BUSCAR_OPTION_SELECT, [selector, label])
-        if match_value is not None:
-            try:
-                await self.page.evaluate(
-                    """([sel, val]) => {
-                        const s = document.querySelector(sel);
-                        if (!s) return;
-                        s.value = val;
-                        for (let i = 0; i < s.options.length; i++) {
-                            if (String(s.options[i].value) === String(val)) {
-                                s.selectedIndex = i;
-                                break;
-                            }
+        if match_value is None:
+            logger.warning(f"No se encontró '{label}' en {selector}")
+            return None
+        try:
+            # 1) Sin onchange → select_option (evento real sincroniza el widget).
+            await self.page.evaluate(
+                """([sel]) => {
+                    const s = document.querySelector(sel);
+                    if (!s) return;
+                    try { s.onchange = null; } catch (e) {}
+                    if (s.removeAttribute) s.removeAttribute('onchange');
+                }""",
+                [selector],
+            )
+            await self.page.select_option(selector, value=match_value)
+            verificado = await self._verificar_select(selector)
+            if verificado and str(verificado).strip() not in ("", "Seleccione..."):
+                return match_value
+
+            # 2) Respaldo: value + selectedIndex directo (sin eventos).
+            await self.page.evaluate(
+                """([sel, val]) => {
+                    const s = document.querySelector(sel);
+                    if (!s) return;
+                    s.value = val;
+                    for (let i = 0; i < s.options.length; i++) {
+                        if (String(s.options[i].value) === String(val)) {
+                            s.selectedIndex = i;
+                            break;
                         }
-                    }""",
-                    [selector, match_value],
-                )
-                # Verificar que SÍ quedó seleccionado (el portal puede estar
-                # usando un widget que no refleja el value directo).
-                verificado = await self.page.evaluate(
-                    """([sel]) => {
-                        const s = document.querySelector(sel);
-                        if (!s) return null;
-                        const i = s.selectedIndex;
-                        return i >= 0 && s.options[i] ? s.options[i].text.trim() : null;
-                    }""",
-                    [selector],
-                )
-                if verificado and str(verificado).strip() not in ("", "Seleccione..."):
-                    return match_value
-                logger.warning(
-                    f"Fijado {selector}='{label}' pero el select quedó en '{verificado}' — widget no sincronizado"
-                )
-                return None
-            except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
-                logger.warning(f"No se pudo fijar {selector} = '{label}': {e}")
-                return None
-        logger.warning(f"No se encontró '{label}' en {selector}")
-        return None
+                    }
+                }""",
+                [selector, match_value],
+            )
+            verificado = await self._verificar_select(selector)
+            if verificado and str(verificado).strip() not in ("", "Seleccione..."):
+                return match_value
+            logger.warning(
+                f"Fijado {selector}='{label}' pero el select quedó en {verificado!r} — widget no sincronizado"
+            )
+            return None
+        except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            logger.warning(f"No se pudo fijar {selector} = '{label}': {e}")
+            return None
+
+    async def _verificar_select(self, selector: str) -> str | None:
+        """Lee el texto del option realmente seleccionado en un select (None si
+        no se pudo leer). Ctrl+útil: el widget del portal puede no reflejar el
+        value directo, y si sigue en 'Seleccione...' es señal de que no aplicó."""
+        try:
+            return await self.page.evaluate(
+                """([sel]) => {
+                    const s = document.querySelector(sel);
+                    if (!s) return null;
+                    const i = s.selectedIndex;
+                    return i >= 0 && s.options[i] ? s.options[i].text.trim() : null;
+                }""",
+                [selector],
+            )
+        except Exception:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
+            return None
 
     async def _type(self, selector: str, texto: str):
         """Escribe texto carácter por carácter (evita restricción de paste)."""
@@ -870,7 +906,10 @@ class RadicadorBot:
                 except Exception:  # noqa: BLE001 - el diagnóstico nunca rompe
                     pass
                 try:
-                    await self._reingresar_email(email)
+                    requiere_ahora = await self._confirmar_correo_forzado(email)
+                    if requiere_ahora:
+                        logger.info("El portal pidió el código tras la confirmación forzada del correo")
+                        return True
                 except Exception as e:  # noqa: BLE001 - el flujo continúa igual
                     logger.warning(f"No se pudo completar la confirmación del correo: {e}")
             return False
@@ -953,14 +992,57 @@ class RadicadorBot:
         logger.info("Código de email validado: verificación completada")
         return {"ok": True}
 
-    async def _reingresar_email(self, email: str):
+    async def _reingresar_email(self, email: str, forzar: bool = False):
         """Re-ingresa el correo en lo que el portal dejó disponible tras
         validar el código: #Email (si quedó vacío) y #IdEmail1 (el 'confirmar
-        correo' que se habilita al quedar verificado). Solo si está habilitado."""
-        await self._rellenar_si_habilitado("#Email", email)
-        await self._rellenar_si_habilitado("#IdEmail1", email)
+        correo' que se habilita al quedar verificado). Con `forzar=True`
+        habilita el campo por JS aunque el portal lo deje disabled y escribe por
+        valor + eventos input/change (el portal solo manda el dato en el submit
+        si el campo quedó con el texto)."""
+        if forzar:
+            for selector in ("#Email", "#IdEmail1"):
+                await self.page.evaluate(
+                    """([sel, texto]) => {
+                        const el = document.querySelector(sel);
+                        if (!el) return;
+                        for (const a of ['disabled', 'readOnly']) {
+                            try { el[a] = false; } catch (e) {}
+                        }
+                        if (el.removeAttribute) {
+                            el.removeAttribute('disabled');
+                            el.removeAttribute('readonly');
+                        }
+                        try { el.value = texto; } catch (e) {}
+                        if (el.dispatchEvent) {
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                    }""",
+                    [selector, email],
+                )
+        else:
+            await self._rellenar_si_habilitado("#Email", email)
+            await self._rellenar_si_habilitado("#IdEmail1", email)
         await self._js_click("#btnValidar")
-        await self.page.wait_for_timeout(1000)
+        await self.page.wait_for_timeout(1200)
+
+    async def _confirmar_correo_forzado(self, email: str) -> bool:
+        """Cierra el paso 'confirmar correo' del portal aun sin cajón de código.
+
+        Problema de prod: cuando el correo ya está registrado el portal NO abre
+        el cajón del código, pero de todos modos rechaza el envío con "Debe
+        Confirmar el correo electrónico" si #IdEmail1 (el 'confirmar correo')
+        quedó vacío/disabled. Re-escribe el correo forzando la habilitación del
+        campo y vuelve a dar "Validar"; si tras ello el portal SÍ abre el cajón
+        del código, retorna True (el paso 4 debe pedir el código)."""
+        for _ in range(2):
+            await self._reingresar_email(email, forzar=True)
+            try:
+                await self.page.wait_for_function(_JS_CAJON_ABIERTO, timeout=2000)
+                return True
+            except Exception:  # noqa: BLE001 - probar el siguiente ciclo
+                pass
+        return False
 
     async def _rellenar_si_habilitado(self, selector: str, texto: str):
         """Escribe un campo SOLO si existe y está habilitado (un campo disabled
@@ -1416,7 +1498,8 @@ class RadicadorBot:
             # número de radicado.
             num_radicado = ""
             overlay_texto = ""
-            for intento in range(5):
+            reintentos_correo = 0
+            for intento in range(6):
                 num_radicado = await self._leer_num_radicado()
                 overlay_texto = await self._leer_overlay()
                 logger.info(
@@ -1438,6 +1521,24 @@ class RadicadorBot:
                     if await self._confirmar_dialogo_final():
                         await self.page.wait_for_timeout(5000)
                         continue
+                # Self-heal del correo: el portal puede rechazar el envío con
+                # "Debe Confirmar el correo electrónico" (queja de prod) porque
+                # el paso de confirmación quedó incompleto. En vez de marcar
+                # fallida, se cierra el modal, se re-confirma el correo forzado
+                # y se vuelve a enviar (máximo 2 veces para no infinitar).
+                if _es_error_correo(overlay_texto) and reintentos_correo < 2:
+                    logger.warning(
+                        f"[self-heal correo] {overlay_texto[:120]!r} — re-confirmando correo y re-enviando"
+                    )
+                    await self._confirmar_dialogo_final()
+                    await self._confirmar_correo_forzado(
+                        getattr(self, "_email_accionante", "")
+                    )
+                    reintentos_correo += 1
+                    await self._cerrar_jconfirm()
+                    await self._js_click("#enviar")
+                    await self.page.wait_for_timeout(5000)
+                    continue
                 break
 
             if not num_radicado and overlay_texto:
