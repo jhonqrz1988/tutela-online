@@ -84,7 +84,7 @@ def _pagina_pago(
       .btn {{ display:flex; align-items:center; justify-content:center; min-height:60px;
               background:linear-gradient(180deg,#00a650,#008745); color:#fff; text-decoration:none;
               padding:16px 18px; border-radius:14px; font-weight:800; font-size:22px;
-              margin-top:22px; box-shadow:0 4px 14px rgba(0,166,80,.35); }}
+              margin-top:18px; margin-bottom:6px; box-shadow:0 4px 14px rgba(0,166,80,.35); }}
       @media (max-width:380px) {{
         body {{ padding:14px 14px; font-size:18px; }}
         .aviso, .aviso.email {{ font-size:17px; }}
@@ -95,12 +95,12 @@ def _pagina_pago(
       <div class="card">
         <h1>Radicación de tutela</h1>
         <p style="margin-bottom:0;">Radicamos tu tutela ante la Rama Judicial por <b>{precio} COP</b>.</p>
+        {boton}
         <div class="aviso"><b>&#128197; Horario de radicación de la Rama Judicial</b>{aviso}</div>
         <div class="aviso email"><b>&#128231; Código de verificación por correo</b>
             Al radicar, la Rama Judicial podría enviar un mensaje con un código de
             verificación a tu correo{email_txt}. <b>Una vez pagues</b>, compártenos ese
             código por WhatsApp para continuar con la radicación.</div>
-        {boton}
       </div>
     </body></html>
     """

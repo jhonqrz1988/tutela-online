@@ -101,6 +101,33 @@ class TestPaginaPagoHorario(unittest.TestCase):
         self.assertIn("checkout.mercadopago.com/pago/abc123", html.lower(),
                       "Debe ofrecer el enlace para continuar al checkout")
 
+    def test_boton_pago_va_en_la_parte_superior(self):
+        """El botón de pago debe estar ARRIBA, antes del texto del horario:
+        asegurar el pago es lo más importante, el texto va después."""
+        from app.api import pagos as pagos_mod
+
+        session = _nueva_sesion()
+        tutela_id = self._cliente_con_tutela(session)
+
+        with mock.patch.object(settings, "mercadopago_access_token", "TEST-TOKEN"), \
+             mock.patch.object(
+                 pagos_mod, "crear_preferencia_checkout",
+                 return_value={"init_point": "https://checkout.mercadopago.com/pago/PAYTOP"},
+             ), \
+             mock.patch.object(pagos_mod, "es_horario_habil", return_value=False):
+            resp = self._abrir(session, tutela_id)
+
+        html = resp.text.lower()
+        pos_boton = html.find("checkout.mercadopago.com/pago/paytop")
+        pos_aviso = html.find("lun a vie")
+        pos_precio = html.find("$29.000")
+        self.assertGreater(pos_boton, -1, "Debe existir el botón de pago")
+        self.assertGreater(pos_aviso, -1, "Debe existir el aviso de horario")
+        self.assertLess(pos_boton, pos_aviso,
+                        f"El botón de pago (pos {pos_boton}) debe quedar ANTES del aviso (pos {pos_aviso})")
+        self.assertLess(pos_precio, pos_boton,
+                        "El precio debe ir justo antes del botón (arriba)")
+
     def test_con_mp_incluye_aviso_codigo_correo_y_solo_mercadopago(self):
         """La página pide compartir el código de verificación del correo tras pagar
         y NO menciona Nequi ni transferencia (canales inactivos)."""
