@@ -299,14 +299,17 @@ class TestParqueoCodigo(unittest.TestCase):
         """Sin código a tiempo, el parqueo se abandona solo y la radicación se
         re-lanza automáticamente (sin esperar al admin): cierra el navegador,
         encola la tutela y agenda un re-despacho que vuelve a pedir un código
-        nuevo (el portal lo genera de nuevo en cada corrida)."""
+        nuevo (el portal lo genera de nuevo en cada corrida). El re-despacho
+        va con forzar=True: es continuación de una radicación ya iniciada y el
+        horario hábil NO debe bloquearla (bug de prod a las 16:00)."""
         self.redespachos = []
+        self.con_kwargs = []
         with mock.patch.object(radicacion_service, "TIMEOUT_ESPERA_CODIGO", 0.15), \
              mock.patch.object(radicacion_service, "RETRY_ESPERA_SEG", 0.05), \
              mock.patch.object(
                  radicacion_service,
                  "despachar_radicacion",
-                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or {"ok": True, "despachada": True},
+                 side_effect=lambda tid, **kw: self.redespachos.append(tid) or self.con_kwargs.append(kw) or {"ok": True, "despachada": True},
              ):
             fut = self._despachar()
             self.assertTrue(self._esperar_parqueo())
@@ -333,6 +336,10 @@ class TestParqueoCodigo(unittest.TestCase):
 
         self.assertEqual(len(self.redespachos), 1, "Un solo re-despacho automático")
         self.assertEqual(self.redespachos[0], self.tutela_id, "El re-despacho debe apuntar a ESTA tutela")
+        self.assertTrue(
+            all(kw.get("forzar") is True for kw in self.con_kwargs),
+            f"El reintento debe despachar con forzar=True (continuación de radicación iniciada): {self.con_kwargs}",
+        )
         self.assertTrue(any("automáticamente" in a.lower() for a in self.avisos), f"Aviso de reintento: {self.avisos}")
 
         with radicacion_service._parqueos_lock:

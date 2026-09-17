@@ -33,6 +33,15 @@ AUTOFILL_SETTLE_MS = 1500
 # que aparezcan o este tope).
 AUTOFILL_POLL_MAX_MS = 7000
 
+# Re-sincronización del select de tipo documento: el postback del UpdatePanel
+# puede pisar el value directo si llega DESPUÉS de que lo fijamos (el cajón del
+# email, la cascada depto/ciudad, etc.). Tras fijar sin eventos se espera
+# RESYNC_PAUSA_MS y se re-verifica; si un postback lo pisó, se re-fija y se
+# vuelve a esperar (bucle acotado: la última re-aplicación sin eventos ya no
+# dispara nada y queda estable).
+RESYNC_INTENTOS = 3
+RESYNC_PAUSA_MS = 800
+
 # ¿Está abierto el CAJÓN del código de verificación? Un overlay visible
 # (jquery-confirm `.jconfirm`, `.modal`, `[role=dialog]`) con un input
 # habilitado es el indicador real: `#IdEmail1` es el 'confirmar correo' y
@@ -120,6 +129,7 @@ _JS_DIAGNOSTICO_ACCIONANTE = """() => {
             existe: true,
             disabled: el.disabled,
             readonly: el.readOnly,
+            maxlength: el.maxLength ?? null,
             visible: el.offsetWidth > 0 && el.offsetHeight > 0,
         };
     };
@@ -520,19 +530,18 @@ class RadicadorBot:
     async def _fijar_select_sin_postback(self, selector: str, label: str) -> str | None:
         """Fija un option en un select SIN el postback que borra la sección.
 
-        En este portal #DDlTipodocumento tiene `onchange=__doPostBack`:
-        `page.select_option` dispara el postback y el servidor re-renderiza la
-        sección del accionante, BORRANDO lo escrito. Evidencia de plantel
-        (corrida 19:40): `select_option` SÍ selecciona (el postback se dispara),
-        pero a costa de borrar todo.
+        En este portal el cambio del select está ligado por un LISTENER DELEGADO
+        (no por `onchange` inline: quitarlo no sirve, ver dump HTML de prod con
+        duplicados_tipo_doc=1): `select_option` dispara igualmente __doPostBack
+        y el servidor re-renderiza la sección del accionante, BORRANDO lo
+        escrito (readback final vacío con todo bien en el anterior, cédula
+        truncada a medio escribir). Por eso NO se usa `select_option` jamás.
 
-        Estrategia (dos pasadas que se auto-verifican en vivo):
-          1. Se QUITA `onchange` (atributo + propiedad) y se usa `select_option`:
-             el evento `change` nativo sincroniza el widget del portal (sin el
-             evento real el portal no "ve" el value directo, ver corrida 19:19),
-             pero al no existir `__doPostBack` no hay postback ni borrado.
-          2. Si la verificación falla, cae en el fijado directo value+selectedIndex
-             (sin eventos) como respaldo, que también se verifica.
+        Estrategia: fijado directo value + selectedIndex SIN eventos (no hay
+        postback ni borrado) más re-sincronización acotada: si un postback en
+        vuelo (autofill de la cédula, cascada depto/ciudad) llega justo después
+        y pisa el select, la siguiente iteración lo re-fija y espera de nuevo
+        hasta que quede estable (RESYNC_INTENTOS x RESYNC_PAUSA_MS).
 
         Retorna el value fijado, o None si no quedó seleccionado.
         """
@@ -540,42 +549,33 @@ class RadicadorBot:
         if match_value is None:
             logger.warning(f"No se encontró '{label}' en {selector}")
             return None
+        ultimo_verificado = None
         try:
-            # 1) Sin onchange → select_option (evento real sincroniza el widget).
-            await self.page.evaluate(
-                """([sel]) => {
-                    const s = document.querySelector(sel);
-                    if (!s) return;
-                    try { s.onchange = null; } catch (e) {}
-                    if (s.removeAttribute) s.removeAttribute('onchange');
-                }""",
-                [selector],
-            )
-            await self.page.select_option(selector, value=match_value)
-            verificado = await self._verificar_select(selector)
-            if verificado and str(verificado).strip() not in ("", "Seleccione..."):
-                return match_value
-
-            # 2) Respaldo: value + selectedIndex directo (sin eventos).
-            await self.page.evaluate(
-                """([sel, val]) => {
-                    const s = document.querySelector(sel);
-                    if (!s) return;
-                    s.value = val;
-                    for (let i = 0; i < s.options.length; i++) {
-                        if (String(s.options[i].value) === String(val)) {
-                            s.selectedIndex = i;
-                            break;
+            for _ in range(RESYNC_INTENTOS):
+                await self.page.evaluate(
+                    """([sel, val]) => {
+                        const s = document.querySelector(sel);
+                        if (!s) return;
+                        s.value = val;
+                        for (let i = 0; i < s.options.length; i++) {
+                            if (String(s.options[i].value) === String(val)) {
+                                s.selectedIndex = i;
+                                break;
+                            }
                         }
-                    }
-                }""",
-                [selector, match_value],
-            )
-            verificado = await self._verificar_select(selector)
-            if verificado and str(verificado).strip() not in ("", "Seleccione..."):
-                return match_value
+                    }""",
+                    [selector, match_value],
+                )
+                await self.page.wait_for_timeout(RESYNC_PAUSA_MS)
+                ultimo_verificado = await self._verificar_select(selector)
+                if ultimo_verificado and str(ultimo_verificado).strip() not in ("", "Seleccione..."):
+                    return match_value
+                logger.warning(
+                    f"Select {selector}: tras fijar '{label}' quedó en {ultimo_verificado!r} — "
+                    "posible postback en vuelo, re-sincronizando"
+                )
             logger.warning(
-                f"Fijado {selector}='{label}' pero el select quedó en {verificado!r} — widget no sincronizado"
+                f"Fijado {selector}='{label}' pero el select quedó en {ultimo_verificado!r} — widget no sincronizado"
             )
             return None
         except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
@@ -814,6 +814,26 @@ class RadicadorBot:
             pass
         await self._readback_accionante("accionante_2_tras_autofill")
 
+        # Verificar que la cédula quedó COMPLETA en el portal: un postback en
+        # vuelo (autofill, o el wipe del select) puede re-renderizar el campo a
+        # mitad de la escritura y dejarlo truncado (prod: 1036929 en vez de
+        # 1036929537). Si no coincide con la fuente, se re-escribe y se deja
+        # asentar el autofill de nuevo (máx 2 pasadas).
+        for _ in range(2):
+            tipo_actual = await self.page.evaluate(
+                """() => {
+                    const el = document.querySelector('#NumeroDocumento');
+                    return el ? (el.value || '').replace(/[\\s.]/g, '') : '';
+                }"""
+            )
+            if str(tipo_actual or "").strip() == cedula:
+                break
+            logger.warning(
+                f"Cédula en portal quedó {tipo_actual!r} (esperada {cedula!r}): re-escribiendo la cédula"
+            )
+            await self._type_existing("#NumeroDocumento", cedula)
+            await self.page.wait_for_timeout(AUTOFILL_SETTLE_MS)
+
         # Nombres (typing lento para evitar bloqueo de paste)
         await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
         await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
@@ -869,6 +889,7 @@ class RadicadorBot:
                 if readback and (
                     str(readback.get("tipo_doc") or "").strip() not in ("", "Seleccione...")
                     and str(readback.get("primer_nombre") or "").strip()
+                    and (readback.get("numero") or "").replace(" ", "").replace(".", "") == cedula
                 ):
                     break  # quedó bien
                 logger.warning(

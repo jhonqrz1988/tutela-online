@@ -330,27 +330,27 @@ class TestNombresACampos(unittest.TestCase):
         )
         self.assertIn(("#DDlTipodiscapacidad", "No Aplica"), selecciones)
 
-    def test_fijar_select_sin_postback_no_dispara_select_option(self):
-        """#DDlTipodocumento tiene onchange=__doPostBack: `select_option` dispara
-        el postback y el servidor re-renderiza la sección del accionante
-        BORRANDO lo escrito (readback final vacío con todo bien en el anterior).
-        El fijador QUITA onchange y usa `select_option` (el change nativo
-        sincroniza el widget del portal), de modo que el valor SÍ queda
-        seleccionado y, sin `__doPostBack`, no hay postback ni borrado."""
+    def test_fijar_select_sin_postback_nunca_usa_select_option(self):
+        """#DDlTipodocumento dispara __doPostBack por un listener DELEGADO
+        (NO inline: quitarlo no sirve, evidencia del dump HTML de prod). Por eso
+        el fijador SOLO usa value+selectedIndex directo SIN eventos: `select_option`
+        (o cualquier change real) relanza el postback y borra toda la sección.
+        Si el portal re-renderiza tras fijar, se re-sincroniza hasta estabilizar."""
         class PageSelectValor(FakePage):
             def __init__(self):
                 super().__init__()
                 self.eventos = []
+                self.resyncs = 0
 
             async def evaluate(self, script, *args, **kwargs):
-                if isinstance(script, str) and "ALIASES" in script:
+                if "ALIASES" in script:
                     self.eventos.append("match")
                     return "2"
-                if isinstance(script, str) and "removeAttribute('onchange')" in script:
-                    self.eventos.append("strip-onchange")
-                    return None
-                if isinstance(script, str) and "options[i]" in script:
-                    return "CÉDULA DE CIUDADANÍA"
+                if "options[i]" in script:
+                    self.resyncs += 1
+                    # El primer fijado queda 'Seleccione...' (un postback en vuelo
+                    # lo pisó); el resync lo deja bien.
+                    return "Seleccione..." if self.resyncs == 1 else "CÉDULA DE CIUDADANÍA"
                 return None
 
             async def select_option(self, *args, **kwargs):
@@ -359,25 +359,22 @@ class TestNombresACampos(unittest.TestCase):
         bot = _make_bot(PageSelectValor())
         value = asyncio.run(bot._fijar_select_sin_postback("#DDlTipodocumento", "CC"))
         self.assertEqual(value, "2")
-        self.assertEqual(
-            bot.page.eventos,
-            ["match", "strip-onchange", "select_option"],
-            "El onchange se quita ANTES de select_option para evitar el postback",
-        )
+        self.assertNotIn("select_option", bot.page.eventos, "NUNCA debe usarse select_option: dispara el postback")
+        self.assertIn("match", bot.page.eventos)
+        self.assertGreaterEqual(bot.page.resyncs, 2, "El resync debe re-fijar si un postback pisó el select")
 
     def test_fijar_select_sin_postback_devuelve_none_si_widget_no_sincroniza(self):
-        """Si ni select_option ni el fijado directo quedan reflejados (el select
+        """Si ni el fijado directo ni los resyncs quedan reflejados (el select
         sigue mostrando 'Seleccione...'), devuelve None para que el flujo lo
         diagnóstique en lugar de asumir que quedó bien."""
         class PageSelectWidget(FakePage):
             def __init__(self):
                 super().__init__()
-                self.valores = []
 
             async def evaluate(self, script, *args, **kwargs):
-                if isinstance(script, str) and "ALIASES" in script:
+                if "ALIASES" in script:
                     return "2"
-                if isinstance(script, str) and "options[i]" in script:
+                if "options[i]" in script:
                     return "Seleccione..."
                 return None
 

@@ -232,7 +232,11 @@ def _programar_reintento_codigo(tutela_id: int):
                     return  # ya hay otro ciclo encima: no abrir un segundo navegador
             finally:
                 session.close()
-            despachar_radicacion(tutela_id)
+            # forzar=True: es la continuación automática de una radicación que
+            # ya arrancó (con correlativo/pago), NO una radicación nueva; el
+            # horario hábil no debe bloquear el reintento (prod: bloqueado a
+            # las 16:00 con "Fuera de horario hábil").
+            despachar_radicacion(tutela_id, forzar=True)
         except Exception as e:  # noqa: BLE001 - el reintento nunca debe romper otros flujos
             logger.error(f"Reintento automático de código para tutela {tutela_id} falló: {e}")
 
