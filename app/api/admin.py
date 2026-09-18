@@ -642,14 +642,18 @@ def listar_screenshots(
     descendente. Sirven para ver de un vistazo en qué falla la radicación.
 
     Acepta ``?tutela_id=N`` para devolver SOLO las capturas de esa tutela: el bot
-    prefija sus screenshots con ``t{id}_``. Sin filtro se listan las últimas 40."""
+    prefija sus screenshots con ``t{id}_`` (y las constancias legacy se guardan
+    como ``constancia_{id}``). Sin filtro se listan las últimas 40."""
     prefijo = f"t{tutela_id}_" if tutela_id is not None else ""
+    constancia_legacy = f"constancia_{tutela_id}" if tutela_id is not None else ""
     dir_screenshots = Path(settings.storage_dir or "storage") / "screenshots"
     if not dir_screenshots.exists():
         return {"imagenes": []}
     imagenes = []
     for p in sorted(dir_screenshots.glob("*.png"), key=lambda x: x.stat().st_mtime, reverse=True)[:40]:
-        if prefijo and not p.name.startswith(prefijo):
+        if prefijo and not p.name.startswith(prefijo) and not (
+            constancia_legacy and p.stem == constancia_legacy
+        ):
             continue
         imagenes.append({
             "nombre": p.name,

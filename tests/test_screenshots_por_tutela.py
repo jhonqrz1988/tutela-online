@@ -42,6 +42,7 @@ class TestScreenshotsPorTutela(unittest.TestCase):
             for nombre in (
                 "t50_accionante_vacio.png",
                 "t50_codigo_sin_cajon.png",
+                "constancia_50.png",
                 "t49_codigo_no_escrito.png",
                 "t48_envio_validacion_error.png",
             ):
@@ -50,7 +51,11 @@ class TestScreenshotsPorTutela(unittest.TestCase):
             resp = self.client.get("/admin/screenshots?tutela_id=50")
             self.assertEqual(resp.status_code, 200)
             nombres = [i["nombre"] for i in resp.json()["imagenes"]]
-            self.assertEqual(set(nombres), {"t50_accionante_vacio.png", "t50_codigo_sin_cajon.png"})
+            self.assertEqual(set(nombres), {
+                "t50_accionante_vacio.png",
+                "t50_codigo_sin_cajon.png",
+                "constancia_50.png",
+            })
 
     def test_sin_filtro_devuelve_todas(self):
         from app.bot import navegador
