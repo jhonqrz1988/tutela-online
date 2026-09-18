@@ -846,6 +846,16 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
+    #   PENDIENTE RADICACIÓN / FALLIDA — en proceso o con fallo
+    # ══════════════════════════════════════════════════════════════════
+    if tutela.estado in ("pendiente_radicacion", "fallida"):
+        _r(respuestas, telefono,
+           "🔁 *Tu tutela está en proceso de radicación* ante la Rama Judicial.\n\n"
+           "En cuanto quede *radicada*, te enviaremos el *número de radicado* "
+           "y la notificación llegará también a tu correo. Gracias por la paciencia.")
+        return {"ok": True, "respuestas": respuestas}
+
+    # ══════════════════════════════════════════════════════════════════
     #   COMPLETADO / POR DEFECTO
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "completado":

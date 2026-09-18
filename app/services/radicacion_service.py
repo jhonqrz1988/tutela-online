@@ -840,7 +840,10 @@ async def _completar_radicacion(bot, tutela, datos, rad, session):
                 tutela.user.telefono,
                 f"✅ *Tu solicitud ha sido procesada exitosamente.*\n\n"
                 f"Número de seguimiento: *{num_radicado}*\n\n"
-                "Puedes consultar las actualizaciones directamente en este chat."
+                "La notificación oficial de la radicación fue enviada al correo "
+                "que registraste en tu tutela. Este proceso termina aquí, las "
+                "actualizaciones de tu caso llegarán directamente a tu correo "
+                "por parte del juzgado."
             )
             # Enviar screenshot de la constancia
             if screenshot_path and screenshot_path.exists():
