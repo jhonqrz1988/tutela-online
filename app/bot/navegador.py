@@ -531,6 +531,16 @@ class RadicadorBot:
         self._screenshot_dir.mkdir(parents=True, exist_ok=True)
         # Callback opcional on_paso(paso, estado, detalle="") para monitoreo.
         self.on_paso = None
+        # Id de la tutela en curso: prefija los screenshots de diagnóstico con
+        # 't{id}_' para que en el panel admin se agrupen por tutela y no se
+        # mezclen las capturas de todas las radicaciones (pedido del dashboard).
+        self.tutela_id: int | None = None
+
+    def _nombre_evidencia(self, tag: str) -> str:
+        """Prefija un tag de screenshot con 't{id}_' cuando hay tutela asociada."""
+        if self.tutela_id is not None:
+            return f"t{self.tutela_id}_{tag}"
+        return tag
 
     def _reportar_paso(self, paso: str, estado: str, detalle: str = ""):
         """Emite el estado de un paso al callback de monitoreo si está configurado."""
@@ -1758,7 +1768,16 @@ class RadicadorBot:
             return ""
 
     async def tomar_screenshot(self, nombre: str = "radicacion") -> Path:
-        """Toma screenshot de la página actual y retorna la ruta."""
+        """Toma screenshot de la página actual y retorna la ruta.
+
+        Si el bot está radicando una tutela (``tutela_id`` seteado) y el nombre
+        aún no la identifica, se prefija con ``t{id}_`` para agruparlo por tutela
+        en el panel admin (los tags sueltos de diagnóstico se mezclaban entre
+        todas las radicaciones).
+        """
+        prefijo = f"t{self.tutela_id}_" if self.tutela_id is not None else ""
+        if prefijo and not nombre.startswith(prefijo):
+            nombre = f"{prefijo}{nombre}"
         if settings.simulate_bot:
             ruta = self._screenshot_dir / f"{nombre}_sim.png"
             async with aiofiles.open(ruta, "w") as f:

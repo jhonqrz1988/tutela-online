@@ -632,15 +632,25 @@ def descargar_constancia(tutela_id: int, request: Request, session=Depends(get_s
 
 
 @router.get("/screenshots")
-def listar_screenshots(request: Request, _=Depends(require_admin)):
+def listar_screenshots(
+    request: Request,
+    tutela_id: int | None = None,
+    _=Depends(require_admin),
+):
     """Lista los screenshots de diagnóstico que toma el bot en momentos críticos
     (rechazo del portal, código de email, constancia, etc.) ordenados por fecha
-    descendente. Sirven para ver de un vistazo en qué falla la radicación."""
+    descendente. Sirven para ver de un vistazo en qué falla la radicación.
+
+    Acepta ``?tutela_id=N`` para devolver SOLO las capturas de esa tutela: el bot
+    prefija sus screenshots con ``t{id}_``. Sin filtro se listan las últimas 40."""
+    prefijo = f"t{tutela_id}_" if tutela_id is not None else ""
     dir_screenshots = Path(settings.storage_dir or "storage") / "screenshots"
     if not dir_screenshots.exists():
         return {"imagenes": []}
     imagenes = []
     for p in sorted(dir_screenshots.glob("*.png"), key=lambda x: x.stat().st_mtime, reverse=True)[:40]:
+        if prefijo and not p.name.startswith(prefijo):
+            continue
         imagenes.append({
             "nombre": p.name,
             "modificado": _fecha_bogota(datetime.fromtimestamp(p.stat().st_mtime, tz=BOGOTA_TZ)),

@@ -287,12 +287,13 @@ async function abrirDetalle(id, silencioso) {
 async function cargarEvidencias() {
   const cont = document.getElementById('evidencias-bot');
   if (!cont) return;
+  const tid = tutelaActual ? tutelaActual.id : null;
   try {
-    const res = await fetch('/admin/screenshots');
+    const res = await fetch('/admin/screenshots' + (tid ? '?tutela_id=' + tid : ''));
     const data = await res.json();
     const imgs = data.imagenes || [];
     if (!imgs.length) {
-      cont.innerHTML = '<span style="color:#999;font-size:13px;">Sin capturas hasta ahora</span>';
+      cont.innerHTML = '<span style="color:#999;font-size:13px;">Sin capturas para esta tutela</span>';
       return;
     }
     cont.innerHTML = imgs.map(i =>

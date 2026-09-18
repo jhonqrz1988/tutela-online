@@ -398,6 +398,7 @@ async def iniciar_radicacion(
 
         bot = _get_bot()
         bot.on_paso = lambda paso, estado, detalle="": _registrar_paso(session, rad.id, paso, estado, detalle)
+        bot.tutela_id = tutela_id
 
         # Paso 1: Iniciar navegador y navegar al portal
         await bot.iniciar()
