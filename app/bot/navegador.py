@@ -216,37 +216,77 @@ _CATEGORIA_POR_KEYWORD = (
 # radicación. Nunca se inventa un derecho: es una categoría real del portal.
 _FALLBACK_DERECHO = "salud"
 
-# Busca el value de un option en un select por texto visible, case-insensitive,
-# alias ("cc"->"cédula de ciudadanía") y normalizado ("C.C."=="CC").
-_JS_BUSCAR_OPTION_SELECT = """([sel, lbl]) => {
-    const ALIASES = {
-        'cc': 'cédula de ciudadanía',
-        'ce': 'cédula de extranjería',
-        'ti': 'tarjeta de identidad',
-        'pa': 'pasaporte',
-        'pep': 'permiso especial de permanencia',
-    };
-    const norm = (s) => s.replace(/[^a-z0-9]/g, '');
+# Lee los (value, texto) de un <select> para que el matching lo haga el
+# matcher Python puro (_buscar_valor_option), que PRIORIZA la coincidencia
+# exacta y corre MITAD del falso-positive de prod: buscar "Santander" elegía
+# "N. DE SANTANDER" (20) por aparecer primero (tutela 50 fallida).
+_JS_LEER_OPTIONES = """([sel]) => {
     const s = document.querySelector(sel);
     if (!s) return null;
-    const lower = lbl.toLowerCase().trim();
-    const expanded = ALIASES[norm(lower)] || lower;
-    const nLower = norm(lower);
-    const nExpanded = norm(expanded);
-    for (const opt of s.options) {
-        const txt = opt.text.trim().toLowerCase();
-        const nTxt = norm(txt);
-        if (txt === expanded || txt === lower ||
-            txt.includes(expanded) || expanded.includes(txt) ||
-            txt.includes(lower) || lower.includes(txt) ||
-            nTxt === nExpanded || nTxt === nLower ||
-            (nExpanded.length > 2 && nTxt.includes(nExpanded)) ||
-            (nLower.length > 2 && nTxt.includes(nLower))) {
-            return opt.value;
-        }
-    }
-    return null;
+    return Array.from(s.options).map(o => [o.value, String(o.text).trim()]);
 }"""
+
+# Alias de tipo de documento (mismos que el viejo matcher JS).
+_ALIASES_TIPO_DOC = {
+    "cc": "cédula de ciudadanía",
+    "ce": "cédula de extranjería",
+    "ti": "tarjeta de identidad",
+    "pa": "pasaporte",
+    "pep": "permiso especial de permanencia",
+}
+
+
+def _normalizar_match(texto: str) -> str:
+    """Minúsculas + solo [a-z0-9] (normaliza "C.C." == "CC", tildes, espacios)."""
+    return re.sub(r"[^a-z0-9]", "", texto.lower())
+
+
+def _buscar_valor_option(opciones, label: str):
+    """Busca el value de un option de <select> cuyo texto corresponda a `label`.
+
+    Matching case-insensitive con alias ("cc"->"cédula de ciudadanía") y
+    normalizado ("C.C."=="CC", sin tildes ni espacios). La pasada 1 solo acepta
+    coincidencia EXACTA (texto o normalizado, alias expandido); si ningún option
+    la logra, la pasada 2 cae al macheo parcial ("Valle" -> "VALLE DEL CAUCA").
+
+    Esto corrige el bug de prod (tutela 50): el viejo matcher JS devolvía la
+    PRIMERA coincidencia parcial en orden DOM, así que "Santander" elegía
+    "N. DE SANTANDER" (20) antes que "SANTANDER" (23), se cargaban las ciudades
+    de Norte de Santander, no aparecía "Bucaramanga" y la sección de hechos
+    (#DdlDepartamentoHechos) quedaba oculta -> timeout select_option.
+
+    Args:
+        opciones: lista de pares (value, texto) leída del select.
+        label: texto a buscar (lo que trae la capa de datos).
+
+    Returns:
+        El value del option ganador, o None si no hay match.
+    """
+    if not opciones:
+        return None
+    lower = label.lower().strip()
+    expanded = _ALIASES_TIPO_DOC.get(_normalizar_match(lower), lower)
+    n_lower = _normalizar_match(lower)
+    n_expanded = _normalizar_match(expanded)
+
+    # Pasada 1: coincidencia EXACTA (texto o normalizado, alias expandido)
+    for value, texto in opciones:
+        txt = str(texto or "").strip().lower()
+        if (txt in (expanded, lower) or
+                _normalizar_match(txt) in (n_expanded, n_lower)):
+            return str(value)
+
+    # Pasada 2: coincidencia parcial
+    for value, texto in opciones:
+        txt = str(texto or "").strip().lower()
+        n_txt = _normalizar_match(txt)
+        if (txt in expanded or expanded in txt or
+                txt in lower or lower in txt or
+                (len(n_expanded) > 2 and n_expanded in n_txt) or
+                (len(n_lower) > 2 and n_lower in n_txt)):
+            return str(value)
+
+    return None
 
 
 _TEXTO_ERROR_VALIDACION = (
@@ -530,8 +570,9 @@ class RadicadorBot:
         """
         await self._esperar_select_ajax(selector)
 
-        # Buscar el value por JS (case-insensitive / parcial / alias / normalizado)
-        match_value = await self.page.evaluate(_JS_BUSCAR_OPTION_SELECT, [selector, label])
+        # Leer opciones por JS y matchear en Python (exacto antes que parcial)
+        opciones = await self.page.evaluate(_JS_LEER_OPTIONES, [selector])
+        match_value = _buscar_valor_option(opciones, label)
 
         if match_value is not None:
             await self.page.select_option(selector, value=match_value)
@@ -557,7 +598,10 @@ class RadicadorBot:
 
         Retorna el value fijado, o None si no quedó seleccionado.
         """
-        match_value = await self.page.evaluate(_JS_BUSCAR_OPTION_SELECT, [selector, label])
+        match_value = _buscar_valor_option(
+            await self.page.evaluate(_JS_LEER_OPTIONES, [selector]),
+            label,
+        )
         if match_value is None:
             logger.warning(f"No se encontró '{label}' en {selector}")
             return None

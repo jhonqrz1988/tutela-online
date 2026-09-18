@@ -365,9 +365,9 @@ class TestNombresACampos(unittest.TestCase):
                 self.resyncs = 0
 
             async def evaluate(self, script, *args, **kwargs):
-                if "ALIASES" in script:
+                if "Array.from(s.options)" in script:
                     self.eventos.append("match")
-                    return "2"
+                    return [["2", "CÉDULA DE CIUDADANÍA"]]
                 if "options[i]" in script:
                     self.resyncs += 1
                     # El primer fijado queda 'Seleccione...' (un postback en vuelo
@@ -394,8 +394,8 @@ class TestNombresACampos(unittest.TestCase):
                 super().__init__()
 
             async def evaluate(self, script, *args, **kwargs):
-                if "ALIASES" in script:
-                    return "2"
+                if "Array.from(s.options)" in script:
+                    return [["2", "CÉDULA DE CIUDADANÍA"]]
                 if "options[i]" in script:
                     return "Seleccione..."
                 return None
