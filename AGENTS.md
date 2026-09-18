@@ -28,7 +28,7 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 - `app/api/` - FastAPI routers (webhook_whatsapp, admin, tutelas, health)
 - `app/services/` - Business logic (ia_service, documento_service, verificacion_service, whatsapp_service, radicacion_service)
 - `app/models/` - SQLAlchemy models
-- `app/bot/` - Playwright browser automation for judicial portal
+- `app/bot/` - Playwright browser automation for judicial portal (`normalizacion.py` = normalizador de la capa de portal: `verificar_igual(esperado, recibido, modo)` con modos `texto|numero|telefono|email`; la verificación campo a campo `_verificar_valor(selector, esperado, label, modo)` llena→lee→compara→re-escribe 1 vez→evidencia+ValueError)
 - `app/tasks/` - APScheduler for nightly radicacion
 - `storage/` - Generated PDFs and downloaded proofs
 - `seed_citas.py` - Seeds legal citation whitelist (10 citas)

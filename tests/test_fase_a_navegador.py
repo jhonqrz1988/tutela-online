@@ -68,6 +68,28 @@ class FakePage:
         return None
 
 
+class FakePageMemoria(FakePage):
+    """FakePage que recuerda lo que se escribe por página: `type` guarda el
+    valor por selector y `evaluate` lo devuelve cuando el script pide el valor
+    de un input por selector (patrón `_leer_valor_input`). Permite ejercitar
+    la verificación campo a campo sin un navegador real."""
+
+    def __init__(self):
+        super().__init__()
+        self.valores = {}
+
+    async def type(self, selector, texto, **kwargs):
+        self.valores[selector] = str(texto or "")
+        return None
+
+    async def evaluate(self, script, arg=None, **kwargs):
+        if arg and isinstance(arg, list) and len(arg) == 1:
+            sel = arg[0]
+            if str(script).strip().startswith("([sel])") or "document.querySelector(sel)" in str(script):
+                return self.valores.get(sel, "")
+        return None
+
+
 def _make_bot(page: FakePage):
     bot = RadicadorBot.__new__(RadicadorBot)
     bot.page = page
@@ -412,7 +434,7 @@ class TestNombresACampos(unittest.TestCase):
         """El accionado de la tutela SIEMPRE es una EPS (persona jurídica):
         el paso selecciona 'Jurídica' en #DDlTipoSujeto + NIT aunque los datos
         del chat digan 'natural'."""
-        bot = _make_bot(FakePage())
+        bot = _make_bot(FakePageMemoria())
         selecciones = []
 
         async def fake_select(selector, label):
@@ -425,6 +447,9 @@ class TestNombresACampos(unittest.TestCase):
                 "accionado_tipo": "natural",
                 "accionado": "EPS Sanitas",
                 "accionado_nit": "890123456",
+                "accionado_direccion": "Calle 10",
+                "accionado_telefono": "601234567",
+                "accionado_email": "contacto@epssanitas.com",
             }))
 
         self.assertEqual(selecciones[0], ("#DDlTipoSujeto", "Jurídica"))

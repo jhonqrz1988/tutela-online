@@ -11,6 +11,7 @@ from pathlib import Path
 import aiofiles
 
 from app.bot.browser import BrowserManager
+from app.bot.normalizacion import normalizar_texto, verificar_igual
 from app.config import settings
 from app.utils.file_utils import path_constancia
 
@@ -398,6 +399,12 @@ def _nombres_a_campos(nombres: str, apellidos: str) -> dict:
     }
 
 
+def _label_slug(label: str) -> str:
+    """Convierte un nombre de campo a token seguro para nombres de archivo
+    (screenshots de evidencia): minúsculas, sin acentos, solo [a-z0-9_]."""
+    return re.sub(r"[^a-z0-9_]", "_", normalizar_texto(label).replace(" ", "_"))
+
+
 def _info_archivo(ruta: str) -> dict:
     """Identidad del PDF que se va a subir al portal (para verificar en el
     panel que el archivo demandado es el correcto y no uno viejo del disco)."""
@@ -581,6 +588,53 @@ class RadicadorBot:
         except Exception as e:  # noqa: BLE001 - el diagnóstico nunca rompe el flujo
             logger.warning(f"No se pudo fijar {selector} = '{label}': {e}")
             return None
+
+    async def _leer_valor_input(self, selector: str) -> str:
+        """Lee el valor REAL de un input en el portal (cadena vacía si no existe)."""
+        return str(
+            await self.page.evaluate(
+                """([sel]) => {
+                    const el = document.querySelector(sel);
+                    return el ? (el.value || '') : '';
+                }""",
+                [selector],
+            )
+        )
+
+    async def _verificar_valor(self, selector: str, esperado: str, label: str, modo: str = "texto"):
+        """Verifica que un campo quedó con el valor esperado tras escribirlo.
+
+        Patrón llenar -> leer -> comparar del portal (campo a campo): el bot
+        escribe, relee lo que el portal realmente guardó y compara con la
+        normalización de la capa Playwright (ignora tildes, espacios, puntos,
+        mayúsculas, +57...). Si no coincide, re-escribe UNA vez y vuelve a
+        comparar; si sigue sin quedar, captura evidencia y falla con un error
+        preciso (en vez de seguir llenando un formulario con datos mal).
+
+        Args:
+            selector: Selector CSS del input.
+            esperado: Valor que enviamos (fuente: datos del usuario).
+            label: Nombre humano del campo (para el error y la evidencia).
+            modo: "texto" | "numero" | "telefono" | "email".
+
+        Raises:
+            ValueError: si tras la re-escritura el portal aún no refleja el valor.
+        """
+        recibido = await self._leer_valor_input(selector)
+        if verificar_igual(esperado, recibido, modo):
+            return
+        logger.warning(
+            f"Campo {label} ({selector}): esperado {esperado!r}, portal tenía {recibido!r} — re-escribiendo"
+        )
+        await self._type(selector, esperado)
+        await self.page.wait_for_timeout(400)
+        recibido = await self._leer_valor_input(selector)
+        if verificar_igual(esperado, recibido, modo):
+            return
+        await self._capturar_evidencia(f"campo_{_label_slug(label)}_no_quedo")
+        raise ValueError(
+            f"Portal no aceptó {label}: esperado {esperado!r}, recibido {recibido!r}"
+        )
 
     async def _verificar_select(self, selector: str) -> str | None:
         """Lee el texto del option realmente seleccionado en un select (None si
@@ -823,10 +877,10 @@ class RadicadorBot:
             tipo_actual = await self.page.evaluate(
                 """() => {
                     const el = document.querySelector('#NumeroDocumento');
-                    return el ? (el.value || '').replace(/[\\s.]/g, '') : '';
+                    return el ? (el.value || '') : '';
                 }"""
             )
-            if str(tipo_actual or "").strip() == cedula:
+            if verificar_igual(cedula, tipo_actual or "", "numero"):
                 break
             logger.warning(
                 f"Cédula en portal quedó {tipo_actual!r} (esperada {cedula!r}): re-escribiendo la cédula"
@@ -889,7 +943,7 @@ class RadicadorBot:
                 if readback and (
                     str(readback.get("tipo_doc") or "").strip() not in ("", "Seleccione...")
                     and str(readback.get("primer_nombre") or "").strip()
-                    and (readback.get("numero") or "").replace(" ", "").replace(".", "") == cedula
+                    and verificar_igual(cedula, readback.get("numero") or "", "numero")
                 ):
                     break  # quedó bien
                 logger.warning(
@@ -1195,12 +1249,26 @@ class RadicadorBot:
         # Para persona jurídica el portal exige tipo de documento (NIT) y número
         await self._seleccionar_select("#DDlTipodocumentoAccionado", "NIT")
         await self.page.wait_for_timeout(500)
-        await self._type("#DocumentodeIdendificacion", datos.get("accionado_nit", ""))
-        await self._type("#NombreJuridicoAcc", datos.get("accionado", ""))
+        nit = datos.get("accionado_nit", "")
+        await self._type("#DocumentodeIdendificacion", nit)
+        await self._verificar_valor("#DocumentodeIdendificacion", nit, "NIT del accionado", "numero")
 
-        await self._type("#IdDireccion", datos.get("accionado_direccion", "") or "-")
-        await self._type("#IdTelefono", datos.get("accionado_telefono", "") or "-")
-        await self._type("#IdEmail", datos.get("accionado_email", ""))
+        nombre_acc = datos.get("accionado", "")
+        await self._type("#NombreJuridicoAcc", nombre_acc)
+        await self._verificar_valor("#NombreJuridicoAcc", nombre_acc, "nombre del accionado")
+
+        direccion_acc = datos.get("accionado_direccion", "") or "-"
+        await self._type("#IdDireccion", direccion_acc)
+        await self._verificar_valor("#IdDireccion", direccion_acc, "dirección del accionado")
+
+        telefono_acc = datos.get("accionado_telefono", "") or "-"
+        await self._type("#IdTelefono", telefono_acc)
+        await self._verificar_valor("#IdTelefono", telefono_acc, "teléfono del accionado", "telefono")
+
+        email_acc = datos.get("accionado_email", "")
+        await self._type("#IdEmail", email_acc)
+        if email_acc:
+            await self._verificar_valor("#IdEmail", email_acc, "email del accionado", "email")
 
         # La acción no involucra menores de edad en el caso estándar
         try:
