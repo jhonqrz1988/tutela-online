@@ -4,13 +4,17 @@ from unittest import mock
 
 from app.bot.navegador import RadicadorBot
 from app.bot.normalizacion import (
+    TIPO_DOCUMENTO_EQUIVALENCIAS,
     _MODO_NORMALIZACION,
+    etiqueta_portal_tipo_doc,
     normalizar_campo,
     normalizar_email,
     normalizar_numero,
     normalizar_telefono,
     normalizar_texto,
+    normalizar_tipo_doc,
     quitar_acentos,
+    tipo_doc_equivale,
     verificar_igual,
 )
 
@@ -76,6 +80,9 @@ class FakePageMemoria:
     def __init__(self):
         self.valores = {}
 
+    async def fill(self, selector, texto, **kwargs):
+        self.valores[selector] = str(texto or "")
+
     async def type(self, selector, texto, **kwargs):
         self.valores[selector] = str(texto or "")
 
@@ -119,7 +126,7 @@ class TestVerificarValor(unittest.TestCase):
             escrituras.append((selector, texto))
             self.page.valores[selector] = str(texto or "")
 
-        with mock.patch.object(self.bot, "_type", new=type_fake), \
+        with mock.patch.object(self.bot, "_type_existing", new=type_fake), \
              mock.patch.object(self.bot, "_capturar_evidencia", new=mock.AsyncMock()):
             # El portal "pisa" el primer valor: escribimos vacío para luego
             # re-escribirlo bien en la segunda pasada.
@@ -127,10 +134,30 @@ class TestVerificarValor(unittest.TestCase):
             asyncio.run(self.bot._verificar_valor("#Campo", "esperado", "nombre"))
         self.assertEqual(len(escrituras), 1, "Se re-escribe una vez si el portal no quedó con el valor")
 
+    def test_reescribe_limpiando_campo_no_acumulando(self):
+        """El re-write NO suma al contenido previo: limpia (fill) y re-escribe."""
+        orden = []
+
+        async def fill_fake(selector, texto, **kwargs):
+            orden.append(("fill", texto))
+            self.page.valores[selector] = str(texto or "")
+
+        async def type_fake(selector, texto, **kwargs):
+            orden.append(("type", texto))
+            self.page.valores[selector] = str(texto or "")
+
+        self.page.valores["#Campo"] = "E"
+        with mock.patch.object(self.bot, "_type_existing", new=type_fake), \
+             mock.patch.object(self.bot, "_capturar_evidencia", new=mock.AsyncMock()):
+            asyncio.run(self.bot._verificar_valor("#Campo", "EPS SURA", "nombre del accionado"))
+
+        self.assertEqual(orden, [("type", "EPS SURA")])
+        self.assertEqual(self.page.valores["#Campo"], "EPS SURA")
+
     def test_falla_con_error_preciso_tras_reescribir(self):
         self.page.valores["#Campo"] = "siempre mal"
 
-        with mock.patch.object(self.bot, "_type", new=mock.AsyncMock()), \
+        with mock.patch.object(self.bot, "_type_existing", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_capturar_evidencia", new=mock.AsyncMock()), \
              self.assertRaises(ValueError) as ctx:
             asyncio.run(self.bot._verificar_valor("#Campo", "esperado", "nombre"))
@@ -141,7 +168,7 @@ class TestVerificarValor(unittest.TestCase):
     def test_captura_evidencia_al_fallar(self):
         self.page.valores["#Campo"] = "nunca"
 
-        with mock.patch.object(self.bot, "_type", new=mock.AsyncMock()), \
+        with mock.patch.object(self.bot, "_type_existing", new=mock.AsyncMock()), \
              mock.patch.object(self.bot, "_capturar_evidencia", new=mock.AsyncMock()) as captura, \
              self.assertRaises(ValueError):
             asyncio.run(self.bot._verificar_valor("#Campo", "esperado", "nombre del campo"))
@@ -154,6 +181,72 @@ class TestVerificarValor(unittest.TestCase):
         """Es la lectura real: _leer_valor_input consulta el DOM por selector."""
         self.page.valores["#Telefono"] = "573012345678"
         asyncio.run(self.bot._verificar_valor("#Telefono", "3012345678", "teléfono", "telefono"))
+
+
+class TestTablaTipoDocumento(unittest.TestCase):
+    """La tabla de equivalencias TIPO DOCUMENTO es la fuente de verdad entre lo
+    que pide el flujo (texto libre: 'CC', 'Pasaporte', 'Cédula') y las opciones
+    del dropdown del portal (etiquetas con mayúsculas, guiones y tildes)."""
+
+    def test_sinonimos_resuelven_a_clave_canonica(self):
+        casos = {
+            "CC": ("CC", "cc", "C.C.", "Cédula", "cedula de ciudadania", "Ciudadanía"),
+            "CE": ("CE", "Cédula de extranjería", "extranjeria"),
+            "TI": ("TI", "Tarjeta de Identidad", "tarjeta"),
+            "PA": ("PA", "Pasaporte", "pas"),
+            "PEP": ("PEP", "permiso especial de permanencia"),
+            "RAMV": ("RAMV", "ramv"),
+            "SC": ("SC", "Salvo Conducto", "s.c."),
+            "PPT": ("PPT", "proteccion temporal", "permiso por protección temporal"),
+        }
+        for clave, sinonimos in casos.items():
+            for valor in sinonimos:
+                self.assertEqual(normalizar_tipo_doc(valor), clave, f"{valor!r} -> {clave}")
+
+    def test_valores_desconocidos_devuelven_none(self):
+        self.assertIsNone(normalizar_tipo_doc("Seleccione..."))
+        self.assertIsNone(normalizar_tipo_doc(""))
+        self.assertIsNone(normalizar_tipo_doc("no sé"))
+
+    def test_etiqueta_portal_usa_etiqueta_exacta_del_portal(self):
+        self.assertEqual(etiqueta_portal_tipo_doc("CC"), "CÉDULA DE CIUDADANÍA")
+        self.assertEqual(etiqueta_portal_tipo_doc("Pasaporte"), "PASAPORTE")
+        self.assertEqual(etiqueta_portal_tipo_doc("SALVO CONDUCTO"), "SALVO CONDUCTO")
+        # https://github.com/USER/opencode/blob/... las etiquetas vienen del
+        # dropdown real del portal (html_tipo_doc capturado en prod).
+
+    def test_etiqueta_portal_default_cc_si_desconocido(self):
+        self.assertEqual(etiqueta_portal_tipo_doc("xyr"), "CÉDULA DE CIUDADANÍA")
+        self.assertEqual(etiqueta_portal_tipo_doc(""), "CÉDULA DE CIUDADANÍA")
+
+    def test_tipo_doc_equivale_lee_etiqueta_del_portal(self):
+        # El select devuelve la etiqueta (con tildes y mayúsculas); nosotros
+        # enviamos el código corto del flujo. Deben equivaler.
+        self.assertTrue(tipo_doc_equivale("CÉDULA DE CIUDADANÍA", "CC"))
+        self.assertTrue(tipo_doc_equivale("cedula de ciudadania", "C.C."))
+        self.assertTrue(tipo_doc_equivale("PASAPORTE", "Pasaporte"))
+        self.assertFalse(tipo_doc_equivale("CÉDULA DE EXTRANJERÍA", "CC"))
+        self.assertFalse(tipo_doc_equivale("Seleccione...", "CC"))
+
+    def test_todas_las_etiquetas_del_portal_resuelven(self):
+        """Cada opción real del dropdown tiene fila en la tabla (evita el bug
+        'siempre es el mismo error': opción del portal sin mapear)."""
+        portal = [
+            "CÉDULA DE CIUDADANÍA", "CÉDULA DE EXTRANJERÍA", "TARJETA DE IDENTIDAD",
+            "PASAPORTE", "PERMISO ESPECIAL DE PERMANENCIA",
+            "PERMISO ESPECIAL DE PERMANENCIA - RAMV", "SALVO CONDUCTO",
+            "PERMISO POR PROTECCIÓN TEMPORAL",
+        ]
+        for opcion in portal:
+            self.assertIsNotNone(normalizar_tipo_doc(opcion), f"opción del portal sin mapear: {opcion}")
+
+    def test_etiquetas_portal_sin_duplicados(self):
+        claves = list(TIPO_DOCUMENTO_EQUIVALENCIAS)
+        self.assertEqual(len(claves), len(set(claves)))
+
+        portales = [info["portal"] for info in TIPO_DOCUMENTO_EQUIVALENCIAS.values()]
+        self.assertEqual(len(portales), len(set(normalizar_texto(p) for p in portales)),
+                         "Dos filas apuntan a la misma etiqueta del portal")
 
 
 if __name__ == "__main__":

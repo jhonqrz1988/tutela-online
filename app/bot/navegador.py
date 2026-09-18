@@ -11,7 +11,12 @@ from pathlib import Path
 import aiofiles
 
 from app.bot.browser import BrowserManager
-from app.bot.normalizacion import normalizar_texto, verificar_igual
+from app.bot.normalizacion import (
+    etiqueta_portal_tipo_doc,
+    normalizar_texto,
+    tipo_doc_equivale,
+    verificar_igual,
+)
 from app.config import settings
 from app.utils.file_utils import path_constancia
 
@@ -626,7 +631,7 @@ class RadicadorBot:
         logger.warning(
             f"Campo {label} ({selector}): esperado {esperado!r}, portal tenía {recibido!r} — re-escribiendo"
         )
-        await self._type(selector, esperado)
+        await self._type_existing(selector, esperado)
         await self.page.wait_for_timeout(400)
         recibido = await self._leer_valor_input(selector)
         if verificar_igual(esperado, recibido, modo):
@@ -803,13 +808,14 @@ class RadicadorBot:
         else:
             nombre = _separar_nombre(datos.get("accionante_nombre", ""))
         tipo_doc = datos.get("accionante_tipo_doc", "CC")
+        etiqueta_tipo_doc = etiqueta_portal_tipo_doc(tipo_doc)
         email = datos.get("accionante_email", "")
         self._email_accionante = email
 
         # Se fija el tipo documento SIN disparar postback: en este portal el
         # select tiene onchange=__doPostBack y re-renderizar la sección borra
         # todo lo escrito (ver _fijar_select_sin_postback).
-        await self._fijar_select_sin_postback("#DDlTipodocumento", tipo_doc)
+        await self._fijar_select_sin_postback("#DDlTipodocumento", etiqueta_tipo_doc)
         await self.page.wait_for_timeout(400)
         await self._type_existing("#PrimerNombre", nombre["primer_nombre"])
         await self._type_existing("#SegundoNombre", nombre["segundo_nombre"])
@@ -826,7 +832,7 @@ class RadicadorBot:
 
         # El autofill del portal deja el select del tipo de documento en
         # 'Seleccione...': re-fijarlo al final (sin postback, no borra nada).
-        await self._fijar_select_sin_postback("#DDlTipodocumento", tipo_doc)
+        await self._fijar_select_sin_postback("#DDlTipodocumento", etiqueta_tipo_doc)
 
     async def _paso_accionante(self, datos: dict) -> bool:
         """Paso 4: Datos del accionante. Retorna True si requiere código de email."""
@@ -838,11 +844,14 @@ class RadicadorBot:
             nombre = _separar_nombre(datos.get("accionante_nombre", ""))
 
         # Tipo documento: se usa el que el cliente registró (CC por defecto);
-        # el normalizado del alias resuelve variantes ("C.C.", "CC"). Se fija
-        # SIN postback: `select_option` dispara __doPostBack y el portal
-        # re-renderiza la sección del accionante borrando lo escrito.
+        # la tabla de equivalencias (normalizacion.TIPO_DOCUMENTO_EQUIVALENCIAS)
+        # resuelve cualquier sinónimo del flujo ("C.C.", "Cédula", "Pasaporte")
+        # a la etiqueta EXACTA del dropdown del portal. Se fija SIN postback:
+        # `select_option` dispara __doPostBack y el portal re-renderiza la
+        # sección del accionante borrando lo escrito.
         tipo_doc = datos.get("accionante_tipo_doc", "CC")
-        await self._fijar_select_sin_postback("#DDlTipodocumento", tipo_doc)
+        etiqueta_tipo_doc = etiqueta_portal_tipo_doc(tipo_doc)
+        await self._fijar_select_sin_postback("#DDlTipodocumento", etiqueta_tipo_doc)
         await self.page.wait_for_timeout(500)
 
         # Número documento: sin puntos ni espacios, limpiando el campo primero
@@ -941,7 +950,7 @@ class RadicadorBot:
                 tag = "accionante" if pasada == 0 else "accionante_retry"
                 logger.info(f"[readback {tag}] {json.dumps(readback, ensure_ascii=False)}")
                 if readback and (
-                    str(readback.get("tipo_doc") or "").strip() not in ("", "Seleccione...")
+                    tipo_doc_equivale(str(readback.get("tipo_doc") or ""), tipo_doc)
                     and str(readback.get("primer_nombre") or "").strip()
                     and verificar_igual(cedula, readback.get("numero") or "", "numero")
                 ):
@@ -1458,8 +1467,9 @@ class RadicadorBot:
             try:
                 readback = await self.page.evaluate(_JS_READBACK_ACCIONANTE)
                 logger.info(f"[readback post-email] {json.dumps(readback, ensure_ascii=False)}")
+                tipo_doc_esperado = datos.get("accionante_tipo_doc", "CC")
                 if readback and (
-                    str(readback.get("tipo_doc") or "").strip() in ("", "Seleccione...")
+                    not tipo_doc_equivale(str(readback.get("tipo_doc") or ""), tipo_doc_esperado)
                     or not str(readback.get("primer_nombre") or "").strip()
                 ):
                     logger.warning(

@@ -87,3 +87,104 @@ def verificar_igual(esperado: str, recibido: str, modo: str = "texto") -> bool:
     if modo == "email":
         return normalizar_email(esperado) == normalizar_email(recibido)
     return normalizar_texto(esperado) == normalizar_texto(recibido)
+
+
+# ── EQUIVALENCIAS TIPO DOCUMENTO ──────────────────────────────────────────────
+# La fuente de verdad del mapeo entre lo que pide el flujo de WhatsApp (y el
+# bot guarda en `datos["accionante_tipo_doc"]`) y la lista desplegable exacta
+# del portal de la Rama Judicial. Antes esto vivía en un ALIASES JS frágil y el
+# readback comparaba contra el literal desnormalizado, por eso "siempre falla
+# el tipo de documento". Ahora: sinónimo (lo que escribe un humano/IA) -> clave
+# canónica (CC/CE/TI/PA/PEP/RAMV/SC/PPT) -> etiqueta exacta del dropdown.
+#
+# Orden de opciones confirmado en prod (html_tipo_doc del portal):
+#   CÉDULA DE CIUDADANÍA, CÉDULA DE EXTRANJERÍA, TARJETA DE IDENTIDAD,
+#   PASAPORTE, PERMISO ESPECIAL DE PERMANENCIA, PERMISO ESPECIAL DE PERMANENCIA
+#   - RAMV, SALVO CONDUCTO, PERMISO POR PROTECCIÓN TEMPORAL
+TIPO_DOCUMENTO_EQUIVALENCIAS: dict[str, dict] = {
+    "CC": {
+        "portal": "CÉDULA DE CIUDADANÍA",
+        "sinonimos": (
+            "cc", "c.c.", "cd", "ciudadania", "ciudadanía",
+            "cédula de ciudadanía", "cedula de ciudadania", "cédula", "cedula",
+        ),
+    },
+    "CE": {
+        "portal": "CÉDULA DE EXTRANJERÍA",
+        "sinonimos": (
+            "ce", "c.e.", "extranjeria", "extranjería",
+            "cédula de extranjería", "cedula de extranjeria",
+        ),
+    },
+    "TI": {
+        "portal": "TARJETA DE IDENTIDAD",
+        "sinonimos": ("ti", "t.i.", "tarjeta", "tarjeta de identidad"),
+    },
+    "PA": {
+        "portal": "PASAPORTE",
+        "sinonimos": ("pa", "pasaporte", "passport", "pas"),
+    },
+    "PEP": {
+        "portal": "PERMISO ESPECIAL DE PERMANENCIA",
+        "sinonimos": ("pep", "permiso especial de permanencia", "permiso"),
+    },
+    "RAMV": {
+        "portal": "PERMISO ESPECIAL DE PERMANENCIA - RAMV",
+        "sinonimos": ("ramv", "ramv permiso", "permiso especial de permanencia ramv"),
+    },
+    "SC": {
+        "portal": "SALVO CONDUCTO",
+        "sinonimos": ("sc", "s.c.", "salvo conducto"),
+    },
+    "PPT": {
+        "portal": "PERMISO POR PROTECCIÓN TEMPORAL",
+        "sinonimos": ("ppt", "proteccion temporal", "protección temporal", "permiso por protección temporal"),
+    },
+}
+
+_SINONIMOS_TIPO_DOC: dict[str, str] = {
+    normalizar_texto(sin): clave
+    for clave, info in TIPO_DOCUMENTO_EQUIVALENCIAS.items()
+    for sin in info["sinonimos"]
+}
+
+
+def normalizar_tipo_doc(valor: str) -> str | None:
+    """Resuelve lo que escribió un humano/IA a la clave canónica.
+
+    '@accionante_tipo_doc': 'CC', 'Pasaporte', 'Cédula de Ciudadanía', 'PEP',
+    'C.C.'... -> 'CC', 'PA', 'PEP'... None si no matchea nada.
+    """
+    clave_buscada = normalizar_texto(valor)
+    for clave, info in TIPO_DOCUMENTO_EQUIVALENCIAS.items():
+        if normalizar_texto(clave) == clave_buscada:
+            return clave
+        if normalizar_texto(info["portal"]) == clave_buscada:
+            return clave
+    return _SINONIMOS_TIPO_DOC.get(clave_buscada)
+
+
+def etiqueta_portal_tipo_doc(valor: str) -> str:
+    """Etiqueta EXACTA del dropdown del portal para un tipo de documento.
+
+    Acepta la clave canónica o un sinónimo del flujo; si no matchea, devuelve
+    la etiqueta de CC (es el tipo por defecto de toda tutela).
+    """
+    clave = normalizar_tipo_doc(valor) or "CC"
+    return TIPO_DOCUMENTO_EQUIVALENCIAS[clave]["portal"]
+
+
+def tipo_doc_equivale(leido: str, esperado: str) -> bool:
+    """True si el texto que devolvió el portal equivale a lo que enviamos.
+
+    Compara por clave canónica: 'CÉDULA DE CIUDADANÍA' (leído del portal) ==
+    'CC' (lo que pedimos) -> True. También tolera que el portal devuelva el
+    ID sin acentos o con variaciones.
+    """
+    clave_leido = normalizar_tipo_doc(leido)
+    clave_esperado = normalizar_tipo_doc(esperado)
+    if clave_esperado and clave_leido:
+        return clave_leido == clave_esperado
+    if clave_esperado and not clave_leido:
+        return verificar_igual(etiqueta_portal_tipo_doc(esperado), leido, "texto")
+    return verificar_igual(leido, esperado, "texto")

@@ -303,7 +303,7 @@ class TestNombresACampos(unittest.TestCase):
                 "accionante_email": "a@b.com",
             }))
 
-        veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CC")]
+        veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CÉDULA DE CIUDADANÍA")]
         self.assertGreaterEqual(
             len(veces_cc), 2, "El tipo de documento debe re-aplicarse al final"
         )
@@ -346,7 +346,7 @@ class TestNombresACampos(unittest.TestCase):
         self.assertEqual(escritos["#SegundoApellido"], "Gómez")
         self.assertEqual(escritos["#Telefono"], "31174598")
         self.assertEqual(escritos["#Email"], "harold0.1@hotmail.com")
-        veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CC")]
+        veces_cc = [s for s in selecciones if s == ("#DDlTipodocumento", "CÉDULA DE CIUDADANÍA")]
         self.assertGreaterEqual(
             len(veces_cc), 1, "El tipo de documento debe fijarse (y re-fijarse al final) sin postback"
         )
