@@ -77,6 +77,7 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 - Panel features: pagination (`?pagina=N`, 50/page), status filter + badge colors for all 19 states, auto-refresh every 30s (paused when modal open), reference/payment link in detail modal, **"Progreso bot"** column with last 3 steps ✓/✗ per row (from `PasoRadicacion`).
 - Scheduler runtime toggle: `GET /admin/api/scheduler` (state) + `POST /admin/api/scheduler/toggle` → `set_scheduler_automatico()` in `app/tasks/scheduler.py` flips `_automatico_enabled` in-process; header pill shows ON/OFF, enabled at boot from `ENABLE_SCHEDULER` (now `true` in Render, job runs every 15min lun-vie 8-16h).
 - Actions in detail modal: **"Ejecutar bot (reintentar)"** on `fallida`/`pdf_generado`/`pendiente_radicacion`/`pago_confirmado`/`esperando_codigo_email`/`pago_por_confirmar` (POST `/admin/tutelas/{id}/reintentar` sets state `pendiente_radicacion` + `iniciar_radicacion(forzar=True)`); **"Radicación Manual"** (`/registrar-radicado`) is ALWAYS available as fallback in every state.
+- **Evidencias del bot**: los screenshots de diagnóstico se prefijan con `t{id}_` (bot `tutela_id`, set en `iniciar_radicacion`) y el modal muestra SOLO las de esa tutela vía `GET /admin/screenshots?tutela_id=N`; el mismo filtro también incluye constancias legacy `constancia_{id}`. Sin filtro lista las últimas 40.
 - Jinja2 `env` in `admin.py` uses `select_autoescape` (HTML escaped).
 
 ## Key Conventions
