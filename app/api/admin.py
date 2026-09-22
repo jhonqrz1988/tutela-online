@@ -19,6 +19,11 @@ from app.database import get_session
 from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 from app.models.visita import VisitaLanding
+from app.services.visitas_service import (
+    agrupar_por_periodo,
+    agrupar_tutelas_por_periodo,
+    nombre_fuente,
+)
 
 router = APIRouter(prefix="/admin")
 logger = logging.getLogger(__name__)
@@ -344,19 +349,47 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         select(VisitaLanding.fuente, func.count().label("n"))
         .group_by(VisitaLanding.fuente)
         .order_by(func.count().desc())
-        .limit(5)
+        .limit(6)
     ).all()
     ultimas_visitas = session.execute(
         select(VisitaLanding).order_by(VisitaLanding.created_at.desc()).limit(6)
     ).scalars().all()
+
+    # Cortes semanal y mensual (hora de Bogotá) de visitas y tutelas para
+    # ver la evolución del negocio en el tiempo, no solo totales acumulados.
+    filas_visitas = session.execute(
+        select(VisitaLanding.created_at, VisitaLanding.es_pauta)
+    ).all()
+    visitas_mensuales = agrupar_por_periodo(
+        [{"created_at": f[0], "es_pauta": f[1]} for f in filas_visitas], "mes"
+    )
+    visitas_semanales = agrupar_por_periodo(
+        [{"created_at": f[0], "es_pauta": f[1]} for f in filas_visitas], "semana"
+    )
+
+    filas_tutelas = session.execute(
+        select(Tutela.created_at, Tutela.estado)
+    ).all()
+    tutelas_mensuales = agrupar_tutelas_por_periodo(
+        [{"created_at": f[0], "estado": f[1]} for f in filas_tutelas], "mes"
+    )
+    tutelas_semanales = agrupar_tutelas_por_periodo(
+        [{"created_at": f[0], "estado": f[1]} for f in filas_tutelas], "semana"
+    )
+
     visitas = {
         "total": visitas_total,
         "ultimas_24h": visitas_24h,
         "pauta": visitas_pauta,
-        "por_fuente": [{"fuente": f, "n": n} for f, n in visitas_por_fuente],
+        "por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in visitas_por_fuente],
+        "por_mes": visitas_mensuales,
+        "por_semana": visitas_semanales,
+        "tutelas_por_mes": tutelas_mensuales,
+        "tutelas_por_semana": tutelas_semanales,
         "ultimas": [
             {
-                "fuente": v.fuente,
+                "fuente": nombre_fuente(v.fuente),
+                "fuente_cruda": v.fuente,
                 "medio": v.medio or "",
                 "campania": v.campania or "",
                 "es_pauta": bool(v.es_pauta),

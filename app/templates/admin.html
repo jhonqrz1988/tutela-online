@@ -130,11 +130,41 @@
         <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">&Uacute;ltimas visitas</h3>
         {% for v in visitas.ultimas %}
         <div style="display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:4px 0; border-bottom:1px solid #f0f0f0;">
-          <span>{{ v.fuente }}{% if v.campania %} <small style="color:#666;">({{ v.campania }})</small>{% endif %}</span>
+          <span>{{ v.fuente }}<small style="color:#aaa;">{% if v.fuente_cruda and v.fuente_cruda != v.fuente %} ({{ v.fuente_cruda }}){% endif %}</small>{% if v.campania %} <small style="color:#666;">({{ v.campania }})</small>{% endif %}</span>
           <span style="color:#aaa; white-space:nowrap;">{{ v.created_at }}</span>
         </div>
         {% endfor %}
       </div>
+    </div>
+
+    <div style="display:flex; gap:15px; flex-wrap:wrap; margin-top:15px;">
+      {% for serie in [
+        {"titulo": "Por mes &mdash; visitas", "rows": visitas.por_mes, "cols": ["n", "pauta"]},
+        {"titulo": "Por mes &mdash; tutelas", "rows": visitas.tutelas_por_mes, "cols": ["tutelas", "radicadas"]},
+        {"titulo": "Por semana &mdash; visitas", "rows": visitas.por_semana, "cols": ["n", "pauta"]},
+        {"titulo": "Por semana &mdash; tutelas", "rows": visitas.tutelas_por_semana, "cols": ["tutelas", "radicadas"]}
+      ] %}
+      <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:1; min-width:230px;">
+        <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">{{ serie.titulo|safe }}</h3>
+        {% if serie.rows %}
+        <table style="width:100%; border-collapse:collapse;">
+          {% for r in serie.rows[:10] %}
+          <tr style="border-bottom:1px solid #f0f0f0;">
+            <td style="padding:3px 0; font-size:12px;">{{ r.etiqueta }}</td>
+            {% for c in serie.cols %}
+            <td style="padding:3px 0; font-size:12px; text-align:right;{% if c in ('pauta','radicadas') %} color:#1a237e;{% endif %}">{{ r[c] }}</td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+          {% if serie.rows|length > 10 %}
+          <tr><td colspan="3" style="padding:3px 0; font-size:11px; color:#999;">y {{ serie.rows|length - 10 }} m&aacute;s&hellip;</td></tr>
+          {% endif %}
+        </table>
+        {% else %}
+        <span style="color:#bbb; font-size:13px;">Sin datos.</span>
+        {% endif %}
+      </div>
+      {% endfor %}
     </div>
     {% endif %}
   </div>
