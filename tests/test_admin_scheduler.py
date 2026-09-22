@@ -252,5 +252,83 @@ class TestPanelIncluyePasos(unittest.TestCase):
         self.assertEqual(_fecha_bogota(None), "")
 
 
+class TestFiltroMensual(unittest.TestCase):
+    def test_panel_filtra_tutelas_por_mes_activo(self):
+        from datetime import datetime, timezone
+
+        from app.models.visita import VisitaLanding
+
+        settings.admin_password = "test-password"
+        settings.secret_key = "test-key-fijo"
+        session = _nueva_sesion()
+        user = User(telefono="573009990105", nombre="Mesuno", consentimiento=True)
+        session.add(user)
+        session.flush()
+        # Tutela en el mes de referencia (agosto 2026, UTC) — debe aparecer.
+        t1 = Tutela(user_id=user.id, tipo="salud", estado="radicada", datos_json="{}")
+        t1.created_at = datetime(2026, 8, 20, 15, 0, 0, tzinfo=timezone.utc)
+        # Tutela en otro mes (septiembre 2026) — debe quedar fuera con ?mes=2026-08.
+        t2 = Tutela(user_id=user.id, tipo="salud", estado="fallida", datos_json="{}")
+        t2.created_at = datetime(2026, 9, 10, 15, 0, 0, tzinfo=timezone.utc)
+        session.add_all([t1, t2])
+        session.add(VisitaLanding(fuente="fb", es_pauta=True))
+        session.commit()
+
+        client = TestClient(app)
+        client.__enter__()
+
+        def _override_get_session():
+            yield session
+
+        app.dependency_overrides[get_session] = _override_get_session
+        client.cookies.set(SESSION_COOKIE, _crear_sesion())
+        try:
+            resp = client.get("/admin?mes=2026-08")
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            client.__exit__(None, None, None)
+            client.close()
+
+        self.assertEqual(resp.status_code, 200)
+        html = resp.text
+        self.assertIn("Agosto 2026", html, "El selector debe mostrar el mes elegido")
+        self.assertIn("Mesuno", html, "La tutela de agosto debe aparecer en el panel")
+        self.assertNotIn("Mesdos", html)  # la tutela de septiembre NO debe aparecer en agosto
+        self.assertIn('value="2026-08"', html, "El selector debe listar el mes de la tutela")
+
+    def test_panel_por_defecto_usa_mes_actual(self):
+        """Sin ?mes=, el panel debe usar el mes calendario actual (Bogotá)."""
+        from datetime import datetime, timezone
+
+        settings.admin_password = "test-password"
+        settings.secret_key = "test-key-fijo"
+        session = _nueva_sesion()
+        user = User(telefono="573009990106", nombre="Mesdos", consentimiento=True)
+        session.add(user)
+        session.flush()
+        t1 = Tutela(user_id=user.id, tipo="salud", estado="borrador", datos_json="{}")
+        t1.created_at = datetime(2026, 9, 5, 15, 0, 0, tzinfo=timezone.utc)
+        session.add(t1)
+        session.commit()
+
+        client = TestClient(app)
+        client.__enter__()
+
+        def _override_get_session():
+            yield session
+
+        app.dependency_overrides[get_session] = _override_get_session
+        client.cookies.set(SESSION_COOKIE, _crear_sesion())
+        try:
+            resp = client.get("/admin")
+        finally:
+            app.dependency_overrides.pop(get_session, None)
+            client.__exit__(None, None, None)
+            client.close()
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Mesdos", resp.text)
+
+
 if __name__ == "__main__":
     unittest.main()

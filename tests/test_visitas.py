@@ -65,6 +65,27 @@ class TestRegistroVisitas(unittest.TestCase):
             visitas_service.registrar_visita_landing("utm_source=fb")
 
 
+class TestRangoMes(unittest.TestCase):
+    def test_rango_febrero_bogota_a_utc(self):
+        inicio, fin = visitas_service.rango_mes_utc("2026-02")
+        self.assertEqual(inicio, datetime(2026, 2, 1, 5, 0, 0))
+        self.assertEqual(fin, datetime(2026, 3, 1, 5, 0, 0))
+
+    def test_rango_enero_antes_de_bogota(self):
+        inicio, fin = visitas_service.rango_mes_utc("2026-01")
+        self.assertEqual(inicio, datetime(2026, 1, 1, 5, 0, 0))
+        self.assertEqual(fin, datetime(2026, 2, 1, 5, 0, 0))
+
+    def test_rango_diciembre_cruza_anio(self):
+        inicio, fin = visitas_service.rango_mes_utc("2025-12")
+        self.assertEqual(inicio, datetime(2025, 12, 1, 5, 0, 0))
+        self.assertEqual(fin, datetime(2026, 1, 1, 5, 0, 0))
+
+    def test_mes_invalido_lanza_value_error(self):
+        with self.assertRaises(ValueError):
+            visitas_service.rango_mes_utc("2026-13")
+
+
 class TestNombreFuente(unittest.TestCase):
     def test_mapeo_de_nombres_conocidos(self):
         casos = {

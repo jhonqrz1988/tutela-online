@@ -23,6 +23,7 @@ from app.services.visitas_service import (
     agrupar_por_periodo,
     agrupar_tutelas_por_periodo,
     nombre_fuente,
+    rango_mes_utc,
 )
 
 router = APIRouter(prefix="/admin")
@@ -34,6 +35,19 @@ env = Environment(
     cache_size=0,
     autoescape=select_autoescape(["html", "htm"]),
 )
+
+
+def _nombre_mes(clave: str) -> str:
+    """Traduce ``2026-09`` a ``Septiembre 2026`` (para el selector del panel)."""
+    try:
+        year, month = clave.split("-")
+        return f"{_MESES_ES[int(month) - 1]} {year}"
+    except (ValueError, IndexError):
+        return clave
+
+
+# Globals del template: el helper del título del selector.
+env.globals["_nombre_mes"] = _nombre_mes
 
 SESSION_COOKIE = "tutela_admin"
 SESSION_TTL = 12 * 3600  # 12 horas
@@ -64,6 +78,20 @@ _ETIQUETA_PASO = {
     "radicada": "Radicada",
     "completar_radicacion": "Completar",
 }
+
+_MESES_ES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
+
+def _nombre_mes_activo(clave: str) -> str:
+    """Traduce ``2026-09`` a ``Septiembre 2026``."""
+    try:
+        year, month = clave.split("-")
+        return f"{_MESES_ES[int(month) - 1]} {year}"
+    except (ValueError, IndexError):
+        return clave
 
 # Rate-limit del login: máx intentos fallidos por ventana por IP.
 _LOGIN_MAX_ATTEMPTS = 8
@@ -258,18 +286,45 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         pagina = 1
     por_pagina = 50
 
-    total = session.execute(select(Tutela)).scalars().all()
-    total_tutelas = len(total)
-    total_paginas = max(1, -(-total_tutelas // por_pagina))
-    pagina = min(pagina, total_paginas)
+    # Mes activo del dashboard: por defecto el mes actual (hora de Bogotá) para
+    # que cada mes el panel reinicie limpio. Los meses anteriores se consultan
+    # con ?mes=YYYY-MM (los datos nunca se borran).
+    mes_activo = (request.query_params.get("mes") or "").strip()
+    if mes_activo:
+        try:
+            rango_mes_utc(mes_activo)
+        except ValueError:
+            mes_activo = ""
+    if not mes_activo:
+        mes_activo = datetime.now(BOGOTA_TZ).strftime("%Y-%m")
+    inicio_mes, fin_mes = rango_mes_utc(mes_activo)
 
-    tutelas = session.execute(
-        select(Tutela).order_by(Tutela.created_at.desc()).offset((pagina - 1) * por_pagina).limit(por_pagina)
+    # Meses disponibles para el selector (semanas/meses con datos o el activo).
+    meses_disponibles = session.execute(
+        select(VisitaLanding.created_at).with_only_columns(VisitaLanding.created_at)
     ).scalars().all()
+    tutelas_created = session.execute(
+        select(Tutela.created_at).with_only_columns(Tutela.created_at)
+    ).scalars().all()
+    meses_set = set()
+    for dt in list(meses_disponibles) + list(tutelas_created):
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        meses_set.add(dt.astimezone(BOGOTA_TZ).strftime("%Y-%m"))
+    meses_set.add(mes_activo)
+    meses_set = {m for m in meses_set if m}
+    meses_ordenados = sorted(meses_set, reverse=True)
+    mes_etiqueta = _nombre_mes_activo(mes_activo)
 
     rows = []
     stats = {"total": 0, "radicadas": 0, "pendientes": 0, "fallidas": 0}
-    for t in total:
+    # Stats solo del mes activo
+    total_mes = session.execute(
+        select(Tutela).where(
+            Tutela.created_at >= inicio_mes, Tutela.created_at < fin_mes
+        )
+    ).scalars().all()
+    for t in total_mes:
         stats["total"] += 1
         if t.estado == "radicada":
             stats["radicadas"] += 1
@@ -277,6 +332,17 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
             stats["fallidas"] += 1
         else:
             stats["pendientes"] += 1
+
+    total_tutelas = stats["total"]
+    total_paginas = max(1, -(-total_tutelas // por_pagina))
+    pagina = min(pagina, total_paginas)
+
+    tutelas = session.execute(
+        select(Tutela)
+        .where(Tutela.created_at >= inicio_mes, Tutela.created_at < fin_mes)
+        .order_by(Tutela.created_at.desc())
+        .offset((pagina - 1) * por_pagina).limit(por_pagina)
+    ).scalars().all()
 
     # Mini-resumen de pasos del bot para el indicador en la tabla
     # (últimos 3 pasos de cada tutela de la página actual).
@@ -336,43 +402,54 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
             "pasos": pasos_row,
         })
 
-    # Visitas a la landing (tráfico de pauta Facebook/UTM)
+    # Visitas a la landing (tráfico de pauta Facebook/UTM) del mes activo.
     hace_24h = datetime.utcnow() - timedelta(hours=24)
-    visitas_total = session.execute(select(func.count()).select_from(VisitaLanding)).scalar() or 0
+    visitas_total = session.execute(
+        select(func.count()).select_from(VisitaLanding).where(
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes
+        )
+    ).scalar() or 0
     visitas_24h = session.execute(
-        select(func.count()).select_from(VisitaLanding).where(VisitaLanding.created_at >= hace_24h)
+        select(func.count()).select_from(VisitaLanding).where(
+            VisitaLanding.created_at >= hace_24h,
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+        )
     ).scalar() or 0
     visitas_pauta = session.execute(
-        select(func.count()).select_from(VisitaLanding).where(VisitaLanding.es_pauta)
+        select(func.count()).select_from(VisitaLanding).where(
+            VisitaLanding.es_pauta,
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+        )
     ).scalar() or 0
     visitas_por_fuente = session.execute(
         select(VisitaLanding.fuente, func.count().label("n"))
+        .where(VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes)
         .group_by(VisitaLanding.fuente)
         .order_by(func.count().desc())
         .limit(6)
     ).all()
     ultimas_visitas = session.execute(
-        select(VisitaLanding).order_by(VisitaLanding.created_at.desc()).limit(6)
+        select(VisitaLanding)
+        .where(VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes)
+        .order_by(VisitaLanding.created_at.desc()).limit(6)
     ).scalars().all()
 
-    # Cortes semanal y mensual (hora de Bogotá) de visitas y tutelas para
-    # ver la evolución del negocio en el tiempo, no solo totales acumulados.
+    # Cortes semanales (hora de Bogotá) DENTRO del mes activo para ver cómo va
+    # la semana actual del mes, no totales acumulados históricos.
     filas_visitas = session.execute(
-        select(VisitaLanding.created_at, VisitaLanding.es_pauta)
+        select(VisitaLanding.created_at, VisitaLanding.es_pauta).where(
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes
+        )
     ).all()
-    visitas_mensuales = agrupar_por_periodo(
-        [{"created_at": f[0], "es_pauta": f[1]} for f in filas_visitas], "mes"
-    )
     visitas_semanales = agrupar_por_periodo(
         [{"created_at": f[0], "es_pauta": f[1]} for f in filas_visitas], "semana"
     )
 
     filas_tutelas = session.execute(
-        select(Tutela.created_at, Tutela.estado)
+        select(Tutela.created_at, Tutela.estado).where(
+            Tutela.created_at >= inicio_mes, Tutela.created_at < fin_mes
+        )
     ).all()
-    tutelas_mensuales = agrupar_tutelas_por_periodo(
-        [{"created_at": f[0], "estado": f[1]} for f in filas_tutelas], "mes"
-    )
     tutelas_semanales = agrupar_tutelas_por_periodo(
         [{"created_at": f[0], "estado": f[1]} for f in filas_tutelas], "semana"
     )
@@ -382,9 +459,7 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         "ultimas_24h": visitas_24h,
         "pauta": visitas_pauta,
         "por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in visitas_por_fuente],
-        "por_mes": visitas_mensuales,
         "por_semana": visitas_semanales,
-        "tutelas_por_mes": tutelas_mensuales,
         "tutelas_por_semana": tutelas_semanales,
         "ultimas": [
             {
@@ -408,6 +483,10 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         pagina=pagina,
         total_paginas=total_paginas,
         total_tutelas=total_tutelas,
+        mes_activo=mes_activo,
+        mes_etiqueta=mes_etiqueta,
+        meses_disponibles=meses_ordenados,
+        hay_meses_previos=any(m != mes_activo for m in meses_ordenados),
     )
     return HTMLResponse(html)
 

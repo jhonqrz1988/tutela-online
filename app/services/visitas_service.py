@@ -66,6 +66,24 @@ def _clave_mes(dt) -> str:
     return f"{dt.year:04d}-{dt.month:02d}"
 
 
+def rango_mes_utc(mes: str) -> tuple[datetime, datetime]:
+    """Rango UTC [inicio, fin) del mes indicado (``YYYY-MM``) en hora de Bogotá.
+
+    Un mes laboral colombiano va de las 00:00 del día 1 en Bogotá (UTC-5) a las
+    00:00 del día 1 del mes siguiente: por eso en UTC el inicio es 05:00 del día 1.
+    """
+    year, month = mes.split("-")
+    year, month = int(year), int(month)
+    if not (1 <= month <= 12):
+        raise ValueError(f"Mes inválido: {mes}")
+    inicio = datetime(year, month, 1, 0, 0, 0, tzinfo=BOGOTA_TZ)
+    if month == 12:
+        fin = datetime(year + 1, 1, 1, 0, 0, 0, tzinfo=BOGOTA_TZ)
+    else:
+        fin = datetime(year, month + 1, 1, 0, 0, 0, tzinfo=BOGOTA_TZ)
+    return inicio.astimezone(timezone.utc).replace(tzinfo=None), fin.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 def _clave_semana(dt) -> str:
     iso = dt.isocalendar()
     return f"{iso.year:04d}-W{iso.week:02d}"

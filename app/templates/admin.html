@@ -78,6 +78,16 @@
   </div>
 </div>
 
+<form class="mes-selector" method="get" action="/admin" style="background:#e8eaf6; padding:10px 40px; display:flex; gap:12px; align-items:center;">
+  <label style="font-size:13px; color:#1a237e; font-weight:600;">MES DEL DASHBOARD:</label>
+  <select name="mes" onchange="this.form.submit()" style="padding:6px 10px; border:1px solid #c5cae9; border-radius:6px; font-size:14px;">
+    {% for m in meses_disponibles %}
+    <option value="{{ m }}" {% if m == mes_activo %}selected{% endif %}>{{ _nombre_mes(m) }}</option>
+    {% endfor %}
+  </select>
+  <span style="font-size:13px; color:#5c6bc0;">{{ mes_etiqueta }} — cada mes el panel reinicia limpio; los anteriores quedan consultables aqu&iacute;.</span>
+</form>
+
 <div class="container">
   <div class="stats">
     <div class="stat-card">
@@ -99,7 +109,7 @@
   </div>
 
   <div style="margin-bottom: 30px;">
-    <h2 style="font-size:15px;color:#333;margin-bottom:10px;">Visitas a la p&aacute;gina (pauta)</h2>
+    <h2 style="font-size:15px;color:#333;margin-bottom:10px;">Visitas a la p&aacute;gina (pauta) &mdash; {{ mes_etiqueta }}</h2>
     <div class="stats" style="margin-bottom:10px;">
       <div class="stat-card">
         <div class="num">{{ visitas.total }}</div>
@@ -139,10 +149,8 @@
 
     <div style="display:flex; gap:15px; flex-wrap:wrap; margin-top:15px;">
       {% for serie in [
-        {"titulo": "Por mes &mdash; visitas", "rows": visitas.por_mes, "cols": ["n", "pauta"]},
-        {"titulo": "Por mes &mdash; tutelas", "rows": visitas.tutelas_por_mes, "cols": ["tutelas", "radicadas"]},
-        {"titulo": "Por semana &mdash; visitas", "rows": visitas.por_semana, "cols": ["n", "pauta"]},
-        {"titulo": "Por semana &mdash; tutelas", "rows": visitas.tutelas_por_semana, "cols": ["tutelas", "radicadas"]}
+        {"titulo": "Por semana &mdash; visitas ({{ mes_etiqueta }})", "rows": visitas.por_semana, "cols": ["n", "pauta"]},
+        {"titulo": "Por semana &mdash; tutelas ({{ mes_etiqueta }})", "rows": visitas.tutelas_por_semana, "cols": ["tutelas", "radicadas"]}
       ] %}
       <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:1; min-width:230px;">
         <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">{{ serie.titulo|safe }}</h3>
@@ -270,9 +278,9 @@
 
   {% if total_paginas > 1 %}
   <div class="paginacion" style="display:flex; gap:8px; justify-content:center; align-items:center; margin-top:20px;">
-    {% if pagina > 1 %}<a class="btn btn-small" href="/admin?pagina={{ pagina - 1 }}">&larr; Anterior</a>{% endif %}
-    <span style="font-size:13px; color:#666;">P&aacute;gina {{ pagina }} de {{ total_paginas }}</span>
-    {% if pagina < total_paginas %}<a class="btn btn-small" href="/admin?pagina={{ pagina + 1 }}">Siguiente &rarr;</a>{% endif %}
+    {% if pagina > 1 %}<a class="btn btn-small" href="/admin?pagina={{ pagina - 1 }}&amp;mes={{ mes_activo }}">&larr; Anterior</a>{% endif %}
+    <span style="font-size:13px; color:#666;">P&aacute;gina {{ pagina }} de {{ total_paginas }} ({{ mes_etiqueta }})</span>
+    {% if pagina < total_paginas %}<a class="btn btn-small" href="/admin?pagina={{ pagina + 1 }}&amp;mes={{ mes_activo }}">Siguiente &rarr;</a>{% endif %}
   </div>
   {% endif %}
 </div>
