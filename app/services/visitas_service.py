@@ -40,6 +40,7 @@ _NOMBRES_FUENTE = {
     "anuncios": "Anuncios",
     "google": "Google",
     "chatgpt.com": "ChatGPT",
+    "tiktok": "TikTok",
     "meta": "Meta",
 }
 
@@ -155,7 +156,13 @@ def registrar_visita_landing(query_string: str) -> None:
             raw = params.get(clave_utm, [""])[0]
             valores[attr] = raw[:200]
 
-        es_pauta = bool(params.get("fbclid")) or any(
+        # Un clic de anuncio de TikTok llega con ttclid (sin utm_*): cuenta
+        # como pauta y, si no hay utm_source, identifica la fuente.
+        ttclid = bool(params.get("ttclid"))
+        if ttclid and not valores["fuente"]:
+            valores["fuente"] = "tiktok"
+
+        es_pauta = bool(params.get("fbclid")) or ttclid or any(
             v for v in valores.values() if v
         )
 

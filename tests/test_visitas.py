@@ -56,6 +56,26 @@ class TestRegistroVisitas(unittest.TestCase):
         self.assertTrue(v.es_pauta)
         session.close()
 
+    def test_visita_tiktok_con_ttclid_es_pauta(self):
+        """Un clic de anuncio de TikTok trae ttclid (no utm_*): debe marcarse
+        como pauta y quedar bajo la fuente 'tiktok' (no 'directo')."""
+        S = sessionmaker(bind=self._motor(), expire_on_commit=False)
+        self._registrar(S, "ttclid=ah~abc123def456ghi789")
+        session = S()
+        v = session.execute(select(VisitaLanding)).scalar_one()
+        self.assertTrue(v.es_pauta, "ttclid debe marcar la visita como pauta")
+        self.assertEqual(v.fuente, "tiktok", "sin utm_source, el ttclid debe asignar fuente tiktok")
+        session.close()
+
+    def test_visita_tiktok_con_utm_source(self):
+        S = sessionmaker(bind=self._motor(), expire_on_commit=False)
+        self._registrar(S, "utm_source=tiktok&utm_medium=paid&ttclid=ah~xyz")
+        session = S()
+        v = session.execute(select(VisitaLanding)).scalar_one()
+        self.assertTrue(v.es_pauta)
+        self.assertEqual(v.fuente, "tiktok")
+        session.close()
+
     def test_error_de_bd_no_propaga(self):
         def siempre_falla(*args, **kwargs):
             raise RuntimeError("bd caida")
@@ -95,6 +115,7 @@ class TestNombreFuente(unittest.TestCase):
             "an": "Anuncios",
             "google": "Google",
             "chatgpt.com": "ChatGPT",
+            "tiktok": "TikTok",
         }
         for crudo, esperado in casos.items():
             with self.subTest(fuente=crudo):
