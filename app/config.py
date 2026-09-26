@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     meta_phone_number_id: str = ""
     meta_verify_token: str = ""
     meta_app_secret: str = ""
+
+    # === TikTok (pixel + Events API 2.0) ===
+    tiktok_pixel_id: str = ""
+    tiktok_access_token: str = ""
+    # Código de test temporal de TikTok (expira ~24h) para validar los eventos
+    # en modo "Test Events" antes de producción. Vacío = tráfico real.
+    tiktok_test_event_code: str = ""
     # Token compartido para proteger los webhooks legacy (/webhook/whatsapp,
     # /webhook/zapi). Si se configura, estos endpoints exigen
     # "Authorization: Bearer <token>".

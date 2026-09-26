@@ -70,6 +70,13 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
   - `POST /admin/tutelas/{id}/registrar-radicado` (form: `num_radicado`) → `radicada` + WhatsApp with number
 - Mercado Pago env vars: `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`, `MERCADOPAGO_ENV`, `MERCADOPAGO_AMOUNT`, `MERCADOPAGO_CURRENCY`
 
+## TikTok Pixel + Events API (canal dual, dedup por event_id)
+- Landing `app/templates/landing.html`: Meta Pixel (fbq, `1376039291325899`) y TikTok Pixel (ttq, `DARUU0RC77U88MSO7QUG`) ambos en `<head>`.
+- Al clic en `a[href^="https://wa.me/"]`: `fbq('trackCustom','WhatsAppClick')` + `ttq.track('Contact', {...}, { event_id })`. El MISMO `event_id` se reenvía server-side con `sendBeacon('/api/tiktok/track')` (fallback `fetch keepalive`) para que TikTok deduplique **Pixel SDK + Events API** (mismos `event_id`+`event`+`pixel_code`).
+- `app/api/tiktok.py`: `GET /api/tiktok` (health, nunca expone token) y `POST /api/tiktok/track` (valida `event`∈{Contact}, `event_id≤200`, `ttclid/ttp≤500`, timestamp lo pone el servidor, rate limit 30/min por IP → 429). Reenvía a `app/services/tiktok_service.py`.
+- `app/services/tiktok_service.py`: `_payload_evento()` (Events API 2.0: `event_source=web`, `test_event_code` opcional) y `enviar_evento_tiktok()` async vía httpx a `https://business-api.tiktok.com/open_api/v1.3/event/track/` con header `Access-Token`. **Tolerante**: nunca lanza, no combina sin token/pixel; nunca loguea el token.
+- Env vars: `TIKTOK_PIXEL_ID`, `TIKTOK_ACCESS_TOKEN`, `TIKTOK_TEST_EVENT_CODE` (test temporal, vacío = tráfico real).
+
 ## Admin Panel
 - All `/admin` routes require login. Protected via `Depends(require_admin)` in `app/api/admin.py` (signed cookie `tutela_admin`, 12h TTL).
 - `ADMIN_PASSWORD` env var (in `app/config.py`); if empty, admin returns 401 "no configurado". Login page at `/admin/login`, logout at `/admin/logout`.
