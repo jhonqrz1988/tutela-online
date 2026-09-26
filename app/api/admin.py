@@ -17,6 +17,7 @@ from sqlalchemy import delete, func, select
 from app.config import settings
 from app.database import get_session
 from app.models.radicacion import PasoRadicacion, Radicacion
+from app.models.clic import ClicWhatsApp
 from app.models.tutela import Tutela
 from app.models.visita import VisitaLanding
 from app.services.visitas_service import (
@@ -403,42 +404,68 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         })
 
     # Visitas a la landing (tráfico de pauta Facebook/UTM) del mes activo.
+    # Se descartan los crawlers/previews (es_bot) para medir tráfico humano real.
     hace_24h = datetime.utcnow() - timedelta(hours=24)
+    visitas_base = [VisitaLanding.es_bot.is_(False)]
     visitas_total = session.execute(
         select(func.count()).select_from(VisitaLanding).where(
-            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+            *visitas_base,
         )
     ).scalar() or 0
     visitas_24h = session.execute(
         select(func.count()).select_from(VisitaLanding).where(
             VisitaLanding.created_at >= hace_24h,
             VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+            *visitas_base,
         )
     ).scalar() or 0
     visitas_pauta = session.execute(
         select(func.count()).select_from(VisitaLanding).where(
             VisitaLanding.es_pauta,
             VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+            *visitas_base,
         )
     ).scalar() or 0
     visitas_por_fuente = session.execute(
         select(VisitaLanding.fuente, func.count().label("n"))
-        .where(VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes)
+        .where(VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+               VisitaLanding.es_bot.is_(False))
         .group_by(VisitaLanding.fuente)
         .order_by(func.count().desc())
         .limit(6)
     ).all()
     ultimas_visitas = session.execute(
         select(VisitaLanding)
-        .where(VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes)
+        .where(VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+               VisitaLanding.es_bot.is_(False))
         .order_by(VisitaLanding.created_at.desc()).limit(6)
     ).scalars().all()
+    visitas_bots = session.execute(
+        select(func.count()).select_from(VisitaLanding).where(
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+            VisitaLanding.es_bot.is_(True),
+        )
+    ).scalar() or 0
+    clics_total = session.execute(
+        select(func.count()).select_from(ClicWhatsApp).where(
+            ClicWhatsApp.created_at >= inicio_mes, ClicWhatsApp.created_at < fin_mes
+        )
+    ).scalar() or 0
+    clics_por_fuente = session.execute(
+        select(ClicWhatsApp.fuente, func.count().label("n"))
+        .where(ClicWhatsApp.created_at >= inicio_mes, ClicWhatsApp.created_at < fin_mes)
+        .group_by(ClicWhatsApp.fuente)
+        .order_by(func.count().desc())
+        .limit(6)
+    ).all()
 
     # Cortes semanales (hora de Bogotá) DENTRO del mes activo para ver cómo va
     # la semana actual del mes, no totales acumulados históricos.
     filas_visitas = session.execute(
         select(VisitaLanding.created_at, VisitaLanding.es_pauta).where(
-            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes
+            VisitaLanding.created_at >= inicio_mes, VisitaLanding.created_at < fin_mes,
+            VisitaLanding.es_bot.is_(False)
         )
     ).all()
     visitas_semanales = agrupar_por_periodo(
@@ -458,7 +485,10 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         "total": visitas_total,
         "ultimas_24h": visitas_24h,
         "pauta": visitas_pauta,
+        "bots": visitas_bots,
         "por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in visitas_por_fuente],
+        "clics": clics_total,
+        "clics_por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in clics_por_fuente],
         "por_semana": visitas_semanales,
         "tutelas_por_semana": tutelas_semanales,
         "ultimas": [

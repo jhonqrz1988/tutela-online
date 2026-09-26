@@ -77,6 +77,12 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 - `app/services/tiktok_service.py`: `_payload_evento()` (Events API 2.0: `event_source=web`, `test_event_code` opcional) y `enviar_evento_tiktok()` async vía httpx a `https://business-api.tiktok.com/open_api/v1.3/event/track/` con header `Access-Token`. **Tolerante**: nunca lanza, no combina sin token/pixel; nunca loguea el token.
 - Env vars: `TIKTOK_PIXEL_ID`, `TIKTOK_ACCESS_TOKEN`, `TIKTOK_TEST_EVENT_CODE` (test temporal, vacío = tráfico real).
 
+## Visitas a la landing + clics a WhatsApp (filtro de bots)
+- `app/main.py` `GET /` → `registrar_visita_landing(query, user_agent)` en `app/services/visitas_service.py`. Crea `VisitaLanding` (sin IP, solo UTM/fbclid/ttclid) y guarda `user_agent` + `es_bot` para filtrar tráfico no humano.
+- `es_bot(user_agent)` (`_UA_BOTS` en visitas_service.py) marca crawlers/previews red-social (facebookexternalhit, googlebot, telegrambot, uptimerobot, curl, python-requests, etc.) pero NUNCA a in-app browsers humanos (FBAV, Instagram, WhatsApp). La migración ligera `_migrar_esquema(conn)` en `app/database.py` agrega `user_agent`/`es_bot` a tablas ya creadas (ALTER TABLE idempotente, best-effort).
+- **Clics server-side**: el clic en cualquier `a[href^="https://wa.me/"]` hace `sendBeacon('/api/click-wa')` SIEMPRE (no solo con ttq): mide intentos reales de abrir WhatsApp, independiente de que la conversación llegue al webhook. `POST /api/click-wa` (`app/api/clics.py`) valida `query≤2000`, rate limit 60/min por IP → 429, y registra `ClicWhatsApp` solo si `es_bot` es False.
+- Dashboard (`/admin`): totales/por-fuente/semanales **excluyen `es_bot`**; muestra "bots filtrados", tarjeta verde "Clics a WhatsApp" y clics por fuente. Diferenciar: visita=llega a la landing; clic=intenta WhatsApp; conversación=mensaje real al bot (`MensajeWhatsApp`).
+
 ## Admin Panel
 - All `/admin` routes require login. Protected via `Depends(require_admin)` in `app/api/admin.py` (signed cookie `tutela_admin`, 12h TTL).
 - `ADMIN_PASSWORD` env var (in `app/config.py`); if empty, admin returns 401 "no configurado". Login page at `/admin/login`, logout at `/admin/logout`.

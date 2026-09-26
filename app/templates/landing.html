@@ -770,6 +770,27 @@ src="https://www.facebook.com/tr?id=1376039291325899&ev=PageView&noscript=1"
           location: link.getAttribute('class') || 'generic'
         });
       }
+      // Registro server-side del clic (siempre): mide cuántos humanos intentan
+      // abrir WhatsApp, independiente de si la conversación llega al bot.
+      try {
+        const cuerpoClic = JSON.stringify({
+          query: window.location.search,
+          ubicacion: link.getAttribute('class') || 'generic'
+        });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon(
+            '/api/click-wa',
+            new Blob([cuerpoClic], { type: 'application/json' })
+          );
+        } else {
+          fetch('/api/click-wa', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: cuerpoClic,
+            keepalive: true
+          });
+        }
+      } catch(e){ /* nunca bloquear la navegación a WhatsApp */ }
       // TikTok: evento estándar 'Contact' (único que optimiza) + canal server-side.
       // El MISMO event_id va al Pixel SDK y a Events API para que TikTok deduplique.
       if(window.ttq){

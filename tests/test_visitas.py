@@ -106,6 +106,89 @@ class TestRangoMes(unittest.TestCase):
             visitas_service.rango_mes_utc("2026-13")
 
 
+class TestDeteccionBots(unittest.TestCase):
+    def test_crawlers_y_previews_son_bot(self):
+        casos = [
+            "facebookexternalhit/1.1",
+            "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+            "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+            "Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)",
+            "TelegramBot (like TwitterBot)",
+            "Mozilla/5.0 (compatible; UptimeRobot/2.0; http://www.uptimerobot.com/)",
+            "python-requests/2.31.0",
+            "curl/7.87.0",
+            "Mozilla/5.0 (compatible; AhrefsBot/7.0; +http://ahrefs.com/robot/)",
+        ]
+        for ua in casos:
+            with self.subTest(ua=ua):
+                self.assertTrue(visitas_service.es_bot(ua), f"UA de bot no detectado: {ua}")
+
+    def test_navegadores_reales_no_son_bot(self):
+        casos = [
+            "",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Mobile Safari/537.36",
+        ]
+        for ua in casos:
+            with self.subTest(ua=ua):
+                self.assertFalse(visitas_service.es_bot(ua), f"UA humano marcado como bot: {ua}")
+
+    def test_facebook_inapp_no_es_bot(self):
+        # El navegador interno de Facebook/Instagram es un humano real
+        ua = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) FBAV/438.0.0.22.106 Mobile Safari/537.36"
+        self.assertFalse(visitas_service.es_bot(ua))
+
+
+class TestRegistroVisitasConBot(unittest.TestCase):
+    def _motor(self):
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        return engine
+
+    def _registrar(self, S, query_string, user_agent=""):
+        with mock.patch.object(visitas_service, "SessionLocal", S):
+            visitas_service.registrar_visita_landing(query_string, user_agent)
+
+    def test_guardar_ua_crawler_marca_bot(self):
+        S = sessionmaker(bind=self._motor(), expire_on_commit=False)
+        self._registrar(S, "utm_source=fb", user_agent="facebookexternalhit/1.1")
+        session = S()
+        v = session.execute(select(VisitaLanding)).scalar_one()
+        self.assertTrue(v.es_bot)
+        self.assertEqual(v.fuente, "fb")
+        session.close()
+
+    def test_humano_no_es_bot(self):
+        S = sessionmaker(bind=self._motor(), expire_on_commit=False)
+        self._registrar(S, "utm_source=fb", user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/123.0")
+        session = S()
+        v = session.execute(select(VisitaLanding)).scalar_one()
+        self.assertFalse(v.es_bot)
+        session.close()
+
+    def test_sin_ua_no_es_bot_por_defecto(self):
+        S = sessionmaker(bind=self._motor(), expire_on_commit=False)
+        self._registrar(S, "", user_agent="")
+        session = S()
+        v = session.execute(select(VisitaLanding)).scalar_one()
+        self.assertFalse(v.es_bot)
+        session.close()
+
+    def test_ua_largo_truncado_al_guardar(self):
+        S = sessionmaker(bind=self._motor(), expire_on_commit=False)
+        ua_largo = "Mozilla/5.0 " + "x" * 2000
+        self._registrar(S, "", user_agent=ua_largo)
+        session = S()
+        v = session.execute(select(VisitaLanding)).scalar_one()
+        self.assertLessEqual(len(v.user_agent or ""), 500)
+        session.close()
+
+
 class TestNombreFuente(unittest.TestCase):
     def test_mapeo_de_nombres_conocidos(self):
         casos = {

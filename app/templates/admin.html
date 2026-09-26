@@ -123,7 +123,12 @@
         <div class="num">{{ visitas.pauta }}</div>
         <div class="label">De pauta (fbclid/utm)</div>
       </div>
+      <div class="stat-card" style="border-top:3px solid #25d366;">
+        <div class="num">{{ visitas.clics }}</div>
+        <div class="label">Clics a WhatsApp</div>
+      </div>
     </div>
+    {% if visitas.bots %}<div style="font-size:11px; color:#999; margin-top:-5px;">{{ visitas.bots }} visitas de robots/avances filtradas</div>{% endif %}
     {% if visitas.por_fuente or visitas.ultimas %}
     <div style="display:flex; gap:15px; flex-wrap:wrap;">
       <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:1; min-width:200px;">
@@ -135,6 +140,14 @@
         {% else %}
         <span style="color:#bbb; font-size:13px;">Sin visitas a&uacute;n.</span>
         {% endfor %}
+        {% if visitas.clics_por_fuente %}
+        <h3 style="font-size:12px; text-transform:uppercase; color:#25d366; margin:10px 0 8px;">Clics a WhatsApp por fuente</h3>
+        {% for f in visitas.clics_por_fuente %}
+        <div style="display:flex; justify-content:space-between; font-size:13px; padding:3px 0; border-bottom:1px solid #f0f0f0; color:#1a7a44;">
+          <span>{{ f.fuente }}</span><strong>{{ f.n }}</strong>
+        </div>
+        {% endfor %}
+        {% endif %}
       </div>
       <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:2; min-width:260px;">
         <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">&Uacute;ltimas visitas</h3>

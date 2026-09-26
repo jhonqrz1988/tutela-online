@@ -75,6 +75,7 @@ def _crear_tablas_con_reintentos():
         try:
             with engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
+                _migrar_esquema(conn)
             Base.metadata.create_all(bind=engine)
             return
         except exc.OperationalError as e:
@@ -86,6 +87,29 @@ def _crear_tablas_con_reintentos():
             if intento < DB_REINTENTOS:
                 time.sleep(DB_ESPERA_SEG)
     raise ultimo_error
+
+
+def _migrar_esquema(conn):
+    """Ajustes de esquema idempotentes para tablas ya creadas.
+
+    ``create_all`` no agrega columnas a tablas existentes; estas migraciones
+    ligeras las añaden sin borrar datos. Best-effort: si algo falla se loguea
+    y se continúa con el arranque (nunca se pierden datos).
+    """
+    from sqlalchemy import inspect, text
+
+    try:
+        inspector = inspect(conn)
+        tablas_existentes = set(inspector.get_table_names())
+
+        if "visitas_landing" in tablas_existentes:
+            columnas = {c["name"] for c in inspector.get_columns("visitas_landing")}
+            if "user_agent" not in columnas:
+                conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN user_agent VARCHAR(500)"))
+            if "es_bot" not in columnas:
+                conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN es_bot BOOLEAN NOT NULL DEFAULT 0"))
+    except Exception as e:  # noqa: BLE001 - la migración nunca debe impedir el boot
+        logger.warning(f"No se pudo ajustar el esquema: {e}")
 
 
 def get_session():

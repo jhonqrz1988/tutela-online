@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.admin import NoAuthRedirect
 from app.api.admin import router as admin_router
+from app.api.clics import router as clics_router
 from app.api.health import router as health_router
 from app.api.pagos import router as pagos_router
 from app.api.tutelas import router as tutelas_router
@@ -96,6 +97,7 @@ app.include_router(health_router)
 app.include_router(whatsapp_router)
 app.include_router(tutelas_router)
 app.include_router(tiktok_router)
+app.include_router(clics_router)
 app.include_router(pagos_router)
 
 

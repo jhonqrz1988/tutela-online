@@ -9,6 +9,7 @@ from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
 from app.database import SessionLocal
+from app.models.clic import ClicWhatsApp
 from app.models.visita import VisitaLanding
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,48 @@ _CAMPOS_UTM = {
     "utm_term": "termino",
     "utm_content": "contenido",
 }
+
+# Subcadenas (en minúsculas) típicas de crawlers que NO generan tráfico humano
+# real: previews de redes sociales, buscadores, monitores de uptime, scripts.
+_UA_BOTS = (
+    "facebookexternalhit",
+    "facebot",
+    "googlebot",
+    "bingbot",
+    "yandexbot",
+    "baiduspider",
+    "duckduckbot",
+    "twitterbot",
+    "linkedinbot",
+    "telegrambot",
+    "slackbot",
+    "discordbot",
+    "pinterest",
+    "snapchat",
+    "uptimerobot",
+    "pingdom",
+    "statuscake",
+    "site24x7",
+    "python-requests",
+    "curl",
+    "wget",
+    "okhttp",
+    "go-http-client",
+    "java/1.",
+    "headlesschrome",
+    "phantomjs",
+    "playwright",
+    "puppeteer",
+    "ahrefsbot",
+    "semrushbot",
+    "mj12bot",
+    "spider",
+    "crawler",
+    "preview",
+    "meta-externalagent",
+)
+
+_MAX_UA_LEN = 500
 
 _MESES_ES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -146,25 +189,52 @@ def agrupar_tutelas_por_periodo(tutelas, periodo: str) -> list[dict]:
     return sorted(agrupado.values(), key=lambda x: x["clave"], reverse=True)
 
 
-def registrar_visita_landing(query_string: str) -> None:
-    """Registra una carga de la landing en la BD (ignorando errores)."""
+def es_bot(user_agent: str | None) -> bool:
+    """True si el User-Agent parece de un crawler/bot y no un humano real.
+
+    Los navegadores integrados de redes sociales (FBAV, Instagram, WhatsApp
+    in-app) NO deben marcarse: son personas navegando.
+    """
+    ua = (user_agent or "").lower()
+    if not ua:
+        return False
+    return any(marca in ua for marca in _UA_BOTS)
+
+
+def parsear_query(query_string: str) -> dict:
+    """Extrae los campos UTM + pauta/fuente de la query string de la landing.
+
+    Devuelve ``{fuente, medio, campania, termino, contenido, es_pauta}``. Un
+    clic de anuncio de TikTok llega con ``ttclid`` (sin utm_source): cuenta como
+    pauta y, si no hay fuente, identifica el origen.
+    """
+    params = parse_qs(query_string or "", keep_blank_values=True)
+
+    valores = {campo: "" for campo in _CAMPOS_UTM}
+    for clave_utm, attr in _CAMPOS_UTM.items():
+        raw = params.get(clave_utm, [""])[0]
+        valores[attr] = raw[:200]
+
+    ttclid = bool(params.get("ttclid"))
+    if ttclid and not valores["fuente"]:
+        valores["fuente"] = "tiktok"
+
+    es_pauta = bool(params.get("fbclid")) or ttclid or any(
+        v for v in valores.values() if v
+    )
+    valores["es_pauta"] = es_pauta
+    return valores
+
+
+def registrar_visita_landing(query_string: str, user_agent: str = "") -> None:
+    """Registra una carga de la landing en la BD (ignorando errores).
+
+    Captura el User-Agent solo para marcar ``es_bot``; los crawlers y previews
+    se guardan marcados para que el dashboard pueda filtrar tráfico no humano.
+    """
     try:
-        params = parse_qs(query_string or "", keep_blank_values=True)
-
-        valores = {campo: "" for campo in _CAMPOS_UTM}
-        for clave_utm, attr in _CAMPOS_UTM.items():
-            raw = params.get(clave_utm, [""])[0]
-            valores[attr] = raw[:200]
-
-        # Un clic de anuncio de TikTok llega con ttclid (sin utm_*): cuenta
-        # como pauta y, si no hay utm_source, identifica la fuente.
-        ttclid = bool(params.get("ttclid"))
-        if ttclid and not valores["fuente"]:
-            valores["fuente"] = "tiktok"
-
-        es_pauta = bool(params.get("fbclid")) or ttclid or any(
-            v for v in valores.values() if v
-        )
+        valores = parsear_query(query_string)
+        bot = es_bot(user_agent)
 
         session = SessionLocal()
         try:
@@ -174,10 +244,40 @@ def registrar_visita_landing(query_string: str) -> None:
                 campania=valores["campania"] or None,
                 termino=valores["termino"] or None,
                 contenido=valores["contenido"] or None,
-                es_pauta=es_pauta,
+                es_pauta=valores["es_pauta"],
+                es_bot=bot,
+                user_agent=(user_agent or "")[:_MAX_UA_LEN],
             ))
             session.commit()
         finally:
             session.close()
     except Exception:
         logger.exception("No se pudo registrar la visita a la landing")
+
+
+def registrar_clic_whatsapp(query_string: str, ubicacion: str, user_agent: str = "") -> None:
+    """Registra un clic en un botón/enlace wa.me (server-side, ignorando errores).
+
+    Solo se registran clics de User-Agents humanos: los robots/previews no
+    generan clics medibles hacia WhatsApp.
+    """
+    try:
+        if es_bot(user_agent):
+            return
+        valores = parsear_query(query_string)
+
+        session = SessionLocal()
+        try:
+            session.add(ClicWhatsApp(
+                fuente=valores["fuente"] or "directo",
+                medio=valores["medio"] or None,
+                campania=valores["campania"] or None,
+                es_pauta=valores["es_pauta"],
+                ubicacion=(ubicacion or "")[:100],
+                user_agent=(user_agent or "")[:_MAX_UA_LEN],
+            ))
+            session.commit()
+        finally:
+            session.close()
+    except Exception:
+        logger.exception("No se pudo registrar el clic a WhatsApp")
