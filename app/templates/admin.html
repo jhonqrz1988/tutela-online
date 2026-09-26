@@ -559,7 +559,14 @@ async function waStatus(e) {
       const ok = res.code_verification_status === 'VERIFIED';
       btn.textContent = '\u2705 WhatsApp VERIFICADO' + (res.display_phone_number ? ' ' + res.display_phone_number : '');
       btn.className = 'toggle-sched ' + (ok ? 'on' : 'off');
-      if (!ok) alert('Estado del n\u00famero: ' + res.code_verification_status + '. C\u00f3digo de verificaci\u00f3n expirado: hay que re-verificarlo en WhatsApp Manager.');
+      if (!ok) {
+        const abrir = confirm(
+          'Estado del n\u00famero: ' + res.code_verification_status +
+          '. El c\u00f3digo de verificaci\u00f3n expir\u00f3 y hay que re-verificarlo.\n\n' +
+          '\u00bfAbrir WhatsApp Manager (Phone numbers) para re-verificarlo?'
+        );
+        if (abrir) window.open('https://business.facebook.com/wa/manage/phone-numbers', '_blank');
+      }
     }
   } catch(err) {
     btn.textContent = '\u26A0\uFE0F No se pudo consultar';
