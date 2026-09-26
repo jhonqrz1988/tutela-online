@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from sqlalchemy import inspect, text
 
 from app.config import settings
-from app.database import SessionLocal
+from app.database import SessionLocal, _ULTIMA_MIGRACION
 
 router = APIRouter()
 
@@ -67,6 +67,7 @@ async def health():
         "disk": disco,
         "config": _config_diagnostico(),
         "schema": _esquema_bd(),
+        "migracion": _ULTIMA_MIGRACION,
     }
 
 

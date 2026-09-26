@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 DB_REINTENTOS = 6
 DB_ESPERA_SEG = 8  # cubre hasta ~48 s; Render espera ~60 s por el /health
 
+# Diagnóstico: último resultado de la migración (persistido en memoria y
+# expuesto por /health) para detectar fallos silenciosos en prod sin logs.
+_ULTIMA_MIGRACION: dict = {}
+
 
 def _ensure_sqlite_dir(db_url: str) -> None:
     """Crea el directorio padre del archivo SQLite si no existe.
@@ -101,20 +105,31 @@ def _migrar_esquema(conn):
     dentro de una transacción se revierten al cerrar la conexión — lo que dejaba
     el dashboard admin sin ``es_bot``/``user_agent`` -> 500 al cargar.
     """
+    resultado = {"ok": False, "detalle": "", "tablas": [], "columnas": {}, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
     try:
         inspector = inspect(conn)
         tablas_existentes = set(inspector.get_table_names())
+        resultado["tablas"] = sorted(tablas_existentes)
 
         if "visitas_landing" in tablas_existentes:
             columnas = {c["name"] for c in inspector.get_columns("visitas_landing")}
+            resultado["columnas"] = sorted(columnas)
             if "user_agent" not in columnas:
                 conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN user_agent VARCHAR(500)"))
             if "es_bot" not in columnas:
                 conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN es_bot BOOLEAN NOT NULL DEFAULT 0"))
+        resultado["ok"] = True
     except Exception as e:  # noqa: BLE001 - la migración nunca debe impedir el boot
         logger.warning(f"No se pudo ajustar el esquema: {e}")
+        resultado["detalle"] = str(e)[:300]
     finally:
-        conn.commit()
+        try:
+            conn.commit()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"No se pudo confirmar la migración: {e}")
+            resultado["detalle"] = f"{resultado['detalle']}; commit: {str(e)[:150]}"
+    _ULTIMA_MIGRACION.update(resultado)
+    return resultado
 
 
 def get_session():
