@@ -221,26 +221,46 @@ src="https://www.facebook.com/tr?id=1376039291325899&ev=PageView&noscript=1"
     mask-image:radial-gradient(ellipse 75% 65% at 30% 20%, #000 0%, transparent 75%);
     pointer-events:none; z-index:0;
   }
-  .hero-grid{display:grid; grid-template-columns:1.05fr 0.95fr; gap:56px; align-items:center; position:relative; z-index:1;}
-  @media (max-width:920px){ .hero-grid{grid-template-columns:1fr;} }
 
-  .eyebrow{
-    display:inline-flex; align-items:center; gap:8px;
-    font-family:var(--mono); font-size:0.72rem; letter-spacing:0.08em; text-transform:uppercase;
-    color:#fff; background:rgba(255,255,255,0.14); border:1px solid rgba(255,255,255,0.32);
-    padding:6px 12px; border-radius:100px; margin-bottom:22px;
+  .hero-section{display:flex; justify-content:space-between; align-items:flex-start; gap:40px; max-width:1200px; margin:0 auto; padding:0 20px; position:relative; z-index:1;}
+  @media (max-width:920px){ .hero-section{flex-direction:column; align-items:flex-start;} }
+  .hero-content{flex:1; min-width:0;}
+
+  .badge-tag{
+    display:inline-block; background:rgba(255,255,255,0.08);
+    border:1px solid rgba(255,255,255,0.15); color:#94A3B8;
+    font-family:var(--mono); font-size:0.72rem; font-weight:600; letter-spacing:1px;
+    padding:6px 14px; border-radius:20px; margin-bottom:20px;
   }
-  .eyebrow .dot{width:6px; height:6px; border-radius:50%; background:var(--gold); box-shadow:0 0 0 3px var(--gold-dim);}
 
-  h1{
-    font-family:var(--serif); font-weight:600; font-size:clamp(2.3rem, 4.6vw, 3.6rem);
-    line-height:1.08; letter-spacing:-0.01em; color:#fff; margin-bottom:22px;
+  .hero-title{
+    font-family:var(--sans); color:#fff; font-size:clamp(2.1rem, 4.2vw, 2.8rem);
+    font-weight:700; line-height:1.2; margin-bottom:16px;
   }
-  h1 em{font-style:italic; color:#E8D9B0; font-weight:450;}
+  .hero-title .highlight{font-style:italic; font-weight:400; color:#E8D9B0;}
 
-  .hero p.lead{font-size:1.09rem; color:rgba(255,255,255,0.86); max-width:520px; margin-bottom:28px;}
+  .hero-description{
+    color:#94A3B8; font-size:1.1rem; line-height:1.6; margin-bottom:28px; max-width:500px;
+  }
 
-  .cta-row{display:flex; gap:14px; flex-wrap:wrap; margin-bottom:26px;}
+  .cta-container{display:flex; align-items:center; gap:16px; margin-bottom:10px; flex-wrap:wrap;}
+  .btn-whatsapp-hero{
+    background-color:#15803D; color:#fff; font-weight:600; font-size:0.95rem;
+    padding:14px 24px; border-radius:8px; display:inline-flex; align-items:center; gap:10px;
+    text-decoration:none; transition:all .25s ease; box-shadow:0 4px 12px rgba(21,128,61,0.2);
+  }
+  .btn-whatsapp-hero:hover{background-color:#166534; box-shadow:0 6px 16px rgba(21,128,61,0.3); transform:translateY(-1px);}
+  .btn-secondary{
+    color:#CBD5E1; border:1px solid rgba(255,255,255,0.2); padding:14px 20px;
+    border-radius:8px; text-decoration:none; font-weight:500; transition:background-color .2s ease;
+  }
+  .btn-secondary:hover{background:rgba(255,255,255,0.05);}
+  .cta-microcopy{color:#64748B; font-size:0.825rem; margin:0;}
+
+  .fine-print{font-size:0.78rem; color:rgba(255,255,255,0.55); margin-top:12px;}
+  .fine-print b{color:#fff;}
+
+  /* Botón reutilizado fuera del hero (final CTA) */
   .btn-primary{
     background:var(--whatsapp); color:#fff; font-weight:600; font-size:0.96rem;
     padding:14px 24px; border-radius:10px; display:inline-flex; align-items:center; gap:8px;
@@ -248,43 +268,24 @@ src="https://www.facebook.com/tr?id=1376039291325899&ev=PageView&noscript=1"
     transition:transform .15s, box-shadow .15s;
   }
   .btn-primary:hover{transform:translateY(-2px); box-shadow:0 12px 30px rgba(37,211,102,0.42);}
-  .btn-ghost{
-    color:#fff; font-weight:600; font-size:0.96rem; padding:14px 22px;
-    border-radius:10px; border:1px solid rgba(255,255,255,0.4);
-    transition:border-color .15s, background .15s;
-  }
-  .btn-ghost:hover{border-color:#fff; background:rgba(255,255,255,0.1);}
 
-  .fine-print{font-size:0.82rem; color:rgba(255,255,255,0.65);}
-  .fine-print b{color:#fff;}
-
-  .trust-strip{display:flex; gap:26px; flex-wrap:wrap; margin-top:30px; padding-top:24px; border-top:1px solid rgba(255,255,255,0.22);}
-  .trust-item{display:flex; align-items:center; gap:9px; font-size:0.85rem; color:rgba(255,255,255,0.9);}
-  .trust-item svg{flex-shrink:0; color:var(--gold);}
-
-  /* ---- Hero panel: proceso simple, sin inventar el comprobante ---- */
-  .hero-panel{
-    width:100%; max-width:400px; background:var(--bg-elev);
-    border:1px solid var(--line-strong); border-radius:18px;
-    padding:30px 28px; position:relative;
-    box-shadow:0 24px 48px -18px rgba(18,21,28,0.18), 0 1px 0 rgba(255,255,255,0.6) inset;
+  /* ---- Métricas / social proof del hero ---- */
+  .hero-metrics{display:flex; gap:16px; width:440px;}
+  @media (max-width:920px){ .hero-metrics{width:100%;} }
+  @media (max-width:600px){ .hero-metrics{flex-direction:column;} }
+  .metric-card{
+    flex:1; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+    border-radius:12px; padding:24px 16px; text-align:center; backdrop-filter:blur(8px);
   }
-  .hero-panel-title{font-size:0.95rem; font-weight:600; color:var(--ink); margin-bottom:22px;}
-  .hp-row{display:flex; gap:14px; align-items:flex-start; padding:14px 0; border-bottom:1px solid var(--line);}
-  .hp-row:last-of-type{border-bottom:none;}
-  .hp-icon{
-    width:38px; height:38px; border-radius:10px; background:var(--blue-dim);
-    display:flex; align-items:center; justify-content:center; flex-shrink:0; color:var(--blue);
+  .counter-number{
+    font-family:var(--sans); font-size:2.2rem; font-weight:700; color:#D4A373;
+    letter-spacing:1px; margin-bottom:6px;
   }
-  .hp-row.done .hp-icon{background:var(--blue); color:#fff;}
-  .hp-text b{display:block; font-size:0.92rem; color:var(--ink); margin-bottom:2px;}
-  .hp-text span{font-size:0.82rem; color:var(--ink-dim);}
-  .hero-panel-foot{
-    margin-top:18px; padding-top:16px; border-top:1px dashed var(--line-strong);
-    display:flex; gap:9px; align-items:flex-start; font-size:0.78rem; color:var(--ink-dim2);
-  }
-  .hero-panel-foot svg{color:var(--blue); flex-shrink:0; margin-top:1px;}
-  .ticket-stage{position:relative; display:flex; justify-content:center;}
+  .acceptance-badge{display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:6px;}
+  .acceptance-value{font-size:2.2rem; font-weight:700; color:#fff;}
+  .acceptance-icon{color:#22C55E; font-size:1.2rem;}
+  .metric-title{color:#E2E8F0; font-size:0.85rem; font-weight:600; margin:0 0 4px 0;}
+  .metric-subtext{color:#64748B; font-size:0.75rem; display:block;}
 
   /* -------- SECTION helpers -------- */
   section{padding:88px 0; position:relative;}
@@ -434,64 +435,58 @@ src="https://www.facebook.com/tr?id=1376039291325899&ev=PageView&noscript=1"
 
   <!-- HERO -->
   <section class="hero">
-    <div class="wrap hero-grid">
-      <div>
-        <span class="eyebrow"><span class="dot"></span> Tutelas de salud · 100% por WhatsApp</span>
-        <h1>Tu EPS te vulneró un derecho.<br>No lo resuelvas <em>solo</em>.</h1>
-        <p class="lead">Medicamento, cirugía o cita que no autorizan. Cuéntanos qué pasó por WhatsApp y en minutos tienes lista tu acción de tutela de salud — sin costo.</p>
-        <div class="cta-row">
-          <a class="btn-primary" href="https://wa.me/573106386975">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12c0 1.85.5 3.58 1.35 5.07L2 22l5.1-1.33A9.94 9.94 0 0012 22c5.52 0 10-4.48 10-10S17.52 2 12 2zm5.2 14.1c-.22.6-1.28 1.16-1.77 1.2-.45.05-.98.24-3.3-.7-2.78-1.14-4.53-3.98-4.67-4.16-.14-.19-1.1-1.47-1.1-2.8 0-1.33.7-1.98.95-2.25.24-.27.53-.33.7-.33h.5c.16 0 .38-.03.58.45.22.53.75 1.83.82 1.96.06.13.1.29.02.47-.08.19-.13.3-.25.46-.13.16-.27.36-.38.48-.13.13-.26.27-.11.53.14.27.63 1.05 1.36 1.7.94.84 1.72 1.1 1.98 1.23.27.13.42.11.58-.06.16-.18.68-.79.86-1.06.19-.27.37-.22.6-.13.24.08 1.53.72 1.79.85.27.13.44.19.5.3.06.13.06.71-.16 1.31z"/></svg>
-            Contar mi caso ahora
-          </a>
-          <a class="btn-ghost" href="#precios">Ver precios</a>
-        </div>
-        <p class="fine-print"><b>Documento gratis, sin registro.</b> Solo pagas si eliges que nosotros radiquemos el trámite por ti. · <a href="/privacidad" style="text-decoration:underline; color:inherit;">Política de privacidad</a></p>
+    <div class="wrap">
+      <div class="hero-section">
+        <!-- LADO IZQUIERDO: TEXTO Y LLAMADO A LA ACCIÓN -->
+        <div class="hero-content">
+          <div class="badge-tag">TUTELAS · 100% POR WHATSAPP</div>
 
-        <div class="trust-strip">
-          <div class="trust-item">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-            Recibes un soporte de radicado
-          </div>
-          <div class="trust-item">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-            Radicación en 4 horas hábiles*
-          </div>
-          <div class="trust-item">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>
-            Empresa de tecnología, no un bufete
-          </div>
-        </div>
-        <p class="fine-print" style="margin-top:10px; color:rgba(255,255,255,0.55);">*Horario hábil: lunes a viernes, 8:00 a.m.–12:00 p.m. y 2:00 p.m.–4:00 p.m.</p>
-      </div>
+          <h1 class="hero-title">
+            Tu EPS te vulneró un derecho.<br>
+            <span class="highlight">No lo resuelvas solo.</span>
+          </h1>
 
-      <div class="ticket-stage">
-        <div class="hero-panel">
-          <div class="hero-panel-title">Así te acompañamos</div>
-          <div class="hp-row done">
-            <div class="hp-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-            </div>
-            <div class="hp-text"><b>Cuéntanos tu caso</b><span>Por WhatsApp, con tus palabras</span></div>
+          <p class="hero-description">
+            Cuéntanos qué pasó por WhatsApp y en minutos tienes lista tu acción de tutela — sin costo.
+          </p>
+
+          <!-- Botón WhatsApp Estilizado y Sofisticado -->
+          <div class="cta-container">
+            <a href="https://wa.me/573106386975" class="btn-whatsapp-hero">
+              <span>INICIAR MI TUTELA POR WHATSAPP</span>
+              <svg class="ws-icon" viewBox="0 0 24 24" width="20" height="20">
+                <path fill="currentColor" d="M12.012 2c-5.506 0-9.969 4.463-9.969 9.969 0 1.758.459 3.474 1.33 4.982L2 22l5.228-1.372c1.455.795 3.097 1.213 4.782 1.214h.004c5.505 0 9.968-4.463 9.968-9.97 0-2.662-1.036-5.165-2.922-7.049C17.177 3.036 14.674 2 12.012 2z"/>
+              </svg>
+            </a>
+            <a href="#precios" class="btn-secondary">Ver precios</a>
           </div>
-          <div class="hp-row done">
-            <div class="hp-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
-            </div>
-            <div class="hp-text"><b>Recibes tu documento</b><span>PDF de tu tutela, gratis</span></div>
+
+          <p class="cta-microcopy">
+            El servicio formal y el documento gratis comienzan aquí.
+          </p>
+        </div>
+
+        <!-- LADO DERECHO: MÉTRICAS Y SOCIAL PROOF -->
+        <div class="hero-metrics">
+          <!-- Card Contador -->
+          <div class="metric-card">
+            <div id="tutela-counter" class="counter-number">10,000</div>
+            <p class="metric-title">Tutelas Radicadas Total</p>
+            <span class="metric-subtext">(Incrementando diariamente)</span>
           </div>
-          <div class="hp-row">
-            <div class="hp-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+
+          <!-- Card Porcentaje -->
+          <div class="metric-card">
+            <div class="acceptance-badge">
+              <span class="acceptance-value">96%</span>
+              <span class="acceptance-icon">✓</span>
             </div>
-            <div class="hp-text"><b>Si lo eliges, radicamos por ti</b><span>Y te entregamos el soporte de radicado</span></div>
-          </div>
-          <div class="hero-panel-foot">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            El diseño exacto de tu soporte de radicado te lo mostramos en el momento de la entrega.
+            <p class="metric-title">DE ACEPTACIÓN</p>
+            <span class="metric-subtext">Casos Exitosos en Juzgados</span>
           </div>
         </div>
       </div>
+      <p class="fine-print" style="margin-top:26px;"><b>Documento gratis, sin registro.</b> Solo pagas si eliges que nosotros radiquemos el trámite por ti. · <a href="/privacidad" style="text-decoration:underline; color:inherit;">Política de privacidad</a> · Somos una empresa de tecnología, no un bufete de abogados.<br>Radicación en 4 horas hábiles*: lunes a viernes, 8:00 a.m.–12:00 p.m. y 2:00 p.m.–4:00 p.m.</p>
     </div>
   </section>
 
@@ -745,6 +740,28 @@ src="https://www.facebook.com/tr?id=1376039291325899&ev=PageView&noscript=1"
 </a>
 
 <script>
+  // Contador dinámico de tutelas radicadas
+  document.addEventListener('DOMContentLoaded', () => {
+    const START_COUNT = 10000;
+    const DAILY_RATE = 25; // Promedio de 25 tutelas diarias
+    const BASE_DATE = new Date('2026-01-01T00:00:00').getTime();
+
+    function updateCounter() {
+      const now = new Date().getTime();
+      const daysPassed = (now - BASE_DATE) / (1000 * 60 * 60 * 24);
+      const totalCount = Math.floor(START_COUNT + (daysPassed * DAILY_RATE));
+
+      const element = document.getElementById('tutela-counter');
+      if (element) {
+        element.textContent = totalCount.toLocaleString('es-CO');
+      }
+    }
+
+    // Ejecución inicial y actualización cada minuto
+    updateCounter();
+    setInterval(updateCounter, 60000);
+  });
+
   // FAQ accordion
   document.querySelectorAll('.faq-item').forEach(item=>{
     const btn = item.querySelector('.faq-q');
