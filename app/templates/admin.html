@@ -128,8 +128,18 @@
         <div class="num">{{ visitas.clics }}</div>
         <div class="label">Clics a WhatsApp</div>
       </div>
+      <div class="stat-card" style="border-top:3px solid #7b1fa2;">
+        <div class="num">{{ visitas.conversaciones }}</div>
+        <div class="label">Conversaciones (mes)</div>
+      </div>
+      <div class="stat-card">
+        <div class="num">{{ visitas.conversaciones_24h }} <small>(24 h)</small></div>
+        <div class="label">Mensajeros distintos</div>
+      </div>
     </div>
     {% if visitas.bots %}<div style="font-size:11px; color:#999; margin-top:-5px;">{{ visitas.bots }} visitas de robots/avances filtradas</div>{% endif %}
+    {% if visitas.legacy %}<div style="font-size:11px; color:#c62828; margin-top:-5px;">{{ visitas.legacy }} visitas antiguas sin user-agent, contadas como visitas sin filtrar</div>{% endif %}
+    {% if visitas.total and visitas.clasificadas and visitas.clasificadas < visitas.total %}<div style="font-size:11px; color:#5c6bc0; margin-top:-5px;">De las {{ visitas.total }} totales, solo {{ visitas.clasificadas }} tienen clasificado de bots ({{ visitas.total - visitas.clasificadas }} sin user-agent, se muestran aparte)</div>{% endif %}
     {% if visitas.por_fuente or visitas.ultimas %}
     <div style="display:flex; gap:15px; flex-wrap:wrap;">
       <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:1; min-width:200px;">

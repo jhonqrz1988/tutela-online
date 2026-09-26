@@ -23,8 +23,11 @@ from app.models.visita import VisitaLanding
 from app.services.visitas_service import (
     agrupar_por_periodo,
     agrupar_tutelas_por_periodo,
+    contar_conversaciones,
     nombre_fuente,
     rango_mes_utc,
+    visitas_clasificadas,
+    visitas_legacy,
 )
 
 router = APIRouter(prefix="/admin")
@@ -486,6 +489,10 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         "ultimas_24h": visitas_24h,
         "pauta": visitas_pauta,
         "bots": visitas_bots,
+        "clasificadas": visitas_clasificadas(session, inicio_mes, fin_mes),
+        "legacy": visitas_legacy(session, inicio_mes, fin_mes),
+        "conversaciones": contar_conversaciones(session, inicio_mes, fin_mes),
+        "conversaciones_24h": contar_conversaciones(session, hace_24h, fin_mes),
         "por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in visitas_por_fuente],
         "clics": clics_total,
         "clics_por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in clics_por_fuente],

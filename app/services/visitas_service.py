@@ -8,9 +8,12 @@ from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import func, select
+
 from app.database import SessionLocal
 from app.models.clic import ClicWhatsApp
 from app.models.visita import VisitaLanding
+from app.models.whatsapp import MensajeWhatsApp
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +190,49 @@ def agrupar_tutelas_por_periodo(tutelas, periodo: str) -> list[dict]:
             _etiqueta_semana(clave) if periodo == "semana" else _etiqueta_mes(clave)
         )
     return sorted(agrupado.values(), key=lambda x: x["clave"], reverse=True)
+
+
+def contar_conversaciones(session, inicio: datetime, fin: datetime) -> int:
+    """Número de teléfonos distintos que escribieron al bot en ``[inicio, fin)``.
+
+    Es la métrica de "conversación real" del embudo (visita -> clic -> mensaje).
+    Un usuario que manda varios mensajes cuenta como una sola conversación.
+    """
+    return session.execute(
+        select(func.count(func.distinct(MensajeWhatsApp.from_number))).where(
+            MensajeWhatsApp.created_at >= inicio,
+            MensajeWhatsApp.created_at < fin,
+        )
+    ).scalar() or 0
+
+
+def visitas_clasificadas(session, inicio: datetime, fin: datetime) -> int:
+    """Visitas humanas medidas CON el filtro de bots: ``es_bot=False`` y con
+    ``user_agent`` capturado (no None ni vacío)."""
+    return session.execute(
+        select(func.count()).select_from(VisitaLanding).where(
+            VisitaLanding.created_at >= inicio,
+            VisitaLanding.created_at < fin,
+            VisitaLanding.es_bot.is_(False),
+            VisitaLanding.user_agent.isnot(None),
+            VisitaLanding.user_agent != "",
+        )
+    ).scalar() or 0
+
+
+def visitas_legacy(session, inicio: datetime, fin: datetime) -> int:
+    """Visitas anteriores al filtro de bots: ``user_agent`` NULL.
+
+    Esas visitas no se clasificaron como humano/bot (quedaron todas como humanas
+    por defecto) y por eso inflan el "Total visitas"; se reportan aparte.
+    """
+    return session.execute(
+        select(func.count()).select_from(VisitaLanding).where(
+            VisitaLanding.created_at >= inicio,
+            VisitaLanding.created_at < fin,
+            VisitaLanding.user_agent.is_(None),
+        )
+    ).scalar() or 0
 
 
 def es_bot(user_agent: str | None) -> bool:
