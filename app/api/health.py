@@ -81,7 +81,7 @@ def _esquema_bd() -> dict:
 
     try:
         with SessionLocal() as session:
-            inspector = inspect(session)
+            inspector = inspect(session.get_bind())
             tablas = set(inspector.get_table_names())
             columnas_visitas: dict[str, bool] = {
                 "es_bot": False,
