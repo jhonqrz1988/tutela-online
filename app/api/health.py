@@ -2,7 +2,7 @@ import os
 import shutil
 
 from fastapi import APIRouter
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.config import settings
 from app.database import SessionLocal
@@ -59,13 +59,49 @@ async def health():
             "database": "unreachable",
             "disk": disco,
             "config": _config_diagnostico(),
+            "schema": _esquema_bd(),
         }
     return {
         "status": status,
         "database": database,
         "disk": disco,
         "config": _config_diagnostico(),
+        "schema": _esquema_bd(),
     }
+
+
+def _esquema_bd() -> dict:
+    """Verifica que las columnas/tablas esperadas existan en la BD.
+
+    El dashboard admin consulta ``VisitaLanding.es_bot``/``user_agent`` y la tabla
+    ``clics_whatsapp``; si la migración no persistió (BD vieja), esas consultas
+    salen con 500. Best-effort: nunca lanza, solo reporta.
+    """
+    import logging
+
+    try:
+        with SessionLocal() as session:
+            inspector = inspect(session)
+            tablas = set(inspector.get_table_names())
+            columnas_visitas: dict[str, bool] = {
+                "es_bot": False,
+                "user_agent": False,
+            }
+            if "visitas_landing" in tablas:
+                cols = {c["name"] for c in inspector.get_columns("visitas_landing")}
+                columnas_visitas = {k: k in cols for k in columnas_visitas}
+            return {
+                "tablas": {
+                    "visitas_landing": "visitas_landing" in tablas,
+                    "clics_whatsapp": "clics_whatsapp" in tablas,
+                    "tutelas": "tutelas" in tablas,
+                },
+                "visitas_landing": columnas_visitas,
+                "error": None,
+            }
+    except Exception as e:  # noqa: BLE001 - health nunca rompe el proceso
+        logging.getLogger(__name__).warning(f"No se pudo inspeccionar el esquema: {e}")
+        return {"tablas": {}, "visitas_landing": {"es_bot": False, "user_agent": False}, "error": str(e)[:200]}
 
 
 def _config_diagnostico() -> dict:
