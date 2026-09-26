@@ -7,7 +7,52 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 META_API_BASE = "https://graph.facebook.com/v25.0/{phone_number_id}/messages"
+META_PHONE_URL = "https://graph.facebook.com/v25.0/{phone_number_id}"
 ZAPI_BASE = "https://api.z-api.io/instances/{instance}/token/{token}"
+
+# Campos del número que nos interesan para diagnóstico.
+META_NUMERO_FIELDS = (
+    "display_phone_number,verified_name,code_verification_status,"
+    "platform_type,throughput"
+)
+
+
+def consultar_estado_numero() -> dict:
+    """Consulta el estado del número de WhatsApp en la Graph API (diagnóstico).
+
+    Nunca lanza: devuelve un dict para el panel admin. Sin configuración de
+    Meta devuelve ``{"configurado": False}`` (evita el viaje de red).
+    """
+    if not settings.meta_access_token or not settings.meta_phone_number_id:
+        return {"configurado": False}
+    url = (
+        f"{META_PHONE_URL.format(phone_number_id=settings.meta_phone_number_id)}"
+        f"?fields={META_NUMERO_FIELDS}"
+    )
+    try:
+        r = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {settings.meta_access_token}"},
+            timeout=15,
+        )
+    except Exception as e:  # noqa: BLE001 - diagnóstico, nunca lanza
+        logger.warning(f"Error consultando estado del número: {e}")
+        return {"configurado": True, "error": str(e)}
+    if not r.is_success:
+        return {
+            "configurado": True,
+            "http_status": r.status_code,
+            "error": (r.text or "")[:300],
+        }
+    data = r.json()
+    return {
+        "configurado": True,
+        "display_phone_number": data.get("display_phone_number"),
+        "verified_name": data.get("verified_name"),
+        "code_verification_status": data.get("code_verification_status"),
+        "platform_type": data.get("platform_type"),
+        "throughput": data.get("throughput"),
+    }
 
 
 def _zapi_url(endpoint: str) -> str | None:

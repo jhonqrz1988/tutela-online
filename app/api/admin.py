@@ -635,6 +635,14 @@ def estado_scheduler(request: Request, _=Depends(require_admin)):
     }
 
 
+@router.get("/api/wa-status")
+def estado_numero_whatsapp(request: Request, _=Depends(require_admin)):
+    """Estado del número de WhatsApp (code_verification_status, etc.) vía Graph API."""
+    from app.services.whatsapp_service import consultar_estado_numero
+
+    return consultar_estado_numero()
+
+
 @router.post("/api/scheduler/toggle")
 def toggle_scheduler(request: Request, _=Depends(require_admin)):
     """Activa/desactiva en caliente la radicación automática."""
