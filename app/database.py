@@ -2,7 +2,7 @@ import logging
 import time
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
@@ -68,7 +68,7 @@ def _crear_tablas_con_reintentos():
     El fallo es transitorio: se re-intenta con una pausa corta y, si al final
     sigue caído, se propaga (la app no debe arrancar sin base de datos).
     """
-    from sqlalchemy import exc, text
+    from sqlalchemy import exc
 
     ultimo_error = None
     for intento in range(1, DB_REINTENTOS + 1):
@@ -95,9 +95,12 @@ def _migrar_esquema(conn):
     ``create_all`` no agrega columnas a tablas existentes; estas migraciones
     ligeras las añaden sin borrar datos. Best-effort: si algo falla se loguea
     y se continúa con el arranque (nunca se pierden datos).
-    """
-    from sqlalchemy import inspect, text
 
+    IMPORTANTE: el DDL se hace commit explícitamente. En SQLite se autocomitea
+    (por eso pasa desapercibido en local), pero en PostgreSQL los ALTER TABLE
+    dentro de una transacción se revierten al cerrar la conexión — lo que dejaba
+    el dashboard admin sin ``es_bot``/``user_agent`` -> 500 al cargar.
+    """
     try:
         inspector = inspect(conn)
         tablas_existentes = set(inspector.get_table_names())
@@ -110,6 +113,8 @@ def _migrar_esquema(conn):
                 conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN es_bot BOOLEAN NOT NULL DEFAULT 0"))
     except Exception as e:  # noqa: BLE001 - la migración nunca debe impedir el boot
         logger.warning(f"No se pudo ajustar el esquema: {e}")
+    finally:
+        conn.commit()
 
 
 def get_session():
