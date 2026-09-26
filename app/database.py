@@ -102,8 +102,11 @@ def _migrar_esquema(conn):
 
     IMPORTANTE: el DDL se hace commit explícitamente. En SQLite se autocomitea
     (por eso pasa desapercibido en local), pero en PostgreSQL los ALTER TABLE
-    dentro de una transacción se revierten al cerrar la conexión — lo que dejaba
-    el dashboard admin sin ``es_bot``/``user_agent`` -> 500 al cargar.
+    dentro de una transacción se revierten al cerrar la conexión si no se
+    confirman — y además, un error en una ALTER aborta la transacción y
+    **revierte también las ALTER anteriores**: por eso una sola columna con DDL
+    inválido (``DEFAULT 0`` en un BOOLEAN) dejaba el dashboard admin con
+    ``es_bot``/``user_agent`` faltantes -> 500 al cargar.
     """
     resultado = {"ok": False, "detalle": "", "tablas": [], "columnas": {}, "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
     try:
@@ -117,7 +120,10 @@ def _migrar_esquema(conn):
             if "user_agent" not in columnas:
                 conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN user_agent VARCHAR(500)"))
             if "es_bot" not in columnas:
-                conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN es_bot BOOLEAN NOT NULL DEFAULT 0"))
+                # DEFAULT 0 rompe en PostgreSQL: es_bot es BOOLEAN y PG rechaza
+                # el literal entero (DatatypeMismatch). SQLite sí lo acepta, pero
+                # "false" es válido en ambos dialectos y evita el doble estándar.
+                conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN es_bot BOOLEAN NOT NULL DEFAULT false"))
         resultado["ok"] = True
     except Exception as e:  # noqa: BLE001 - la migración nunca debe impedir el boot
         logger.warning(f"No se pudo ajustar el esquema: {e}")
