@@ -650,6 +650,41 @@ def estado_numero_whatsapp(request: Request, _=Depends(require_admin)):
     return consultar_estado_numero()
 
 
+@router.post("/api/wa-request-code")
+async def wa_request_code(request: Request, _=Depends(require_admin)):
+    """Pide a la Graph API un nuevo código de verificación (Cloud API).
+
+    La UI de WhatsApp Manager redirige al sunset de On-Premises para números
+    con `code_verification_status` expirado; por API sí se puede re-verificar.
+    """
+    from app.services.whatsapp_service import solicitar_codigo_verificacion
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    metodo = (body.get("metodo") or "VOICE").upper()
+    if metodo not in ("VOICE", "SMS"):
+        return JSONResponse({"error": "metodo invalido"}, status_code=400)
+    return solicitar_codigo_verificacion(metodo)
+
+
+@router.post("/api/wa-verify-code")
+async def wa_verify_code(request: Request, _=Depends(require_admin)):
+    """Envía el código recibido por SMS/llamada para verificar el número."""
+    from app.services.whatsapp_service import verificar_codigo_whatsapp
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    codigo = (body.get("codigo") or "").strip()
+    if not codigo or len(codigo) > 10:
+        return JSONResponse({"error": "codigo requerido"}, status_code=400)
+    res = verificar_codigo_whatsapp(codigo)
+    return res
+
+
 @router.post("/api/scheduler/toggle")
 def toggle_scheduler(request: Request, _=Depends(require_admin)):
     """Activa/desactiva en caliente la radicación automática."""

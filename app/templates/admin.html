@@ -321,6 +321,38 @@
   </div>
 </div>
 
+<div id="modal-wa" class="modal-overlay">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h2 id="wa-modal-titulo">Re-verificaci&oacute;n del n&uacute;mero de WhatsApp</h2>
+      <button class="modal-close" onclick="cerrarModalWa()">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:18px 24px;">
+      <p style="font-size:13px; color:#555; margin-bottom:12px;">
+        El c&oacute;digo de verificaci&oacute;n del n&uacute;mero expir&oacute; y la UI de
+        WhatsApp Manager ya no permite re-verificarlo (redirige al sunset de On-Premises).
+        Este panel lo hace por la API de Cloud de Meta.
+      </p>
+      <div id="wa-msg" style="font-size:13px; margin-bottom:12px; padding:8px 10px; border-radius:6px; display:none;"></div>
+      <label style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">1. Pedir el c&oacute;digo</label>
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        <button class="btn" onclick="waPedirCodigo('VOICE')">&#x1F3A4; Por llamada de voz</button>
+        <button class="btn" onclick="waPedirCodigo('SMS')">&#x1F4F1; Por SMS</button>
+      </div>
+      <label style="font-size:13px; font-weight:600; display:block; margin-bottom:4px;">2. Ingresar el c&oacute;digo recibido</label>
+      <div style="display:flex; gap:8px;">
+        <input id="wa-codigo" type="text" maxlength="6" placeholder="000000"
+               style="flex:1; padding:8px 10px; border:1px solid #ccc; border-radius:6px; font-size:16px; letter-spacing:4px; text-align:center;" />
+        <button class="btn" onclick="waVerificarCodigo()">Verificar</button>
+      </div>
+      <p style="font-size:12px; color:#999; margin-top:14px;">
+        Tras verificar, el panel pasar&aacute; a <b>WhatsApp VERIFICADO</b> y el n&uacute;mero
+        volver&aacute; a poder enviar mensajes salientes de forma completa.
+      </p>
+    </div>
+  </div>
+</div>
+
 <script>
 let tutelaActual = null;
 const ESTADOS_MONITOREO_EN_VIVO = ['pdf_generado', 'pendiente_radicacion', 'esperando_decision_radicacion', 'fallida', 'esperando_codigo_email'];
@@ -560,17 +592,103 @@ async function waStatus(e) {
       btn.textContent = '\u2705 WhatsApp VERIFICADO' + (res.display_phone_number ? ' ' + res.display_phone_number : '');
       btn.className = 'toggle-sched ' + (ok ? 'on' : 'off');
       if (!ok) {
-        const abrir = confirm(
-          'Estado del n\u00famero: ' + res.code_verification_status +
-          '. El c\u00f3digo de verificaci\u00f3n expir\u00f3 y hay que re-verificarlo.\n\n' +
-          '\u00bfAbrir WhatsApp Manager (Phone numbers) para re-verificarlo?'
-        );
-        if (abrir) window.open('https://business.facebook.com/wa/manage/phone-numbers', '_blank');
+        abrirModalWa(res.code_verification_status, res.display_phone_number);
       }
     }
   } catch(err) {
     btn.textContent = '\u26A0\uFE0F No se pudo consultar';
     btn.className = 'toggle-sched off';
+  }
+}
+
+function abrirModalWa(estado, numero) {
+  const modal = document.getElementById('modal-wa');
+  const titulo = document.getElementById('wa-modal-titulo');
+  titulo.textContent = 'Re-verificaci\u00f3n del n\u00famero' + (numero ? ' ' + numero : '');
+  document.getElementById('wa-msg').style.display = 'none';
+  document.getElementById('wa-msg').textContent = 'Estado actual: ' + estado;
+  document.getElementById('wa-msg').style.background = '#fce4ec';
+  document.getElementById('wa-msg').style.color = '#c62828';
+  document.getElementById('wa-msg').style.display = 'block';
+  document.getElementById('wa-codigo').value = '';
+  modal.classList.add('show');
+}
+
+function cerrarModalWa() {
+  document.getElementById('modal-wa').classList.remove('show');
+  cargarEstadoWa();
+}
+
+async function cargarEstadoWa() {
+  const btn = document.getElementById('wa-status');
+  try {
+    const r = await fetch('/admin/api/wa-status');
+    const res = await r.json();
+    if (!res.configurado || res.error) {
+      btn.textContent = '\u26A0\uFE0F Meta no configurado o error';
+      return;
+    }
+    const ok = res.code_verification_status === 'VERIFIED';
+    btn.textContent = (ok ? '\u2705 WhatsApp VERIFICADO' : '\u26A0\uFE0F WhatsApp ' + res.code_verification_status)
+      + (res.display_phone_number ? ' ' + res.display_phone_number : '');
+    btn.className = 'toggle-sched ' + (ok ? 'on' : 'off');
+  } catch(e) { /* silencioso */ }
+}
+
+function waMensaje(texto, ok) {
+  const el = document.getElementById('wa-msg');
+  el.textContent = texto;
+  el.style.background = ok ? '#e8f5e9' : '#fce4ec';
+  el.style.color = ok ? '#2e7d32' : '#c62828';
+  el.style.display = 'block';
+}
+
+async function waPedirCodigo(metodo) {
+  waMensaje('Pidiendo el c\u00f3digo por ' + (metodo === 'VOICE' ? 'llamada de voz...' : 'SMS...'), false);
+  try {
+    const r = await fetch('/admin/api/wa-request-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ metodo: metodo })
+    });
+    const res = await r.json();
+    if (r.status === 400) {
+      waMensaje('Error: ' + (res.error || 'metodo invalido'), false);
+      return;
+    }
+    if (res.ok) {
+      waMensaje('C\u00f3digo solicitado. Te llegar\u00e1 una llamada o SMS al ' + (res.display_phone_number || 'n\u00famero').toUpperCase() + '. Ingresa el c\u00f3digo abajo.', true);
+    } else {
+      waMensaje('Meta rechaz\u00f3 la solicitud: ' + (res.error || res.http_status || 'desconocido'), false);
+    }
+  } catch(e) {
+    waMensaje('Error de conexi\u00f3n: ' + e.message, false);
+  }
+}
+
+async function waVerificarCodigo() {
+  const codigo = document.getElementById('wa-codigo').value.trim();
+  if (!codigo) { waMensaje('Ingresa el c\u00f3digo de 6 d\u00edgitos.', false); return; }
+  waMensaje('Verificando...', false);
+  try {
+    const r = await fetch('/admin/api/wa-verify-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo: codigo })
+    });
+    const res = await r.json();
+    if (r.status === 400) {
+      waMensaje('Error: ' + (res.error || 'c\u00f3digo requerido'), false);
+      return;
+    }
+    if (res.ok) {
+      waMensaje('\u2705 N\u00famero VERIFICADO correctamente. Recargando...', true);
+      setTimeout(function() { cerrarModalWa(); location.reload(); }, 1500);
+    } else {
+      waMensaje('C\u00f3digo inv\u00e1lido o rechazado: ' + (res.error || res.http_status || 'desconocido'), false);
+    }
+  } catch(e) {
+    waMensaje('Error de conexi\u00f3n: ' + e.message, false);
   }
 }
 
@@ -680,14 +798,19 @@ function filtrar() {
 document.getElementById('modal').onclick = function(e) {
   if (e.target === this) cerrarModal();
 };
+const modalWa = document.getElementById('modal-wa');
+if (modalWa) modalWa.onclick = function(e) { if (e.target === this) cerrarModalWa(); };
 document.onkeydown = function(e) { if (e.key === 'Escape') cerrarModal(); };
 
 cargarEstadoScheduler();
 
 setInterval(function() {
   const modal = document.getElementById('modal');
+  const modalWa = document.getElementById('modal-wa');
   if (modal.classList.contains('show')) {
     monitorizarModal();
+  } else if (modalWa && modalWa.classList.contains('show')) {
+    /* mantener el modal de WhatsApp abierto, no recargar */
   } else if (!document.hidden) {
     location.reload();
   }

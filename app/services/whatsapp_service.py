@@ -62,6 +62,72 @@ def _zapi_url(endpoint: str) -> str | None:
     return url.replace("{instance}", settings.zapi_instance).replace("{token}", settings.zapi_token)
 
 
+def solicitar_codigo_verificacion(code_method: str = "VOICE", language: str = "es_CO") -> dict:
+    """Pide a la Graph API un código de verificación para el número (Cloud API).
+
+    La re-verificación del `code_verification_status` expirado ya no se puede
+    hacer por la UI de WhatsApp Manager (manda al sunset de On-Premises), pero
+    sí por API: ``POST /{phone_id}/request_code`` seguido de
+    ``verificar_codigo_whatsapp``. Nunca lanza: devuelve dict para el panel.
+    """
+    if not settings.meta_access_token or not settings.meta_phone_number_id:
+        return {"configurado": False}
+    url = (
+        f"{META_PHONE_URL.format(phone_number_id=settings.meta_phone_number_id)}"
+        "/request_code"
+    )
+    try:
+        r = httpx.post(
+            url,
+            json={"code_method": code_method.upper(), "language": language},
+            headers=_meta_headers(),
+            timeout=15,
+        )
+    except Exception as e:  # noqa: BLE001 - diagnóstico, nunca lanza
+        logger.warning(f"Error pidiendo código de verificación: {e}")
+        return {"configurado": True, "ok": False, "error": str(e)}
+    if not r.is_success:
+        return {
+            "configurado": True,
+            "ok": False,
+            "http_status": r.status_code,
+            "error": (r.text or "")[:300],
+        }
+    return {"configurado": True, "ok": bool(r.json().get("success"))}
+
+
+def verificar_codigo_whatsapp(codigo: str) -> dict:
+    """Envía a la Graph API el código recibido para completar la re-verificación.
+
+    ``POST /{phone_id}/verify_code`` con el código que llegó por SMS/llamada.
+    Nunca lanza: devuelve dict para el panel admin.
+    """
+    if not settings.meta_access_token or not settings.meta_phone_number_id:
+        return {"configurado": False}
+    url = (
+        f"{META_PHONE_URL.format(phone_number_id=settings.meta_phone_number_id)}"
+        "/verify_code"
+    )
+    try:
+        r = httpx.post(
+            url,
+            json={"code": codigo.strip()},
+            headers=_meta_headers(),
+            timeout=15,
+        )
+    except Exception as e:  # noqa: BLE001 - diagnóstico, nunca lanza
+        logger.warning(f"Error verificando código: {e}")
+        return {"configurado": True, "ok": False, "error": str(e)}
+    if not r.is_success:
+        return {
+            "configurado": True,
+            "ok": False,
+            "http_status": r.status_code,
+            "error": (r.text or "")[:300],
+        }
+    return {"configurado": True, "ok": bool(r.json().get("success"))}
+
+
 def _meta_headers() -> dict:
     return {
         "Authorization": f"Bearer {settings.meta_access_token}",
