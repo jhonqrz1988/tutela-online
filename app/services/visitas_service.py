@@ -236,6 +236,28 @@ def visitas_legacy(session, inicio: datetime, fin: datetime) -> int:
     ).scalar() or 0
 
 
+def conversaciones_sin_respuesta(session, inicio: datetime, fin: datetime) -> int:
+    """Teléfonos distintos que escribieron pero NO recibieron respuesta del bot.
+
+    Son dos fallos distintos, ambos contados aquí:
+      - ``fallido``: el bot respondió pero Meta rechazó el envío (número
+        ``EXPIRED``, plantilla/rechazo, WABA en mal estado).
+      - ``sin_respuesta``: el flujo no produjo ninguna respuesta (p. ej. un
+        tipo de mensaje que el bot no entendió).
+
+    Es el indicador que explica "hay usuarios donde el flujo no inicia": si este
+    número crece, el problema es de entrega de Meta, no del parsing ni del
+    dispositivo del usuario.
+    """
+    return session.execute(
+        select(func.count(func.distinct(MensajeWhatsApp.from_number))).where(
+            MensajeWhatsApp.created_at >= inicio,
+            MensajeWhatsApp.created_at < fin,
+            MensajeWhatsApp.envio_estado.in_(["fallido", "sin_respuesta"]),
+        )
+    ).scalar() or 0
+
+
 def _origen_de_mensaje(metadata_json: str | None) -> dict:
     """Parsea ``MensajeWhatsApp.metadata_json`` (origen del anuncio de Meta)."""
     if not metadata_json:

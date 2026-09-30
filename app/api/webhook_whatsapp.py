@@ -1,4 +1,6 @@
+import contextlib
 import datetime
+import functools
 import hashlib
 import hmac
 import ipaddress
@@ -6,6 +8,7 @@ import json
 import logging
 import os
 import socket
+from contextvars import ContextVar
 from urllib.parse import urlparse
 
 import aiofiles
@@ -210,6 +213,71 @@ def _aislar_origen(value: dict) -> list[dict]:
     return origenes
 
 
+def _parsear_mensaje(msg: dict) -> dict:
+    """Normaliza un mensaje entrante de Meta a los campos que usa el bot.
+
+    Cubre los tipos que antes quedaban con ``body_text`` vacío (y dejaban el
+    flujo mudo): ``interactive`` con ``button`` (clic en CTA de un anuncio, que
+    NO viene en ``button_reply``), ``reaction``, ``sticker``, ``location``,
+    ``contacts``, ``video`` y ``unsupported``.
+
+    Devuelve ``{body_text, num_media, media_url, es_audio}``. Nunca lanza.
+    """
+    msg_type = msg.get("type", "")
+    body_text = ""
+    num_media = 0
+    media_url = ""
+    es_audio = False
+
+    if msg_type == "text":
+        body_text = (msg.get("text", {}) or {}).get("body", "").strip()
+    elif msg_type == "interactive":
+        interactive = msg.get("interactive", {}) or {}
+        # button_reply/list_reply: respuesta a un botón que enviamos nosotros.
+        ireply = interactive.get("button_reply") or interactive.get("list_reply") or {}
+        texto = (ireply.get("id", "") or ireply.get("title", "")).strip()
+        if not texto:
+            # CTA de anuncio o formulario: el texto llega en button.text o nfm_reply.
+            texto = (interactive.get("button", {}) or {}).get("text", "").strip()
+        if not texto:
+            texto = (interactive.get("nfm_reply", {}) or {}).get("response_json", "").strip()
+        # Sin lower(): `procesar_mensaje` normaliza a minúsculas para comparar y
+        # así `raw_body` conserva el texto real que escribió el usuario.
+        body_text = texto
+    elif msg_type in ("image", "document"):
+        num_media = 1
+        media_data = msg.get(msg_type, {}) or {}
+        media_url = media_data.get("link", "") or media_data.get("id", "")
+    elif msg_type == "audio":
+        es_audio = True
+        media_url = (msg.get("audio", {}) or {}).get("id", "")
+    elif msg_type == "video":
+        num_media = 1
+        media_data = msg.get("video", {}) or {}
+        media_url = media_data.get("link", "") or media_data.get("id", "")
+    elif msg_type == "reaction":
+        # El emoji sirve como texto para no dejar el flujo sin contenido.
+        body_text = (msg.get("reaction", {}) or {}).get("emoji", "").strip()
+    elif msg_type == "sticker":
+        body_text = "[sticker]"
+    elif msg_type == "location":
+        body_text = "[ubicacion]"
+    elif msg_type == "contacts":
+        body_text = "[contacto]"
+    elif msg_type == "button":
+        body_text = (msg.get("button", {}) or {}).get("text", "").strip()
+    else:
+        # unsupported o cualquier tipo futuro: marcador que permite reanudar.
+        body_text = "[no soportado]"
+
+    return {
+        "body_text": body_text,
+        "num_media": num_media,
+        "media_url": media_url,
+        "es_audio": es_audio,
+    }
+
+
 def _serializar_origen(origen: dict | None) -> str | None:
     """Serializa el origen a JSON para ``MensajeWhatsApp.metadata_json``."""
     if not origen:
@@ -246,24 +314,11 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
             for msg in messages:
                 telefono = msg.get("from", "").replace("whatsapp:", "")
                 msg_type = msg.get("type", "")
-                body_text = ""
-                num_media = 0
-                media_url = ""
-                es_audio = False
-
-                if msg_type == "text":
-                    body_text = msg.get("text", {}).get("body", "").strip()
-                elif msg_type == "interactive":
-                    interactive = msg.get("interactive", {})
-                    ireply = interactive.get("button_reply", {}) or interactive.get("list_reply", {})
-                    body_text = (ireply.get("id", "") or ireply.get("title", "")).strip().lower()
-                elif msg_type in ("image", "document"):
-                    num_media = 1
-                    media_data = msg.get(msg_type, {})
-                    media_url = media_data.get("link", "") or media_data.get("id", "")
-                elif msg_type == "audio":
-                    es_audio = True
-                    media_url = msg.get("audio", {}).get("id", "")
+                datos_msg = _parsear_mensaje(msg)
+                body_text = datos_msg["body_text"]
+                num_media = datos_msg["num_media"]
+                media_url = datos_msg["media_url"]
+                es_audio = datos_msg["es_audio"]
 
                 try:
                     logger.info(f"Webhook Meta: tipo={msg_type} de={telefono}")
@@ -305,6 +360,83 @@ def _borrar_radicaciones(session, tutela_ids):
         session.delete(r)
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ENTREGA DE LA RESPUESTA (diagnóstico "escribió y no le respondió")
+# ═══════════════════════════════════════════════════════════════════
+# Antes `_r`/`_b` ignoraban el resultado de `enviar_texto`/`enviar_botones`:
+# con el número EXPIRED Meta rechazaba cada respuesta y la BD registraba una
+# conversación aparentemente normal, imposible de distinguir de una exitosa.
+# Ahora cada mensaje entrante guarda `envio_estado` y el panel cuenta los
+# usuarios que escribieron pero no recibieron respuesta.
+
+ENVIO_ENTREGADO = "entregado"
+ENVIO_FALLIDO = "fallido"
+ENVIO_SIN_RESPUESTA = "sin_respuesta"
+
+_ENVIOS: ContextVar[dict | None] = ContextVar("tutela_envios", default=None)
+
+
+def _acumular_envio(ok: bool) -> None:
+    """Registra el resultado de un envío dentro del mensaje entrante en curso."""
+    registro = _ENVIOS.get()
+    if registro is None:
+        return
+    registro["n"] += 1
+    if not ok:
+        registro["ok"] = False
+
+
+def _estado_envio(registro: dict) -> str:
+    if registro.get("n", 0) == 0:
+        return ENVIO_SIN_RESPUESTA
+    return ENVIO_ENTREGADO if registro.get("ok", True) else ENVIO_FALLIDO
+
+
+def _registrar_mensaje_en_curso(msg_orm) -> None:
+    registro = _ENVIOS.get()
+    if registro is not None:
+        registro["msg"] = msg_orm
+
+
+def _marcar_estado_envio(session, registro: dict) -> None:
+    """Guarda ``envio_estado`` en el mensaje entrante (best-effort)."""
+    msg_orm = registro.get("msg")
+    if msg_orm is None or getattr(msg_orm, "id", None) is None:
+        return
+    try:
+        session.query(MensajeWhatsApp).filter(MensajeWhatsApp.id == msg_orm.id).update(
+            {MensajeWhatsApp.envio_estado: _estado_envio(registro)},
+            synchronize_session=False,
+        )
+        session.commit()
+    except Exception:  # noqa: BLE001 - el diagnóstico nunca debe romper el flujo
+        logger.warning("No se pudo registrar el estado de envío", exc_info=True)
+        with contextlib.suppress(Exception):
+            session.rollback()
+
+
+def _registrar_envio(fn):
+    """Envoltorio de ``procesar_mensaje``: mide si la respuesta llegó a enviarse.
+
+    Se usa decorador para no reindentar los ~50 puntos de retorno del flujo: el
+    cuerpo real queda intacto y solo se envuelve la llamada.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(session, telefono, *args, **kwargs):
+        token = _ENVIOS.set({"ok": True, "n": 0, "msg": None})
+        try:
+            return await fn(session, telefono, *args, **kwargs)
+        finally:
+            registro = _ENVIOS.get()
+            _ENVIOS.reset(token)
+            if registro is not None:
+                _marcar_estado_envio(session, registro)
+
+    return wrapper
+
+
+@_registrar_envio
 async def procesar_mensaje(
     session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool,
     origen: dict | None = None,
@@ -325,6 +457,9 @@ async def procesar_mensaje(
     )
     session.add(msg_orm)
     session.commit()
+    # Asocia este mensaje al registro de envíos en curso para poder marcar
+    # al final si la respuesta se entregó o Meta la rechazó.
+    _registrar_mensaje_en_curso(msg_orm)
 
     user = session.execute(select(User).where(User.telefono == telefono)).scalar_one_or_none()
 
@@ -951,8 +1086,10 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
 # ═══════════════════════════════════════════════════════════════════
 
 def _r(respuestas: list[str], telefono: str, mensaje: str) -> None:
-    enviar_texto(telefono, mensaje)
+    ok = enviar_texto(telefono, mensaje)
     respuestas.append(mensaje)
+    _acumular_envio(ok)
+    return ok
 
 
 def _enviar_link_pago(respuestas: list[str], telefono: str, tutela) -> None:
@@ -967,8 +1104,10 @@ def _enviar_link_pago(respuestas: list[str], telefono: str, tutela) -> None:
 
 
 def _b(respuestas: list[str], telefono: str, texto: str, botones: list[tuple[str, str]]) -> None:
-    enviar_botones(telefono, texto, botones)
+    ok = enviar_botones(telefono, texto, botones)
     respuestas.append(f"[BOTONES] {texto} | {botones}")
+    _acumular_envio(ok)
+    return ok
 
 
 async def _mostrar_revision_datos(session, tutela, datos: dict, telefono: str, respuestas: list[str]) -> None:
@@ -1275,6 +1414,7 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 
     _r(respuestas, telefono, "✅ *¡Tutela generada!*")
     ok = enviar_documento(telefono, ruta_pdf, os.path.basename(ruta_pdf))
+    _acumular_envio(ok)
     if not ok:
         _r(respuestas, telefono, "⚠️ No pude enviar el PDF. Intenta de nuevo.")
     _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Radicación $29k"), ("2", "✍️ Hazlo tú mismo")])

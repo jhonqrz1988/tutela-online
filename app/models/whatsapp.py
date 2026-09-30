@@ -14,7 +14,11 @@ class MensajeWhatsApp(Base):
     body: Mapped[str] = mapped_column(Text, nullable=True)
     tipo_mensaje: Mapped[str] = mapped_column(String(50), default="texto")
     media_url: Mapped[str] = mapped_column(String(500), nullable=True)
-    metadata_json: Mapped[str] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Resultado de entregar la respuesta del bot a este mensaje entrante:
+    # "entregado" (Meta aceptó) o "fallido" (rechazó, p. ej. número EXPIRED).
+    # Permite medir "usuarios que escribieron pero nunca recibieron respuesta".
+    envio_estado: Mapped[str | None] = mapped_column(String(20), nullable=True)
     tutela_id: Mapped[int] = mapped_column(ForeignKey("tutelas.id"), nullable=True)
     es_recibido: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())

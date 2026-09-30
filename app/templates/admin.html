@@ -136,10 +136,23 @@
         <div class="num">{{ visitas.conversaciones_24h }} <small>(24 h)</small></div>
         <div class="label">Mensajeros distintos</div>
       </div>
+      <div class="stat-card" style="border-top:3px solid {% if visitas.conversaciones_sin_respuesta %}#c62828{% else %}#bbb{% endif %};">
+        <div class="num" {% if visitas.conversaciones_sin_respuesta %}style="color:#c62828;"{% endif %}>{{ visitas.conversaciones_sin_respuesta }} <small>(24 h: {{ visitas.sin_respuesta_24h }})</small></div>
+        <div class="label">Escribieron y no respondimos</div>
+      </div>
     </div>
     {% if visitas.bots %}<div style="font-size:11px; color:#999; margin-top:-5px;">{{ visitas.bots }} visitas de robots/avances filtradas</div>{% endif %}
     {% if visitas.legacy %}<div style="font-size:11px; color:#c62828; margin-top:-5px;">{{ visitas.legacy }} visitas antiguas sin user-agent, contadas como visitas sin filtrar</div>{% endif %}
     {% if visitas.total and visitas.clasificadas and visitas.clasificadas < visitas.total %}<div style="font-size:11px; color:#5c6bc0; margin-top:-5px;">De las {{ visitas.total }} totales, solo {{ visitas.clasificadas }} tienen clasificado de bots ({{ visitas.total - visitas.clasificadas }} sin user-agent, se muestran aparte)</div>{% endif %}
+    {% if visitas.conversaciones_sin_respuesta %}
+    <div style="font-size:12px; color:#c62828; background:#fff3f3; border:1px solid #ffcdd2; border-radius:8px; padding:8px 10px; margin:8px 0;">
+      <strong>{{ visitas.conversaciones_sin_respuesta }} usuarios escribieron y no recibieron respuesta</strong>
+      ({{ visitas.sin_respuesta_24h }} en las &uacute;ltimas 24 h).
+      Meta est&aacute; rechazando el envío (n&uacute;mero expirado / WABA) o el bot no respondi&oacute; a alg&uacute;n tipo de mensaje:
+      revisa el estado de verificaci&oacute;n del n&uacute;mero antes de atribuirlo a un problema de pauta o de dispositivo.
+      <em>(medido desde este despliegue: los mensajes anteriores no registran resultado de env&iacute;o)</em>
+    </div>
+    {% endif %}
     {% if visitas.receptores_ajenos %}
     <div style="font-size:12px; color:#c62828; background:#fff3f3; border:1px solid #ffcdd2; border-radius:8px; padding:8px 10px; margin:8px 0;">
       <strong>&Aacute;Ojo:</strong> est&aacute;n entrando mensajes por un n&uacute;mero receptor <strong>distinto</strong> al configurado

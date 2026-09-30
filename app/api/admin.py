@@ -24,6 +24,7 @@ from app.services.visitas_service import (
     agrupar_por_periodo,
     agrupar_tutelas_por_periodo,
     conversaciones_por_anuncio,
+    conversaciones_sin_respuesta,
     contar_conversaciones,
     nombre_fuente,
     numeros_receptores,
@@ -501,6 +502,10 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         "legacy": visitas_legacy(session, inicio_mes, fin_mes),
         "conversaciones": contar_conversaciones(session, inicio_mes, fin_mes),
         "conversaciones_24h": contar_conversaciones(session, hace_24h, fin_mes),
+        # Usuarios que escribieron pero no recibieron respuesta (Meta rechazó el
+        # envío o el flujo no respondió): explica "el flujo no inicia".
+        "conversaciones_sin_respuesta": conversaciones_sin_respuesta(session, inicio_mes, fin_mes),
+        "sin_respuesta_24h": conversaciones_sin_respuesta(session, hace_24h, fin_mes),
         "conversaciones_por_anuncio": por_anuncio,
         "numeros_receptores": receptores,
         "receptores_ajenos": receptores_ajenos,

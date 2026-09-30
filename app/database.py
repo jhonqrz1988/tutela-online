@@ -124,6 +124,14 @@ def _migrar_esquema(conn):
                 # el literal entero (DatatypeMismatch). SQLite sí lo acepta, pero
                 # "false" es válido en ambos dialectos y evita el doble estándar.
                 conn.execute(text("ALTER TABLE visitas_landing ADD COLUMN es_bot BOOLEAN NOT NULL DEFAULT false"))
+        if "mensajes_whatsapp" in tablas_existentes:
+            columnas = {c["name"] for c in inspector.get_columns("mensajes_whatsapp")}
+            resultado["columnas"] = sorted(columnas)
+            if "metadata_json" not in columnas:
+                conn.execute(text("ALTER TABLE mensajes_whatsapp ADD COLUMN metadata_json TEXT"))
+            if "envio_estado" not in columnas:
+                # NULL = mensaje entrante cuyo envío aún no se midió (histórico).
+                conn.execute(text("ALTER TABLE mensajes_whatsapp ADD COLUMN envio_estado VARCHAR(20)"))
         resultado["ok"] = True
     except Exception as e:  # noqa: BLE001 - la migración nunca debe impedir el boot
         logger.warning(f"No se pudo ajustar el esquema: {e}")
