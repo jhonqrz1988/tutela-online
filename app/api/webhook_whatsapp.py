@@ -154,6 +154,72 @@ async def verificar_webhook_meta(request: Request):
     return {"error": "Verification failed"}
 
 
+def _texto_corto(valor, limite: int) -> str | None:
+    """Normaliza un campo de texto del payload a string acotado (o None)."""
+    if valor is None:
+        return None
+    texto = str(valor).strip()
+    return texto[:limite] if texto else None
+
+
+# Campos del bloque `referral` de Meta que se conservan: permiten reconciliar
+# la conversación con el anuncio que la originó. El resto se descarta para no
+# guardar payloads arbitrarios del remitente.
+_CAMPOS_REFERRAL = {
+    "ad_id": 50,
+    "source_id": 50,
+    "headline": 120,
+    "body": 200,
+    "source_type": 30,
+    "source_url": 200,
+    "media_type": 30,
+}
+
+
+def _aislar_origen(value: dict) -> list[dict]:
+    """Extrae el origen de cada mensaje de un ``value`` del webhook de Meta.
+
+    Devuelve una lista de dicts ``{telefono, phone_number_id, ad_id, ...}``, uno
+    por mensaje. Los anuncios click-to-WhatsApp incluyen ``referral`` con el
+    ``ad_id`` que originó el chat, y ``metadata.phone_number_id`` indica a qué
+    número del negocio llegó el mensaje (permite detectar conversaciones que
+    entran por un número distinto al configurado).
+
+    Nunca lanza: un payload inesperado devuelve lista vacía.
+    """
+    if not isinstance(value, dict):
+        return []
+    metadata = value.get("metadata") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    phone_number_id = _texto_corto(metadata.get("phone_number_id"), 40)
+
+    origenes: list[dict] = []
+    for msg in value.get("messages") or []:
+        if not isinstance(msg, dict):
+            continue
+        telefono = _texto_corto(msg.get("from"), 20)
+        if not telefono:
+            continue
+        origen = {"telefono": telefono, "phone_number_id": phone_number_id}
+        referral = msg.get("referral")
+        if isinstance(referral, dict):
+            for campo, limite in _CAMPOS_REFERRAL.items():
+                origen[campo] = _texto_corto(referral.get(campo), limite)
+        origenes.append(origen)
+    return origenes
+
+
+def _serializar_origen(origen: dict | None) -> str | None:
+    """Serializa el origen a JSON para ``MensajeWhatsApp.metadata_json``."""
+    if not origen:
+        return None
+    try:
+        return json.dumps(origen, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return None
+
+
 @router.post("/webhook/meta")
 async def webhook_meta(request: Request, session=Depends(get_session)):
     raw_body = await request.body()
@@ -175,6 +241,8 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
         for c in changes:
             value = c.get("value", {})
             messages = value.get("messages", [])
+            # Origen por número de usuario (referral/ad_id + número receptor).
+            origenes = {o["telefono"]: o for o in _aislar_origen(value)}
             for msg in messages:
                 telefono = msg.get("from", "").replace("whatsapp:", "")
                 msg_type = msg.get("type", "")
@@ -199,7 +267,10 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 
                 try:
                     logger.info(f"Webhook Meta: tipo={msg_type} de={telefono}")
-                    respuesta = await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
+                    respuesta = await procesar_mensaje(
+                        session, telefono, body_text, num_media, media_url, es_audio,
+                        origen=origenes.get(telefono),
+                    )
                     if isinstance(respuesta, dict) and respuesta.get("respuestas"):
                         respuestas.extend(respuesta["respuestas"])
                 except Exception as e:
@@ -235,14 +306,23 @@ def _borrar_radicaciones(session, tutela_ids):
 
 
 async def procesar_mensaje(
-    session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool
+    session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool,
+    origen: dict | None = None,
 ) -> dict:
     respuestas: list[str] = []
     body = (body or "").strip()
     raw_body = body
     body = body.lower()
 
-    msg_orm = MensajeWhatsApp(from_number=telefono, body=body, tipo_mensaje="audio" if es_audio else "texto", media_url=media_url)
+    msg_orm = MensajeWhatsApp(
+        from_number=telefono,
+        body=body,
+        tipo_mensaje="audio" if es_audio else "texto",
+        media_url=media_url,
+        # Origen de la conversación (ad_id del anuncio + número receptor de
+        # Meta): permite reconciliar pauta vs mensajes reales en el panel.
+        metadata_json=_serializar_origen(origen),
+    )
     session.add(msg_orm)
     session.commit()
 

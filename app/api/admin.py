@@ -23,8 +23,10 @@ from app.models.visita import VisitaLanding
 from app.services.visitas_service import (
     agrupar_por_periodo,
     agrupar_tutelas_por_periodo,
+    conversaciones_por_anuncio,
     contar_conversaciones,
     nombre_fuente,
+    numeros_receptores,
     rango_mes_utc,
     visitas_clasificadas,
     visitas_legacy,
@@ -484,6 +486,12 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         [{"created_at": f[0], "estado": f[1]} for f in filas_tutelas], "semana"
     )
 
+    # Origen real de las conversaciones (ad_id del anuncio + número receptor).
+    por_anuncio = conversaciones_por_anuncio(session, inicio_mes, fin_mes)
+    receptores = numeros_receptores(session, inicio_mes, fin_mes)
+    configured_id = (settings.meta_phone_number_id or "").strip()
+    receptores_ajenos = [r for r in receptores if r["phone_number_id"] != configured_id]
+
     visitas = {
         "total": visitas_total,
         "ultimas_24h": visitas_24h,
@@ -493,6 +501,10 @@ def admin_panel(request: Request, session=Depends(get_session), _=Depends(requir
         "legacy": visitas_legacy(session, inicio_mes, fin_mes),
         "conversaciones": contar_conversaciones(session, inicio_mes, fin_mes),
         "conversaciones_24h": contar_conversaciones(session, hace_24h, fin_mes),
+        "conversaciones_por_anuncio": por_anuncio,
+        "numeros_receptores": receptores,
+        "receptores_ajenos": receptores_ajenos,
+        "phone_number_id_configurado": configured_id,
         "por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in visitas_por_fuente],
         "clics": clics_total,
         "clics_por_fuente": [{"fuente": nombre_fuente(f), "n": n} for f, n in clics_por_fuente],

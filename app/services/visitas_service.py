@@ -3,6 +3,7 @@
 Nunca debe fallar ni ralentizar la carga de la landing: cualquier error se
 loguea y se ignora.
 """
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs
@@ -233,6 +234,80 @@ def visitas_legacy(session, inicio: datetime, fin: datetime) -> int:
             VisitaLanding.user_agent.is_(None),
         )
     ).scalar() or 0
+
+
+def _origen_de_mensaje(metadata_json: str | None) -> dict:
+    """Parsea ``MensajeWhatsApp.metadata_json`` (origen del anuncio de Meta)."""
+    if not metadata_json:
+        return {}
+    try:
+        datos = json.loads(metadata_json)
+    except (TypeError, ValueError):
+        return {}
+    return datos if isinstance(datos, dict) else {}
+
+
+def _mensajes_con_origen(session, inicio: datetime, fin: datetime):
+    """Mensajes del rango indicados que traen metadata de origen."""
+    return session.execute(
+        select(MensajeWhatsApp.from_number, MensajeWhatsApp.metadata_json).where(
+            MensajeWhatsApp.created_at >= inicio,
+            MensajeWhatsApp.created_at < fin,
+            MensajeWhatsApp.metadata_json.isnot(None),
+        )
+    ).all()
+
+
+def conversaciones_por_anuncio(session, inicio: datetime, fin: datetime) -> list[dict]:
+    """Conversaciones (teléfonos distintos) agrupadas por ``ad_id`` del anuncio.
+
+    Es la lectura que reconcilia "conversaciones que reporta Meta" con lo que
+    realmente llegó al bot: si Meta dice N pero aquí no aparece el ``ad_id``,
+    el usuario abrió el chat pero nunca escribió. Ordenado de mayor a menor.
+    """
+    por_anuncio: dict[str, dict] = {}
+    for numero, metadata_json in _mensajes_con_origen(session, inicio, fin):
+        ad_id = _origen_de_mensaje(metadata_json).get("ad_id")
+        if not ad_id:
+            continue
+        grupo = por_anuncio.setdefault(
+            ad_id, {"ad_id": ad_id, "conversaciones": set(), "headline": "", "mensajes": 0}
+        )
+        grupo["conversaciones"].add(numero)
+        grupo["mensajes"] += 1
+        if not grupo["headline"]:
+            grupo["headline"] = _origen_de_mensaje(metadata_json).get("headline") or ""
+    return sorted(
+        (
+            {
+                "ad_id": g["ad_id"],
+                "conversaciones": len(g["conversaciones"]),
+                "mensajes": g["mensajes"],
+                "headline": g["headline"],
+            }
+            for g in por_anuncio.values()
+        ),
+        key=lambda r: (-r["conversaciones"], r["ad_id"]),
+    )
+
+
+def numeros_receptores(session, inicio: datetime, fin: datetime) -> list[dict]:
+    """Números del negocio por los que entraron mensajes, con sus conversaciones.
+
+    Si aparece un ``phone_number_id`` distinto de ``META_PHONE_NUMBER_ID``, hay
+    tráfico entrando por otro número (anuncio o WABA mal configurado) donde el
+    bot responde desde el número configurado y el usuario ve otro remitente.
+    """
+    por_numero: dict[str, set] = {}
+    for numero, metadata_json in _mensajes_con_origen(session, inicio, fin):
+        phone_number_id = _origen_de_mensaje(metadata_json).get("phone_number_id")
+        if not phone_number_id:
+            continue
+        por_numero.setdefault(phone_number_id, set()).add(numero)
+    return sorted(
+        ({"phone_number_id": k, "conversaciones": len(v)} for k, v in por_numero.items()),
+        key=lambda r: (-r["conversaciones"], r["phone_number_id"]),
+    )
 
 
 def es_bot(user_agent: str | None) -> bool:
