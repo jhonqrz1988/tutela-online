@@ -134,8 +134,8 @@ class TestConsentimientoConBotones(_BaseConsentimiento):
         user = self._usuario()
         self.assertEqual(user.estado, "nuevo")
         self.assertFalse(user.consentimiento)
-        self.assertEqual(len(self.enviados), 2)
-        self.assertTrue(self.enviados[1].startswith("[BOTONES]"))
+        self.assertEqual(len(self.enviados), 1)
+        self.assertTrue(self.enviados[0].startswith("[BOTONES]"))
 
     def test_boton_si_acepto_registra_consentimiento_y_crea_tutela(self):
         """EL BUG: pulsar el botón debe avanzar el flujo, no reenviar el aviso."""
@@ -168,7 +168,8 @@ class TestConsentimientoConBotones(_BaseConsentimiento):
             "el bot se quedó reenviando el aviso de privacidad en bucle",
         )
         _, primera_pregunta = webhook_whatsapp.DATOS_PERSONALES_STEPS[0]
-        self.assertIn(primera_pregunta, respuestas)
+        cuerpo = "\n".join(respuestas)
+        self.assertIn(primera_pregunta, cuerpo)
 
     def test_boton_no_deja_usuario_rechazado(self):
         self._procesar({"type": "text", "text": {"body": "Hola"}})

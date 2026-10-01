@@ -666,7 +666,6 @@ def _reiniciar_flujo(session, user, telefono: str, respuestas: list[str]) -> Non
     session.commit()
 
     _r(respuestas, telefono, "🔄 *Flujo reiniciado.*\n\nSe borraron los datos anteriores y empiezas de cero.")
-    _r(respuestas, telefono, BIENVENIDA)
     _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto"), ("salir", "🚪 Salir")])
 
 
@@ -708,7 +707,6 @@ async def procesar_mensaje(
         user = User(telefono=telefono, estado="nuevo", consentimiento=False)
         session.add(user)
         session.commit()
-        _r(respuestas, telefono, BIENVENIDA)
         _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto"), ("salir", "🚪 Salir")])
         return {"ok": True, "respuestas": respuestas}
 
@@ -762,12 +760,7 @@ async def procesar_mensaje(
             session.add(tutela)
             session.commit()
             campo, msg = DATOS_PERSONALES_STEPS[0]
-            _r(respuestas, telefono, "✅ *Consentimiento registrado.*\n\nAhora necesito tus datos personales.")
-            _r(respuestas, telefono, msg)
-            # Aviso de salida: se dice aquí, al empezar a pedir datos, que en
-            # cualquier momento se puede empezar de cero. Sin esto, quien se
-            # equivoca en un campo no sabe cómo escapar del flujo.
-            _r(respuestas, telefono, AVISO_SALIR)
+            _r(respuestas, telefono, f"✅ *Consentimiento registrado.*\n\nAhora necesito tus datos personales.\n\n{msg}")
             return {"ok": True, "respuestas": respuestas}
         elif body in ("no", "no acepto", "cancelar"):
             user.estado = "rechazado"
@@ -944,7 +937,6 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         else:
             tutela.estado = "confirmar_datos_personales"
             session.commit()
-            _r(respuestas, telefono, "✅ *Datos personales registrados.*")
             _mostrar_confirmacion_datos(telefono, respuestas, datos)
             return {"ok": True, "respuestas": respuestas}
         return {"ok": True, "respuestas": respuestas}
@@ -956,8 +948,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
         if body in ("1", "si", "sí", "correcto", "correctos", "confirmar"):
             tutela.estado = "narracion"
             session.commit()
-            _r(respuestas, telefono, "✅ *¡Datos confirmados!*\n\nAhora cuéntame tu caso.")
-            _r(respuestas, telefono, NARRACION)
+            _r(respuestas, telefono, f"✅ *¡Datos confirmados!*\n\n{NARRACION}")
             return {"ok": True, "respuestas": respuestas}
         elif body in ("2", "corregir", "modificar", "no"):
             tutela.estado = "corrigiendo_datos_personales"
@@ -1420,8 +1411,11 @@ def _menu_campos_personales() -> str:
 
 
 def _mostrar_confirmacion_datos(telefono: str, respuestas: list[str], datos: dict) -> None:
-    _r(respuestas, telefono, _resumen_datos_personales(datos))
-    _b(respuestas, telefono, "¿Tus datos personales son correctos?", [("1", "✅ Sí, correctos"), ("2", "✏️ Corregir")])
+    _b(respuestas, telefono,
+       _resumen_datos_personales(datos) + "\n\n"
+       "Si te equivocaste, copia *salir* para reiniciar y borrar lo capturado.\n\n"
+       "¿Tus datos personales son correctos?",
+       [("1", "✅ Sí, correctos"), ("2", "✏️ Corregir"), ("salir", "🚪 Salir")])
 
 
 # Hosts permitidos para descargar archivos adjuntos (soportes de WhatsApp).
@@ -1683,23 +1677,12 @@ async def _generar_con_verificacion(session, tutela, datos: dict, telefono: str,
 
 CONSENTIMIENTO_VERSION = "v1.0"
 
-BIENVENIDA = (
-    "👋 *¡Hola! Soy el asistente de TutelApp.*\n\n"
-    "Soy una herramienta tecnológica diseñada para ayudarte a redactar "
-    "tu propia acción de tutela. Importante: No soy un abogado ni represento "
-    "a la Rama Judicial. Mi función es facilitarte la creación del documento "
-    "que tú mismo presentarás.\n\n"
-    "Comencemos con la autorización de datos."
-)
-
-AVISO_SALIR = (
-    "🚪 *¿Te equivocaste en algún dato?* Escribe *Salir* en cualquier momento "
-    "y borramos lo capturado para empezar de cero."
-)
-
 def aviso_privacidad() -> str:
     """Aviso de tratamiento de datos con el link según el dominio configurado (app_url)."""
     return (
+        "👋 *¡Hola! Soy el asistente de TutelApp.*\n\n"
+        "No soy un abogado ni represento a la Rama Judicial. Te ayudo a redactar "
+        "tu propia acción de tutela.\n\n"
         "📄 *Aviso de Tratamiento de Datos*\n\n"
         "En TutelApp protegemos tu información. Para ayudarte con tu tutela, "
         "trataremos tus datos personales y de salud bajo la Ley 1581 de 2012.\n\n"
