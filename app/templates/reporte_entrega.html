@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TutelApp - Reporte de entrega</title>
+<link rel="icon" type="image/png" href="/static/tutelapp_icon.png">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+  .header { background: #1a237e; color: #fff; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; }
+  .header h1 { font-size: 20px; }
+  .header a { color: #c5cae9; font-size: 14px; text-decoration: none; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 30px; }
+  .stat-card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .stat-card .num { font-size: 28px; font-weight: bold; color: #1a237e; }
+  .stat-card .label { font-size: 13px; color: #666; margin-top: 5px; }
+  .stat-card.ok .num { color: #2e7d32; }
+  .stat-card.mal .num { color: #c62828; }
+  .stat-card.aviso .num { color: #e65100; }
+  .filtros { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .filtros select { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+  .filtros label { font-size: 13px; color: #666; }
+  table { width: 100%; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 30px; }
+  th { background: #fafafa; padding: 12px 15px; text-align: left; font-size: 12px; text-transform: uppercase; color: #666; }
+  td { padding: 12px 15px; border-top: 1px solid #eee; font-size: 14px; }
+  td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; }
+  .badge-success { background: #e8f5e9; color: #2e7d32; }
+  .badge-warning { background: #fff3e0; color: #e65100; }
+  .badge-info { background: #e3f2fd; color: #1565c0; }
+  .badge-error { background: #fce4ec; color: #c62828; }
+  .badge-default { background: #eceff1; color: #455a64; }
+  h2 { font-size: 16px; margin: 0 0 10px; color: #1a237e; }
+  .nota { background: #fff; border-left: 4px solid #e65100; border-radius: 6px; padding: 12px 15px; font-size: 13px; color: #555; margin-bottom: 25px; }
+  .vacio { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #888; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .pie { font-size: 12px; color: #888; margin-top: 25px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>TutelApp · Reporte de entrega</h1>
+  <a href="/admin">← Volver al panel</a>
+</div>
+
+<div class="container">
+  <form class="filtros" method="get" action="/admin/reporte-entrega">
+    <label for="dias">Ventana:</label>
+    <select id="dias" name="dias" onchange="this.form.submit()">
+      {% for d in opciones_dias %}
+      <option value="{{ d }}" {% if d == dias %}selected{% endif %}>últimos {{ d }} días</option>
+      {% endfor %}
+    </select>
+    <span class="pie" style="margin:0">Generado: {{ reporte.generado }}</span>
+  </form>
+
+  <div class="nota">{{ reporte.nota }}</div>
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="num">{{ reporte.resumen.numeros_que_escribieron }}</div>
+      <div class="label">Escribieron en la ventana</div>
+    </div>
+    <div class="stat-card ok">
+      <div class="num">{{ reporte.resumen.con_respuesta_confirmada }}</div>
+      <div class="label">Con respuesta confirmada</div>
+    </div>
+    <div class="stat-card mal">
+      <div class="num">{{ reporte.resumen.con_envio_fallido }}</div>
+      <div class="label">Meta rechazó el envío</div>
+    </div>
+    <div class="stat-card aviso">
+      <div class="num">{{ reporte.resumen.sin_respuesta }}</div>
+      <div class="label">Sin rastro de respuesta</div>
+    </div>
+  </div>
+
+  {% if reporte.sin_respuesta %}
+  <h2>Números que escribieron y no hay ninguna salida registrada</h2>
+  <table>
+    <tr><th>Teléfono</th><th>Mensajes</th><th>Último mensaje</th></tr>
+    {% for fila in reporte.sin_respuesta %}
+    <tr>
+      <td class="mono">+{{ fila.telefono }}</td>
+      <td>{{ fila.mensajes }}</td>
+      <td class="mono">{{ fila.ultimo or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if reporte.fallidos %}
+  <h2>Envíos que Meta no entregó</h2>
+  <table>
+    <tr><th>Teléfono</th><th>Estado</th><th>Código</th><th>Motivo</th><th>Último mensaje</th></tr>
+    {% for fila in reporte.fallidos %}
+    <tr>
+      <td class="mono">+{{ fila.telefono }}</td>
+      <td><span class="badge badge-error">{{ fila.estado }}</span></td>
+      <td class="mono">{{ fila.codigo if fila.codigo is not none else "—" }}</td>
+      <td>{{ fila.motivo }}</td>
+      <td class="mono">{{ fila.ultimo or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if reporte.errores_meta %}
+  <h2>Errores de Meta (histórico)</h2>
+  <table>
+    <tr><th>Código</th><th>Veces</th><th>Lectura</th></tr>
+    {% for err in reporte.errores_meta %}
+    <tr>
+      <td class="mono">{{ err.codigo }}</td>
+      <td>{{ err.veces }}</td>
+      <td>{{ err.motivo }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
+  {% if reporte.basura_del_bug.usuarios_sin_numero %}
+  <h2>Basura del bug de <code>from</code> vacío</h2>
+  <div class="nota">
+    Hay <strong>{{ reporte.basura_del_bug.usuarios_sin_numero }}</strong> usuario(s) y
+    <strong>{{ reporte.basura_del_bug.tutelas_sin_numero }}</strong> tutela(s) guardados sin
+    número real: los dejó el webhook cuando recibía un payload sin <code>from</code>. Ya no se
+    generan más y no afectan a ningún número real; se pueden borrar.
+  </div>
+  {% endif %}
+
+  {% if not reporte.sin_respuesta and not reporte.fallidos %}
+  <div class="vacio">Sin incidencias en la ventana seleccionada.</div>
+  {% endif %}
+
+  <p class="pie">Datos crudos: <a href="/admin/api/reporte-entrega?dias={{ dias }}">/admin/api/reporte-entrega</a></p>
+</div>
+</body>
+</html>

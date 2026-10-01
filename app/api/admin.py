@@ -659,6 +659,43 @@ def estado_scheduler(request: Request, _=Depends(require_admin)):
     }
 
 
+@router.get("/reporte-entrega", response_class=HTMLResponse)
+def reporte_entrega_html(
+    request: Request, session=Depends(get_session), _=Depends(require_admin)
+):
+    """Pantalla: quién escribió y nunca recibió respuesta, y por qué."""
+    from app.services.entrega_service import DIAS_POR_DEFECTO, DIAS_MAXIMO
+    from app.services.entrega_service import reporte_entrega as _reporte
+
+    dias = request.query_params.get("dias") or DIAS_POR_DEFECTO
+    try:
+        dias = int(dias)
+    except (TypeError, ValueError):
+        dias = DIAS_POR_DEFECTO
+    dias = max(1, min(dias, DIAS_MAXIMO))
+
+    html = env.get_template("reporte_entrega.html").render(
+        reporte=_reporte(session, dias=dias),
+        dias=dias,
+        opciones_dias=[d for d in (1, 7, 15, 30, 60, 90) if d <= DIAS_MAXIMO],
+    )
+    return HTMLResponse(html)
+
+
+@router.get("/api/reporte-entrega")
+def reporte_entrega(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    """Quién escribió y nunca recibió respuesta, y qué motivo dio Meta."""
+    from app.services.entrega_service import DIAS_POR_DEFECTO
+    from app.services.entrega_service import reporte_entrega as _reporte
+
+    dias = request.query_params.get("dias") or DIAS_POR_DEFECTO
+    try:
+        dias = int(dias)
+    except (TypeError, ValueError):
+        dias = DIAS_POR_DEFECTO
+    return _reporte(session, dias=dias)
+
+
 @router.get("/api/wa-status")
 def estado_numero_whatsapp(request: Request, _=Depends(require_admin)):
     """Estado del número de WhatsApp (code_verification_status, etc.) vía Graph API."""
