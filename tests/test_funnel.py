@@ -19,6 +19,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.database as database
 from app.database import Base
+from app.models.clic import ClicWhatsApp
 from app.models.tutela import Tutela
 from app.models.user import User
 from app.models.visita import VisitaLanding
@@ -168,8 +169,8 @@ class TestFunnel(unittest.TestCase):
             funnel(self.session, dias=30)["alcance"]["tutelas_creadas"], 1
         )
 
-    def test_detecta_quien_entro_y_abandono_sin_tutela(self):
-        """Escribir y quedarse sin tutela viva = entró y se fue."""
+    def test_detecta_quien_escribio_y_nunca_creo_tutela(self):
+        """Escribir y quedarse sin tutela = entró y se fue."""
         select_one_user(self.session, "573000000010")
         self.session.add(MensajeWhatsApp(
             from_number="573000000010", body="hola", es_recibido=True,
@@ -177,12 +178,47 @@ class TestFunnel(unittest.TestCase):
         ))
         self.session.commit()
         d = funnel(self.session)
-        self.assertEqual(d["alcance"]["entraron_y_salieron_sin_tutela"], 1)
+        self.assertEqual(d["alcance"]["escribieron_sin_arrancar"], 1)
+
+    def test_el_primer_mensaje_no_cuenta_como_abandono(self):
+        """El mensaje inicial llega antes de que exista la tutela.
+
+        Si eso se contara como abandono, TODO el que empieza una tutela quedaría
+        marcado como que se fue, y el embudo se iría a cero por un falso positivo.
+        """
+        user, _ = _tutela(self.session, "573000000011", "recogiendo_datos")
+        self.session.add(MensajeWhatsApp(
+            from_number="573000000011", body="hola", es_recibido=True,
+            created_at=AHORA, tutela_id=None,   # llegó antes de crear la tutela
+        ))
+        self.session.commit()
+        d = funnel(self.session)
+        self.assertEqual(d["alcance"]["escribieron_sin_arrancar"], 0)
+        self.assertEqual(d["alcance"]["tutelas_creadas"], 1)
 
     def test_declara_las_cejas_del_embudo(self):
         d = funnel(self.session)
         self.assertTrue(d["notas"], "un embudo sin límites declarados se lee mal")
         self.assertTrue(any("historial" in n for n in d["notas"]))
+
+    def test_expone_las_fugas_entre_etapas_del_alcance(self):
+        self.session.add(VisitaLanding(fuente="ig", es_bot=False))
+        self.session.add(ClicWhatsApp(fuente="ig"))
+        select_one_user(self.session, "573000000012")
+        self.session.add(MensajeWhatsApp(
+            from_number="573000000012", body="hola", es_recibido=True, created_at=AHORA,
+        ))
+        self.session.commit()
+        d = funnel(self.session)
+        origins = [f["de"] for f in d["fugas"]]
+        destinos = [f["a"] for f in d["fugas"]]
+        self.assertIn("Visitó la landing", origins)
+        # El último paso aparece como destino de la fuga anterior, no como origen.
+        self.assertIn("Inició una tutela", destinos)
+        self.assertNotIn("Inició una tutela", origins)
+        fuga_inicio = d["fugas"][0]
+        self.assertEqual(fuga_inicio["de_n"], 1)
+        self.assertEqual(fuga_inicio["a_n"], 1)
 
 
 if __name__ == "__main__":

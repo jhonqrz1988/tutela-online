@@ -109,22 +109,26 @@ def funnel(session, dias: int | None = None) -> dict:
         select(Tutela).where(*filtros_tutela)
     ).scalars().all()
 
-    # Huella del abandono: escribió, no tiene tutela viva, y sus mensajes
-    # quedaron sin tutela (tutela_id NULL). Son los que entraron y se fueron
-    # (salir / reinicio / el flow se borró).
-    huerfanos = 0
-    filas_msg = session.execute(
-        select(distinct(MensajeWhatsApp.from_number), MensajeWhatsApp.tutela_id)
-        .where(MensajeWhatsApp.es_recibido.is_(True), *filtros_msg)
-    ).all()
-    telefonos_huerfanos = {
-        tel for tel, tid in filas_msg if tid is None
+    # La fuga grande: números que escribieron pero nunca llegaron a tener una
+    # tutela. Ojo con el error fácil aquí: el PRIMER mensaje entrante del
+    # usuario llega antes de que exista la tutela (el bot la crea después), así
+    # que "tiene algún mensaje con tutela_id NULL" es certainísimo de todos, no
+    # solo de los que abandonaron. Lo que distingue a quien se fue es no tener
+    # NINGUNA tutela viva.
+    telefonos_que_escribieron = {
+        tel for (tel,) in session.execute(
+            select(distinct(MensajeWhatsApp.from_number))
+            .where(MensajeWhatsApp.es_recibido.is_(True), *filtros_msg)
+        ).all()
+        if tel
     }
-    if telefonos_huerfanos:
-        huerfanos = session.execute(
-            select(func.count(distinct(User.id)))
-            .where(User.telefono.in_(telefonos_huerfanos))
-        ).scalar() or 0
+    telefonos_con_tutela = {
+        tel for (tel,) in session.execute(
+            select(distinct(User.telefono)).join(Tutela, Tutela.user_id == User.id)
+        ).all()
+        if tel
+    }
+    sin_arrancar = len(telefonos_que_escribieron - telefonos_con_tutela)
 
     n_tutelas = len(tutelas)
     etapas = []
@@ -153,6 +157,32 @@ def funnel(session, dias: int | None = None) -> dict:
                 "pct": round(100.0 * perdida / a["n"], 1) if a["n"] else 0.0,
             }
 
+    # Fuga entre etapas consecutivas del alcance. Se muestra aunque los números no
+    # sean monótonos (escribir > consentimiento es normal: muchos escribe una vez
+    # y se van antes de consentir).
+    orden_alcance = [
+        ("visitas_landing_humanas", "Visitó la landing"),
+        ("clics_whatsapp", "Clic en el botón de WhatsApp"),
+        ("numeros_que_escribieron", "Escribió al bot"),
+        ("usuarios_con_consentimiento", "Aceptó y se identificó"),
+        ("tutelas_creadas", "Inició una tutela"),
+    ]
+    fugas = []
+    valores = {
+        "visitas_landing_humanas": visitas,
+        "clics_whatsapp": clics,
+        "numeros_que_escribieron": escritores,
+        "usuarios_con_consentimiento": usuarios,
+        "tutelas_creadas": n_tutelas,
+    }
+    for (ca, la), (cb, lb) in zip(orden_alcance, orden_alcance[1:], strict=False):
+        a, b = valores[ca], valores[cb]
+        fugas.append({
+            "de": la, "a": lb, "de_n": a, "a_n": b,
+            "perdidos": max(0, a - b),
+            "pct_pasa": round(100.0 * b / a, 1) if a else None,
+        })
+
     return {
         "ok": True,
         "dias": dias,
@@ -162,8 +192,9 @@ def funnel(session, dias: int | None = None) -> dict:
             "numeros_que_escribieron": escritores,
             "usuarios_con_consentimiento": usuarios,
             "tutelas_creadas": n_tutelas,
-            "entraron_y_salieron_sin_tutela": huerfanos,
+            "escribieron_sin_arrancar": sin_arrancar,
         },
+        "fugas": fugas,
         "etapas": etapas,
         "mayor_caida": mayor_caida,
         "por_estado": dict(sorted(por_estado.items(), key=lambda kv: -kv[1])),
@@ -173,5 +204,8 @@ def funnel(session, dias: int | None = None) -> dict:
         "notas": [
             "No hay historial de estados: 'alcanzó el paso' se infiere del estado actual.",
             "Los que abandonaron no se pueden ubicar en un paso concreto.",
+            "Visitas y clics son EVENTOS (cada recarga cuenta), no personas: por eso "
+            "el porcentaje entre ellos no es una tasa de conversión de personas.",
+            "tutelas_creadas cuenta tutelas, no personas: un usuario puede tener varias.",
         ],
     }
