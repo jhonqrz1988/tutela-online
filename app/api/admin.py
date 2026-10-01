@@ -666,6 +666,8 @@ def reporte_entrega_html(
     """Pantalla: quién escribió y nunca recibió respuesta, y por qué."""
     from app.services.entrega_service import DIAS_POR_DEFECTO, DIAS_MAXIMO
     from app.services.entrega_service import reporte_entrega as _reporte
+    from app.services.seguimiento_service import HORAS_INACTIVO_POR_DEFECTO
+    from app.services.seguimiento_service import listar_atrapados as _listar
 
     dias = request.query_params.get("dias") or DIAS_POR_DEFECTO
     try:
@@ -676,10 +678,33 @@ def reporte_entrega_html(
 
     html = env.get_template("reporte_entrega.html").render(
         reporte=_reporte(session, dias=dias),
+        atrapados=_listar(session),
+        horas_inactivo=HORAS_INACTIVO_POR_DEFECTO,
         dias=dias,
         opciones_dias=[d for d in (1, 7, 15, 30, 60, 90) if d <= DIAS_MAXIMO],
     )
     return HTMLResponse(html)
+
+
+@router.get("/api/atrapados")
+def listar_atrapados(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    """Personas con tutela en curso que llevan demasiado tiempo sin escribir."""
+    from app.services.seguimiento_service import listar_atrapados as _listar
+
+    horas = request.query_params.get("horas") or 24
+    try:
+        horas = int(horas)
+    except (TypeError, ValueError):
+        horas = 24
+    return {"ok": True, "atrapados": _listar(session, horas_inactivo=horas)}
+
+
+@router.post("/api/atrapados/{user_id}/desbloquear")
+def desbloquear_atrapado(user_id: int, session=Depends(get_session), _=Depends(require_admin)):
+    """Reinicia el flujo de una persona atrapada para que pueda empezar de nuevo."""
+    from app.services.seguimiento_service import desbloquear_usuario
+
+    return desbloquear_usuario(session, user_id)
 
 
 @router.get("/api/reporte-entrega")

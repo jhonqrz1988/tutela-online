@@ -5,7 +5,9 @@ la plantilla se renderice con los números que se insertaron.
 """
 import unittest
 
-from sqlalchemy import create_engine
+import datetime
+
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.testclient import TestClient
@@ -14,6 +16,8 @@ from app.api.admin import SESSION_COOKIE, _crear_sesion
 from app.config import settings
 from app.database import Base, get_session
 from app.main import app
+from app.models.tutela import Tutela
+from app.models.user import User
 from app.models.whatsapp import EnvioWhatsApp
 
 
@@ -94,6 +98,86 @@ class TestReporteEntregaHTTP(unittest.TestCase):
             follow_redirects=False,
         )
         self.assertEqual(resp.status_code, 200)
+
+
+class TestAtrapadosHTTP(unittest.TestCase):
+    """Los endpoints de atrapados/desbloquear deben exigir login."""
+
+    def setUp(self):
+        settings.secret_key = "test-key-atrapados"
+        self.engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=self.engine)
+        self.session = sessionmaker(bind=self.engine, expire_on_commit=False)()
+
+        user = User(telefono="573000000999", estado="activo", consentimiento=True)
+        self.session.add(user)
+        self.session.commit()
+        tutela = Tutela(
+            user_id=user.id, tipo="salud", estado="recogiendo_datos",
+            datos_json="{}", created_at=datetime.datetime(2020, 1, 1),
+        )
+        self.session.add(tutela)
+        self.session.commit()
+
+        self.client = TestClient(app)
+        self.client.__enter__()
+
+        def _override():
+            yield self.session
+
+        app.dependency_overrides[get_session] = _override
+
+        def _teardown():
+            app.dependency_overrides.pop(get_session, None)
+            self.client.__exit__(None, None, None)
+            self.client.close()
+
+        self.addCleanup(_teardown)
+
+    def test_listar_atrapados_exige_login(self):
+        resp = self.client.get("/admin/api/atrapados", follow_redirects=False)
+        self.assertIn(resp.status_code, (302, 303, 401))
+
+    def test_listar_atrapados_devuelve_el_atrapado(self):
+        resp = self.client.get(
+            "/admin/api/atrapados",
+            cookies={SESSION_COOKIE: _crear_sesion()},
+        )
+        self.assertEqual(resp.status_code, 200)
+        cuerpo = resp.json()
+        self.assertTrue(cuerpo["ok"])
+        telefonos = [a["telefono"] for a in cuerpo["atrapados"]]
+        self.assertIn("573000000999", telefonos)
+
+    def test_desbloquear_exige_login(self):
+        resp = self.client.post("/admin/api/atrapados/1/desbloquear", follow_redirects=False)
+        self.assertIn(resp.status_code, (302, 303, 401))
+
+    def test_desbloquear_reinicia_el_usuario(self):
+        resp = self.client.post(
+            "/admin/api/atrapados/1/desbloquear",
+            cookies={SESSION_COOKIE: _crear_sesion()},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["ok"])
+        # La tutela debe estar borrada.
+        self.assertEqual(self.session.execute(select(Tutela)).scalars().all(), [])
+        user = self.session.execute(select(User)).scalars().first()
+        self.assertEqual(user.estado, "nuevo")
+
+    def test_la_pagina_muestra_los_atrapados(self):
+        resp = self.client.get(
+            "/admin/reporte-entrega",
+            cookies={SESSION_COOKIE: _crear_sesion()},
+            follow_redirects=False,
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Desbloquear", resp.text)
+        self.assertIn("573000000999", resp.text)
 
 
 if __name__ == "__main__":

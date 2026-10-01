@@ -40,6 +40,11 @@
   .nota { background: #fff; border-left: 4px solid #e65100; border-radius: 6px; padding: 12px 15px; font-size: 13px; color: #555; margin-bottom: 25px; }
   .vacio { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #888; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
   .pie { font-size: 12px; color: #888; margin-top: 25px; }
+  .btn-desbloquear { background: #1a237e; color: #fff; border: 0; padding: 7px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+  .btn-desbloquear:hover { background: #283593; }
+  .btn-desbloquear:disabled { background: #9fa8da; cursor: default; }
+  .ok-msg { color: #2e7d32; font-size: 12px; }
+  .err-msg { color: #c62828; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -79,6 +84,34 @@
       <div class="label">Sin rastro de respuesta</div>
     </div>
   </div>
+
+  {% if atrapados %}
+  <h2>Atrapados: necesitan reinicio manual</h2>
+  <div class="nota">
+    Con el comando <strong>Salir</strong> ya arreglado, quien se equivoca puede
+    reiniciar solo. Estas personas quedaron atascadas <em>antes</em> del arreglo
+    (el bot les pedía un dato y no tenían salida). Su tutela está en curso, no
+    llegó a estado final y llevan más de {{ horas_inactivo }} h sin escribir
+    (ya fuera de la ventana de 24 h de Meta). Pulsa <strong>Desbloquear</strong>
+    para reiniciar su flujo: la próxima vez que escriban,
+    el bot los atiende desde el principio.
+  </div>
+  <table>
+    <tr><th>Teléfono</th><th>Estado</th><th>Última actividad</th><th>Acción</th></tr>
+    {% for fila in atrapados %}
+    <tr>
+      <td class="mono">+{{ fila.telefono }}</td>
+      <td><span class="badge badge-mal">{{ fila.estado }}</span></td>
+      <td class="mono">{{ fila.ultima_actividad or "—" }}</td>
+      <td>
+        <button class="btn-desbloquear" onclick="desbloquear({{ fila.user_id }}, '{{ fila.telefono }}', this)">
+          Desbloquear
+        </button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
 
   <h2>Conversaciones de la ventana</h2>
   <table>
@@ -173,5 +206,26 @@
 
   <p class="pie">Datos crudos: <a href="/admin/api/reporte-entrega?dias={{ dias }}">/admin/api/reporte-entrega</a></p>
 </div>
+
+<script>
+async function desbloquear(userId, telefono, btn) {
+  if (!confirm('¿Reiniciar el flujo de +' + telefono + '?\n\nSe borrará la tutela en curso y volverá al inicio. El historial de mensajes se conserva.')) return;
+  btn.disabled = true;
+  btn.textContent = 'Desbloqueando...';
+  try {
+    const r = await fetch('/admin/api/atrapados/' + userId + '/desbloquear', { method: 'POST' });
+    const j = await r.json();
+    if (j.ok) {
+      btn.textContent = '✓ Listo';
+    } else {
+      btn.textContent = 'Error';
+      btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + (j.error || 'falló') + '</span>');
+    }
+  } catch (e) {
+    btn.textContent = 'Error';
+    btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + e.message + '</span>');
+  }
+}
+</script>
 </body>
 </html>
