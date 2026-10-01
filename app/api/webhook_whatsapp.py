@@ -16,7 +16,7 @@ import aiofiles
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.config import settings
 from app.database import get_session
@@ -403,6 +403,41 @@ def _borrar_radicaciones(session, tutela_ids):
         session.delete(r)
 
 
+def _liberar_tutelas(session, tutela_ids) -> None:
+    """Deja borrables las tutelas: rompe todas las referencias que apuntan a ellas.
+
+    ``tutelas.id`` está referenciado por cinco columnas y NINGUNA tiene
+    ``ondelete``: cita_pendientes, radicaciones, pasos_radicacion (vía
+    radicaciones), mensajes_whatsapp y envios_whatsapp. Las tres primeras se
+    borran; las dos últimas se **desanclan con tutela_id = NULL**.
+
+    Sin este paso, en PostgreSQL el ``DELETE`` de la tutela lanza
+    ForeignKeyViolation, la transacción se revierte entera y el reinicio no
+    ocurre: el sintoma es "salir no hace nada" y el usuario queda atrapado
+    (bug reportado en producción).
+
+    Desanclar en vez de borrar conserva el historial: los mensajes (con su
+    ``envio_estado``) y los envíos con su wamid son lo único que explica por qué
+    un número no avanzó, y el reporte de entrega depende de ellos.
+    """
+    if not tutela_ids:
+        return
+    session.execute(
+        update(MensajeWhatsApp)
+        .where(MensajeWhatsApp.tutela_id.in_(tutela_ids))
+        .values(tutela_id=None)
+    )
+    session.execute(
+        update(EnvioWhatsApp)
+        .where(EnvioWhatsApp.tutela_id.in_(tutela_ids))
+        .values(tutela_id=None)
+    )
+    session.execute(
+        delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids))
+    )
+    _borrar_radicaciones(session, tutela_ids)
+
+
 # ═══════════════════════════════════════════════════════════════════
 # ENTREGA DE LA RESPUESTA (diagnóstico "escribió y no le respondió")
 # ═══════════════════════════════════════════════════════════════════
@@ -618,9 +653,9 @@ def _reiniciar_flujo(session, user, telefono: str, respuestas: list[str]) -> Non
     tutela_ids = session.execute(
         select(Tutela.id).where(Tutela.user_id == user.id)
     ).scalars().all()
-    if tutela_ids:
-        session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
-        _borrar_radicaciones(session, tutela_ids)
+    # Desancla mensajes/envíos y borra citas/radicaciones ANTES del DELETE de la
+    # tutela; si falta algo, PostgreSQL revierte todo y "salir" no hace nada.
+    _liberar_tutelas(session, tutela_ids)
     for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
         session.delete(t)
 
@@ -688,11 +723,14 @@ async def procesar_mensaje(
 
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
     if body in ("eliminar", "eliminar mis datos", "borrar", "borrar mis datos"):
-        session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
         tutela_ids = session.execute(select(Tutela.id).where(Tutela.user_id == user.id)).scalars().all()
-        if tutela_ids:
-            session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
-            _borrar_radicaciones(session, tutela_ids)
+        # Desancla primero: sin esto el DELETE de la tutela revierte todo
+        # (mismo bug que "salir") y el usuario nunca lograría borrar sus datos.
+        _liberar_tutelas(session, tutela_ids)
+        # Borrado efectivo (derecho de supresión, Ley 1581): aquí sí se va el
+        # historial, incluidos los envíos, porque el usuario lo pidió.
+        session.execute(delete(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono))
+        session.execute(delete(EnvioWhatsApp).where(EnvioWhatsApp.from_number == telefono))
         for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
             session.delete(t)
         session.delete(user)

@@ -16,7 +16,7 @@ import datetime
 import logging
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 
 from app.models.tutela import Tutela
 from app.models.user import User
@@ -100,17 +100,15 @@ def desbloquear_usuario(session, user_id: int) -> dict:
         return {"ok": False, "error": "Usuario no encontrado"}
 
     try:
-        from app.api.webhook_whatsapp import _borrar_radicaciones
-        from app.models.cita_legal import CitaPendiente
+        from app.api.webhook_whatsapp import _liberar_tutelas
 
         tutela_ids = session.execute(
             select(Tutela.id).where(Tutela.user_id == user.id)
         ).scalars().all()
-        if tutela_ids:
-            session.execute(
-                delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids))
-            )
-            _borrar_radicaciones(session, tutela_ids)
+        # Desancla mensajes/envíos y borra citas/radicaciones ANTES del DELETE:
+        # sin esto el borrado de la tutela revierte la transacción entera
+        # (ForeignKeyViolation) y el desbloqueo no ocurre.
+        _liberar_tutelas(session, tutela_ids)
         for t in session.execute(
             select(Tutela).where(Tutela.user_id == user.id)
         ).scalars():
