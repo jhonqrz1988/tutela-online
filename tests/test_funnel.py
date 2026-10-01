@@ -196,6 +196,29 @@ class TestFunnel(unittest.TestCase):
         self.assertEqual(d["alcance"]["escribieron_sin_arrancar"], 0)
         self.assertEqual(d["alcance"]["tutelas_creadas"], 1)
 
+    def test_perfila_a_quien_escribio_y_no_arranco(self):
+        """Distinguir 'escribió una vez y se fue' de 'conversó y no lo jalamos'."""
+        for tel, veces in (("573000000020", 1), ("573000000021", 1),
+                           ("573000000022", 3), ("573000000023", 7)):
+            select_one_user(self.session, tel)
+            for _ in range(veces):
+                self.session.add(MensajeWhatsApp(
+                    from_number=tel, body="hola", es_recibido=True, created_at=AHORA,
+                ))
+        # Uno que sí tiene tutela: no debe entrar en este perfil.
+        _tutela(self.session, "573000000024", "recogiendo_datos")
+        for _ in range(9):
+            self.session.add(MensajeWhatsApp(
+                from_number="573000000024", body="hola", es_recibido=True, created_at=AHORA,
+            ))
+        self.session.commit()
+
+        p = funnel(self.session)["perfil_sin_arrancar"]
+        self.assertEqual(p["con_1_mensaje"], 2)
+        self.assertEqual(p["con_2_o_3"], 1)
+        self.assertEqual(p["con_4_mas"], 1)
+        self.assertEqual(p["mensajes_totales"], 1 + 1 + 3 + 7)
+
     def test_declara_las_cejas_del_embudo(self):
         d = funnel(self.session)
         self.assertTrue(d["notas"], "un embudo sin límites declarados se lee mal")

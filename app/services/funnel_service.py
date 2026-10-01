@@ -130,6 +130,35 @@ def funnel(session, dias: int | None = None) -> dict:
     }
     sin_arrancar = len(telefonos_que_escribieron - telefonos_con_tutela)
 
+    # Perfil de los que escribieron y no arrancaron. Dice si bastó un mensaje y
+    # se fueron (nunca entraron al flujo) o si sí conversaron (el bot no los jaló).
+    perfil_sin_arrancar = {"con_1_mensaje": 0, "con_2_o_3": 0, "con_4_mas": 0,
+                           "con_audio": 0, "mensajes_totales": 0}
+    sin_arrancar_tels = telefonos_que_escribieron - telefonos_con_tutela
+    if sin_arrancar_tels:
+        conteo = session.execute(
+            select(MensajeWhatsApp.from_number, func.count()).where(
+                MensajeWhatsApp.es_recibido.is_(True),
+                MensajeWhatsApp.from_number.in_(sin_arrancar_tels),
+            ).group_by(MensajeWhatsApp.from_number)
+        ).all()
+        for _tel, n in conteo:
+            perfil_sin_arrancar["mensajes_totales"] += n
+            if n == 1:
+                perfil_sin_arrancar["con_1_mensaje"] += 1
+            elif n <= 3:
+                perfil_sin_arrancar["con_2_o_3"] += 1
+            else:
+                perfil_sin_arrancar["con_4_mas"] += 1
+        con_audio = session.execute(
+            select(func.count(distinct(MensajeWhatsApp.from_number))).where(
+                MensajeWhatsApp.es_recibido.is_(True),
+                MensajeWhatsApp.from_number.in_(sin_arrancar_tels),
+                MensajeWhatsApp.tipo_mensaje == "audio",
+            )
+        ).scalar() or 0
+        perfil_sin_arrancar["con_audio"] = con_audio
+
     n_tutelas = len(tutelas)
     etapas = []
     for i, (clave, etiqueta, _estados) in enumerate(FUNIL_ESCALERA):
@@ -194,6 +223,7 @@ def funnel(session, dias: int | None = None) -> dict:
             "tutelas_creadas": n_tutelas,
             "escribieron_sin_arrancar": sin_arrancar,
         },
+        "perfil_sin_arrancar": perfil_sin_arrancar,
         "fugas": fugas,
         "etapas": etapas,
         "mayor_caida": mayor_caida,
