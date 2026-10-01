@@ -803,6 +803,21 @@ def recordatorios_auditoria(request: Request, session=Depends(get_session), _=De
     }
 
 
+@router.get("/api/funnel")
+def funnel_endpoint(request: Request, dias: int | None = None,
+                    session=Depends(get_session), _=Depends(require_admin)):
+    """Embudo de conversión: visitas -> escritura -> tutela -> radicada.
+
+    Solo lectura. Sin ``dias`` devuelve el histórico total; con ``?dias=30`` la
+    ventana reciente.
+    """
+    from app.services.funnel_service import funnel
+
+    if dias is not None:
+        dias = max(1, min(dias, 365))
+    return funnel(session, dias=dias)
+
+
 @router.post("/api/recordatorios/enviar")
 async def recordatorio_prueba(request: Request, session=Depends(get_session), _=Depends(require_admin)):
     """Envía un recordatorio de prueba a un número (para testear con el propio).
