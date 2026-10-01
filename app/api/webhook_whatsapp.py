@@ -157,6 +157,16 @@ async def verificar_webhook_meta(request: Request):
     return {"error": "Verification failed"}
 
 
+def _numero_util(telefono: str | None) -> bool:
+    """True si el teléfono trae dígitos reales (no solo prefijo o símbolos).
+
+    Evita que un payload con ``from`` vacío/ausente termine enviando a Meta un
+    ``to: ""`` (HTTP 400 "The parameter to is required") y, peor, crees un
+    usuario y una tutela con el número en blanco.
+    """
+    return bool((telefono or "").replace("whatsapp:", "").replace("+", "").strip())
+
+
 def _texto_corto(valor, limite: int) -> str | None:
     """Normaliza un campo de texto del payload a string acotado (o None)."""
     if valor is None:
@@ -320,7 +330,21 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
             # Origen por número de usuario (referral/ad_id + número receptor).
             origenes = {o["telefono"]: o for o in _aislar_origen(value)}
             for msg in messages:
-                telefono = msg.get("from", "").replace("whatsapp:", "")
+                if not isinstance(msg, dict):
+                    continue
+                msg_type = msg.get("type", "")
+                # Un `from` vacío/ausente no permite responder ni identificar al
+                # usuario: antes se procesaba igual y quemaba un envío (400 de
+                # Meta) además de crear un usuario/tutela sin número.
+                if not _numero_util(msg.get("from")):
+                    logger.error(
+                        "Webhook Meta: mensaje ignorado, 'from' vacío o ausente "
+                        "(tipo=%s claves=%s)",
+                        msg_type,
+                        sorted(msg.keys())[:12],
+                    )
+                    continue
+                telefono = msg["from"].replace("whatsapp:", "")
                 msg_type = msg.get("type", "")
                 datos_msg = _parsear_mensaje(msg)
                 body_text = datos_msg["body_text"]
@@ -450,6 +474,12 @@ async def procesar_mensaje(
     origen: dict | None = None,
 ) -> dict:
     respuestas: list[str] = []
+    # Última barrera: sin dígitos no hay a quién responder. Cortar aquí evita
+    # el 400 de Meta ("The parameter to is required") y que se guarden filas
+    # de usuario/tutela con el teléfono vacío.
+    if not _numero_util(telefono):
+        logger.error("procesar_mensaje ignorado: teléfono vacío (body=%r)", (body or "")[:60])
+        return {"ok": False, "error": "telefono vacio", "respuestas": respuestas}
     body = (body or "").strip()
     raw_body = body
     body = body.lower()

@@ -170,6 +170,10 @@ def enviar_botones(telefono: str, texto: str, botones: list[tuple[str, str]]) ->
     provider = settings.whatsapp_provider
     if provider != "meta":
         return enviar_texto(telefono, texto)
+    if not telefono_limpio:
+        # Meta responde 400 "The parameter to is required"; no gastamos la llamada.
+        logger.error("enviar_botones abortado: teléfono vacío (raw=%r)", telefono)
+        return False
     try:
         url = META_API_BASE.replace("{phone_number_id}", settings.meta_phone_number_id)
         payload = {
@@ -202,6 +206,9 @@ def enviar_botones(telefono: str, texto: str, botones: list[tuple[str, str]]) ->
 
 
 def _enviar_meta_texto(telefono: str, mensaje: str) -> bool:
+    if not telefono.strip():
+        logger.error("_enviar_meta_texto abortado: teléfono vacío (raw=%r)", telefono)
+        return False
     try:
         url = META_API_BASE.replace("{phone_number_id}", settings.meta_phone_number_id)
         payload = {
