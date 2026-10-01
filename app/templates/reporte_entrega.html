@@ -32,6 +32,10 @@
   .badge-info { background: #e3f2fd; color: #1565c0; }
   .badge-error { background: #fce4ec; color: #c62828; }
   .badge-default { background: #eceff1; color: #455a64; }
+  .badge-ok { background: #e8f5e9; color: #2e7d32; }
+  .badge-mal { background: #fce4ec; color: #c62828; }
+  .badge-aviso { background: #fff3e0; color: #e65100; }
+  .badge-info { background: #e3f2fd; color: #1565c0; }
   h2 { font-size: 16px; margin: 0 0 10px; color: #1a237e; }
   .nota { background: #fff; border-left: 4px solid #e65100; border-radius: 6px; padding: 12px 15px; font-size: 13px; color: #555; margin-bottom: 25px; }
   .vacio { background: #fff; border-radius: 10px; padding: 30px; text-align: center; color: #888; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
@@ -63,18 +67,51 @@
       <div class="label">Escribieron en la ventana</div>
     </div>
     <div class="stat-card ok">
-      <div class="num">{{ reporte.resumen.con_respuesta_confirmada }}</div>
-      <div class="label">Con respuesta confirmada</div>
+      <div class="num">{{ reporte.resumen.arrancaron }}</div>
+      <div class="label">Bot arrancó</div>
     </div>
     <div class="stat-card mal">
-      <div class="num">{{ reporte.resumen.con_envio_fallido }}</div>
-      <div class="label">Meta rechazó el envío</div>
+      <div class="num">{{ reporte.resumen.sin_arrancar }}</div>
+      <div class="label">Bot NO arrancó</div>
     </div>
     <div class="stat-card aviso">
       <div class="num">{{ reporte.resumen.sin_respuesta }}</div>
       <div class="label">Sin rastro de respuesta</div>
     </div>
   </div>
+
+  <h2>Conversaciones de la ventana</h2>
+  <table>
+    <tr>
+      <th>Teléfono</th><th>Bot</th><th>Hasta dónde llegó</th>
+      <th>Respondimos</th><th>Último mensaje del usuario</th><th>Último contacto</th>
+    </tr>
+    {% for fila in reporte.conversaciones %}
+    <tr>
+      <td class="mono">+{{ fila.telefono }}<br><small>{{ fila.mensajes }} msg</small></td>
+      <td>
+        {% if fila.tutela_id %}
+        <span class="mono" title="Se abre desde el panel principal">#{{ fila.tutela_id }}</span>
+        {% else %}
+        <span class="badge badge-default">—</span>
+        {% endif %}
+      </td>
+      <td><span class="badge badge-{{ fila.bot_tono }}">{{ fila.bot_etiqueta }}</span></td>
+      <td>
+        {% if fila.entrega == 'fallida' %}
+        <span class="badge badge-error">No entregada</span><br><small>{{ fila.motivo }}</small>
+        {% elif fila.entrega == 'sin rastro' %}
+        <span class="badge badge-warning">Sin rastro</span>
+        {% else %}
+        <span class="badge badge-success">{{ fila.entrega }}</span>
+        {% endif %}
+      </td>
+      <td>{{ fila.ultimo_texto }}</td>
+      <td class="mono">{{ fila.ultimo or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="pie" style="margin-top:-15px">"Bot NO arrancó" = escribió pero no existe tutela: el mensaje no llegó a procesarse o murió antes del consentimiento. Las horas son de Bogotá.</p>
 
   {% if reporte.sin_respuesta %}
   <h2>Números que escribieron y no hay ninguna salida registrada</h2>
@@ -130,8 +167,8 @@
   </div>
   {% endif %}
 
-  {% if not reporte.sin_respuesta and not reporte.fallidos %}
-  <div class="vacio">Sin incidencias en la ventana seleccionada.</div>
+  {% if not reporte.conversaciones and not reporte.fallidos %}
+  <div class="vacio">Sin conversaciones en la ventana seleccionada.</div>
   {% endif %}
 
   <p class="pie">Datos crudos: <a href="/admin/api/reporte-entrega?dias={{ dias }}">/admin/api/reporte-entrega</a></p>

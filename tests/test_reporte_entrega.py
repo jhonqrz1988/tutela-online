@@ -171,5 +171,129 @@ class TestReporteEntrega(unittest.TestCase):
         self.assertEqual(r["estados_envio"], {})
 
 
+class TestHorasBogota(unittest.TestCase):
+    """El panel muestra hora de Bogotá; el reporte debe hablar el mismo idioma."""
+
+    def setUp(self):
+        self.session = _nueva_sesion()
+
+    def test_fecha_se_muestra_en_bogota_no_utc(self):
+        # 15:00 UTC son las 10:00 en Colombia (UTC-5, sin horario de verano).
+        _msg(self.session, from_number="573999999999",
+             created_at=datetime.datetime(2026, 10, 1, 15, 0, 0))
+
+        r = entrega_service.reporte_entrega(self.session)
+        self.assertEqual(r["conversaciones"][0]["ultimo"], "2026-10-01 10:00")
+
+    def test_generado_usa_hora_local(self):
+        # El naive de la BD es UTC; hay que marcarlo como UTC antes de convertir.
+        naive_utc = entrega_service._utc_naive()
+        esperado = naive_utc.replace(tzinfo=datetime.UTC).astimezone(
+            entrega_service.BOGOTA_TZ
+        ).strftime("%Y-%m-%d %H:%M")
+        self.assertEqual(entrega_service._iso(naive_utc), esperado)
+
+    def test_orden_por_ultimo_sigue_funcionando(self):
+        # El orden usa strings "YYYY-MM-DD HH:MM": debe seguir siendo cronológico.
+        _msg(self.session, from_number="573111111111",
+             created_at=datetime.datetime(2026, 10, 1, 20, 0, 0))
+        _msg(self.session, from_number="573222222222",
+             created_at=datetime.datetime(2026, 10, 1, 18, 0, 0))
+
+        r = entrega_service.reporte_entrega(self.session)
+        orden = [c["telefono"] for c in r["conversaciones"]]
+        self.assertEqual(orden, ["573111111111", "573222222222"])
+
+
+class TestEstadoDelBot(unittest.TestCase):
+    """La pregunta de soporte: ¿este número arrancó el bot o no?"""
+
+    def setUp(self):
+        self.session = _nueva_sesion()
+
+    def _con_tutela(self, telefono, estado):
+        user = User(telefono=telefono)
+        self.session.add(user)
+        self.session.commit()
+        self.session.add(Tutela(
+            user_id=user.id, tipo="salud", estado=estado, datos_json="{}",
+        ))
+        self.session.commit()
+
+    def test_escribio_sin_tutela_es_no_arranco(self):
+        _msg(self.session, from_number="573000000001")
+
+        r = entrega_service.reporte_entrega(self.session)
+        self.assertEqual(r["resumen"]["sin_arrancar"], 1)
+        self.assertEqual(r["resumen"]["arrancaron"], 0)
+        fila = r["conversaciones"][0]
+        self.assertEqual(fila["bot_etiqueta"], "No arrancó")
+        self.assertEqual(fila["bot_tono"], "mal")
+        self.assertIsNone(fila["tutela_id"])
+
+    def test_tutela_borrador_tambien_es_no_arranco(self):
+        _msg(self.session, from_number="573000000002")
+        self._con_tutela("573000000002", "borrador")
+
+        r = entrega_service.reporte_entrega(self.session)
+        self.assertEqual(r["conversaciones"][0]["bot_etiqueta"], "No arrancó")
+
+    def test_tutela_en_recogiendo_datos_arranco(self):
+        _msg(self.session, from_number="573000000003")
+        self._con_tutela("573000000003", "recogiendo_datos")
+
+        r = entrega_service.reporte_entrega(self.session)
+        self.assertEqual(r["resumen"]["sin_arrancar"], 0)
+        self.assertEqual(r["resumen"]["arrancaron"], 1)
+        fila = r["conversaciones"][0]
+        self.assertEqual(fila["bot_etiqueta"], "Recogiendo datos")
+        self.assertIsNotNone(fila["tutela_id"])
+
+    def test_etiquetas_cubren_las_etapas(self):
+        casos = {
+            "recogiendo_datos": "Recogiendo datos",
+            "confirmar_datos_personales": "Recogiendo datos",
+            "narracion": "Narración",
+            "revision_datos": "Narración",
+            "preguntas_clinicas": "Datos clínicos",
+            "pruebas_pendiente": "Pruebas",
+            "datos_listos": "Datos completos",
+            "pdf_generado": "Datos completos",
+            "esperando_pago": "Pendiente de radicación",
+            "radicada": "Radicada",
+            "completado": "Radicada",
+            "fallida": "Con incidencias",
+        }
+        for estado, esperado in casos.items():
+            with self.subTest(estado=estado):
+                etiqueta, tono = entrega_service._etapa(estado)
+                self.assertEqual(etiqueta, esperado)
+                self.assertIn(tono, ("ok", "aviso", "mal", "info"))
+
+    def test_estado_desconocido_no_rompe(self):
+        etiqueta, tono = entrega_service._etapa("estado_del_futuro")
+        self.assertEqual(etiqueta, "estado_del_futuro")
+        self.assertEqual(tono, "info")
+
+    def test_ultimo_texto_del_usuario(self):
+        _msg(self.session, from_number="573000000004", body="me negaron la medicina")
+        _msg(self.session, from_number="573000000004", body="  ")
+
+        r = entrega_service.reporte_entrega(self.session)
+        self.assertEqual(r["conversaciones"][0]["ultimo_texto"], "me negaron la medicina")
+
+    def test_las_que_no_arrancan_van_arriba(self):
+        _msg(self.session, from_number="573000000005",
+             created_at=datetime.datetime(2026, 10, 1, 19, 0, 0))
+        self._con_tutela("573000000005", "recogiendo_datos")
+        _msg(self.session, from_number="573000000006",
+             created_at=datetime.datetime(2026, 10, 1, 20, 0, 0))
+
+        r = entrega_service.reporte_entrega(self.session)
+        # Aunque el que arrancó es más reciente, el que NO arrancó va primero:
+        # es lo que hay que mirar en soporte.
+        self.assertEqual(r["conversaciones"][0]["telefono"], "573000000006")
+
+
 if __name__ == "__main__":
     unittest.main()
