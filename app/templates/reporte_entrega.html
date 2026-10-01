@@ -94,6 +94,13 @@
     pidió <em>detener/stop</em>.
     Texto: <em>“{{ texto_recordatorio }}”</em>
   </div>
+  <div class="nota">
+    <strong>Probar con un número:</strong>
+    <input type="text" id="tel-prueba" placeholder="573123456789" class="mono"
+           style="padding:6px;border:1px solid #ccc;border-radius:5px;width:150px">
+    <button class="btn-desbloquear" onclick="probarRecordatorio(this)">Enviar prueba</button>
+    <span id="res-prueba"></span>
+  </div>
   {% if candidatos_recordatorio %}
   <table>
     <tr><th>Teléfono</th><th>Estado</th><th>Silencio</th><th>Acción</th></tr>
@@ -253,6 +260,34 @@ async function desbloquear(userId, telefono, btn) {
   } catch (e) {
     btn.textContent = 'Error';
     btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + e.message + '</span>');
+  }
+}
+
+async function probarRecordatorio(btn) {
+  const input = document.getElementById('tel-prueba');
+  const salida = document.getElementById('res-prueba');
+  const telefono = (input.value || '').replace(/\D/g, '');
+  if (!telefono) { salida.innerHTML = '<span class="err-msg">escribe un número</span>'; return; }
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  salida.innerHTML = '';
+  try {
+    const r = await fetch('/admin/api/recordatorios/enviar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefono: telefono }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      btn.textContent = '✓ Enviado';
+      salida.innerHTML = '<span class="ok-msg"> enviado a +' + telefono + '</span>';
+    } else {
+      btn.textContent = 'Error';
+      salida.innerHTML = '<span class="err-msg"> ' + (j.error || 'falló') + '</span>';
+    }
+  } catch (e) {
+    btn.textContent = 'Error';
+    salida.innerHTML = '<span class="err-msg"> ' + e.message + '</span>';
   }
 }
 
