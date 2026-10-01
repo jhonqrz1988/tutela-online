@@ -666,6 +666,8 @@ def reporte_entrega_html(
     """Pantalla: quién escribió y nunca recibió respuesta, y por qué."""
     from app.services.entrega_service import DIAS_POR_DEFECTO, DIAS_MAXIMO
     from app.services.entrega_service import reporte_entrega as _reporte
+    from app.services.recordatorio_service import HORAS_RECORDATORIO, candidatos as _cand_rec
+    from app.services.recordatorio_service import texto_recordatorio as _texto_rec
     from app.services.seguimiento_service import HORAS_INACTIVO_POR_DEFECTO
     from app.services.seguimiento_service import listar_atrapados as _listar
 
@@ -680,10 +682,66 @@ def reporte_entrega_html(
         reporte=_reporte(session, dias=dias),
         atrapados=_listar(session),
         horas_inactivo=HORAS_INACTIVO_POR_DEFECTO,
+        candidatos_recordatorio=_cand_rec(session),
+        horas_recordatorio=HORAS_RECORDATORIO,
+        texto_recordatorio=_texto_rec(),
         dias=dias,
         opciones_dias=[d for d in (1, 7, 15, 30, 60, 90) if d <= DIAS_MAXIMO],
     )
     return HTMLResponse(html)
+
+
+@router.get("/api/recordatorios/candidatos")
+def recordatorios_candidatos(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    """A quién se le puede mandar un recordatorio ahora mismo (sin mandarlo)."""
+    from app.services.recordatorio_service import HORAS_RECORDATORIO, candidatos
+
+    return {"ok": True, "horas": HORAS_RECORDATORIO, "candidatos": candidatos(session)}
+
+
+@router.post("/api/recordatorios/enviar")
+async def recordatorio_prueba(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    """Envía un recordatorio de prueba a un número (para testear con el propio).
+
+    No aplica horarios, ventanas ni enfriamiento: manda el texto exacto con su
+    botón. Es una herramienta de prueba, no el job automático.
+    """
+    from app.services.recordatorio_service import (
+        TEXTO_RECORDATORIO,
+        BOTON_CONTINUAR,
+        enviar_recordatorio,
+        texto_recordatorio,
+    )
+
+    data = await request.form()
+    if data:
+        telefono = (data.get("telefono") or "").strip()
+    else:
+        try:
+            cuerpo = await request.json()
+            telefono = str(cuerpo.get("telefono") or "").strip()
+        except Exception:  # noqa: BLE001 - body vacío o inválido
+            telefono = ""
+    if not telefono:
+        return {"ok": False, "error": "Falta el teléfono"}
+
+    # Reutiliza el envío real (registra el wamid y marca el enfriamiento).
+    enviado = enviar_recordatorio(session, telefono, "prueba_manual")
+    return {
+        "ok": bool(enviado),
+        "telefono": telefono,
+        "texto": texto_recordatorio() or TEXTO_RECORDATORIO,
+        "boton": BOTON_CONTINUAR[1],
+        "error": None if enviado else "El proveedor rechazó el envío",
+    }
+
+
+@router.post("/api/recordatorios/correr")
+def recordatorios_correr(session=Depends(get_session), _=Depends(require_admin)):
+    """Fuerza una corrida del job (igual que el programado, pero ahora)."""
+    from app.services.recordatorio_service import enviar_recordatorios
+
+    return {"ok": True, **enviar_recordatorios(session)}
 
 
 @router.get("/api/atrapados")

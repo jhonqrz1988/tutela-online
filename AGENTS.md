@@ -83,6 +83,16 @@ Skills instaladas en `.opencode/skills/` — úsalas con la herramienta `skill` 
 - **Clics server-side**: el clic en cualquier `a[href^="https://wa.me/"]` hace `sendBeacon('/api/click-wa')` SIEMPRE (no solo con ttq): mide intentos reales de abrir WhatsApp, independiente de que la conversación llegue al webhook. `POST /api/click-wa` (`app/api/clics.py`) valida `query≤2000`, rate limit 60/min por IP → 429, y registra `ClicWhatsApp` solo si `es_bot` es False.
 - Dashboard (`/admin`): totales/por-fuente/semanales **excluyen `es_bot`**; muestra "bots filtrados", tarjeta verde "Clics a WhatsApp" y clics por fuente. Diferenciar: visita=llega a la landing; clic=intenta WhatsApp; conversación=mensaje real al bot (`MensajeWhatsApp`).
 
+## Recordatorios a usuarios a la espera (ventana de 24 h de Meta)
+- La ventana de 24 h se abre cuando **el usuario escribe**, no cuando nosotros queremos: dentro de ella se manda texto libre sin plantillas; fuera, Meta responde `131047` ("Re-engagement: el usuario no escribió en los últimos 24 h") y el mensaje se pierde. Por eso `recordatorio_service.candidatos()` **solo devuelve quien lleva entre `HORAS_RECORDATORIO=4` y `VENTANA_META_HORAS=24` h sin escribir** — nunca fuera de la ventana.
+- `enviar_botones(telefono, TEXTO_RECORDATORIO, [("continuar", "Continuar mi tutela")])`. El texto es a propósito **sin oferta comercial**: anunciar precio ("$29.000") exigiría plantilla de MARKETING, que Meta rechaza fuera de la ventana, y él mismo rechaza las plantillas de marketing con imagen.
+- Botón `Continuar mi tutela` → el webhook lo trata en la misma rama que `"hola"` (`webhook_whatsapp.py`), así que el usuario retoma **desde el estado guardado**, no desde cero. Esa rama también pone `user.no_mensajes_proactivos = False` (escribir =/reactiva).
+- **Opt-out sí se guarda**: la columna `User.no_mensajes_proactivos` la pone la rama `"detener"/"stop"`. Antes no había forma de saber a quién no molestar (`estado` sigue siendo el del flujo), por lo que `candidatos()` la excluye. Reactivar = que el usuario escriba "hola".
+- Anti-spam: `User.recordatorio_enviado_at` + `recordatorio_estado` dan **enfriamiento de 10 h por estado** (`ENFRIAMIENTO_HORAS`): si avanza de estado vuelve a ser acreedor. Tope `MAX_POR_CORRIDA=50`.
+- Job `recordatorios_inactivos` en `app/tasks/scheduler.py`: cada hora, **24/7** (no solo horario hábil — un recordatorio a las 9 pm igual vale), bajo hora Bogotá, y comparte el switch manual del panel.
+- Admin: `/admin/reporte-entrega` muestra los candidatos con botón *Enviar recordatorio*; además `GET /admin/api/recordatorios/candidatos`, `POST /admin/api/recordatorios/enviar` (prueba a cualquier número, ignora ventanas) y `POST /admin/api/recordatorios/correr` (fuerza una corrida).
+- **Img/plantillas fuera de 24 h**: no se implementan. Si algún día se quieren, el camino es una plantilla UTILITY aprobada en Business Manager (sin precio); una de marketing con imagen la rechaza el filtro automático de Meta.
+
 ## Admin Panel
 - All `/admin` routes require login. Protected via `Depends(require_admin)` in `app/api/admin.py` (signed cookie `tutela_admin`, 12h TTL).
 - `ADMIN_PASSWORD` env var (in `app/config.py`); if empty, admin returns 401 "no configurado". Login page at `/admin/login`, logout at `/admin/logout`.

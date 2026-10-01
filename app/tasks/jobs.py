@@ -37,6 +37,23 @@ def es_horario_habil(ahora: datetime | None = None) -> bool:
     return (8 <= hora < 12) or (14 <= hora < 17)
 
 
+def enviar_recordatorios_inactivos():
+    """Recuerda a quienes dejaron el flujo a medias, dentro de la ventana de 24 h.
+
+    Corre a cualquier hora (no solo en horario hábil): un recordatorio a las
+    8 pm sigue siendo válido, y la ventana de Meta no entiende de horarios.
+    """
+    from app.services.recordatorio_service import enviar_recordatorios
+
+    session = SessionLocal()
+    try:
+        return enviar_recordatorios(session)
+    except Exception as e:  # noqa: BLE001 - un job nunca debe romper el ciclo
+        session.rollback()
+        logger.error(f"Error en job de recordatorios: {e}")
+        return {"enviados": 0, "fallidos": 0, "candidatos": 0}
+
+
 def procesar_cola_radicacion():
     """Procesa todas las tutelas pendientes de radicación.
 

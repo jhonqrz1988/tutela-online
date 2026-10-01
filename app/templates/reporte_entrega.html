@@ -85,6 +85,35 @@
     </div>
   </div>
 
+  <h2>Recordatorios (dentro de la ventana de 24 h)</h2>
+  <div class="nota">
+    A los que dejaron el flujo a medias se les recuerda automáticamente cada hora
+    <strong>solo si llevan entre {{ horas_recordatorio }} y 24 h sin escribir</strong>:
+    fuera de las 24 h Meta ya no entrega un mensaje normal (ahí haría falta una
+    plantilla aprobada, y no queremos arriesgar la cuenta). Nunca se manda a quien
+    pidió <em>detener/stop</em>.
+    Texto: <em>“{{ texto_recordatorio }}”</em>
+  </div>
+  {% if candidatos_recordatorio %}
+  <table>
+    <tr><th>Teléfono</th><th>Estado</th><th>Silencio</th><th>Acción</th></tr>
+    {% for fila in candidatos_recordatorio %}
+    <tr>
+      <td class="mono">+{{ fila.telefono }}</td>
+      <td><span class="badge badge-mal">{{ fila.estado }}</span></td>
+      <td class="mono">{{ fila.silencio_horas }} h</td>
+      <td>
+        <button class="btn-desbloquear" onclick="recordar({{ fila.user_id }}, '{{ fila.telefono }}', this)">
+          Enviar recordatorio
+        </button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="nota">Nadie cumple los criterios ahora mismo. El job corre solo cada hora.</div>
+  {% endif %}
+
   {% if atrapados %}
   <h2>Atrapados: necesitan reinicio manual</h2>
   <div class="nota">
@@ -217,6 +246,28 @@ async function desbloquear(userId, telefono, btn) {
     const j = await r.json();
     if (j.ok) {
       btn.textContent = '✓ Listo';
+    } else {
+      btn.textContent = 'Error';
+      btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + (j.error || 'falló') + '</span>');
+    }
+  } catch (e) {
+    btn.textContent = 'Error';
+    btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + e.message + '</span>');
+  }
+}
+
+async function recordar(userId, telefono, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  try {
+    const r = await fetch('/admin/api/recordatorios/enviar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ telefono: telefono }),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      btn.textContent = '✓ Enviado';
     } else {
       btn.textContent = 'Error';
       btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + (j.error || 'falló') + '</span>');

@@ -17,6 +17,15 @@ class User(Base):
     consentimiento: Mapped[bool] = mapped_column(default=False)
     consentimiento_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
     consentimiento_timestamp: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    # Seguimiento: último recordatorio enviado y para qué estado, para no
+    # spamear. recordatorio_estado cambia si el usuario avanzó (vuelve a
+    # ser acreedor de un recordatorio).
+    recordatorio_enviado_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
+    recordatorio_estado: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Opt-out: el usuario pidió "detener/stop". Bloquea recordatorios.
+    # El opt-out NO cambia `estado` porque el flujo sigue vivo; por eso vive
+    # en su propia columna (sin ella no se puede saber a quién no molestar).
+    no_mensajes_proactivos: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

@@ -702,6 +702,10 @@ async def procesar_mensaje(
 
     # ─── OPT-OUT (pausar mensajes) ──────────────────────────────────
     if body in ("detener", "pausar", "no me molesten", "parar", "stop", "cancelar suscripción", "no quiero más mensajes"):
+        # Se marca en su propia columna: `estado` sigue siendo el del flujo, así
+        # que sin esto no había forma de saber a quién NO mandar recordatorios.
+        user.no_mensajes_proactivos = True
+        session.commit()
         _r(respuestas, telefono, "⏸️ *Mensajes pausados.*\n\nSi necesitas ayuda en el futuro, escribe *Hola* para reanudar.")
         return {"ok": True, "respuestas": respuestas}
 
@@ -739,9 +743,13 @@ async def procesar_mensaje(
         _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
         return {"ok": True, "respuestas": respuestas}
 
-    # ─── HOLA DE USUARIO EXISTENTE ─────────────────────────────────────
-    if body in ("hola", "menú", "menu", "inicio", "empezar"):
+    # ─── HOLA / CONTINUAR (usuario existente) ────────────────────────────
+    # "continuar mi tutela" es el botón del recordatorio: si lo pulsó, retoma
+    # exactamente donde se quedó (misma rama que "hola").
+    if body in ("hola", "menú", "menu", "inicio", "empezar", "continuar", "continuar mi tutela"):
         user.estado = "activo"
+        # Volvió a escribir: si antes pidió "detener", se reactiva.
+        user.no_mensajes_proactivos = False
         session.commit()
         tutela = session.execute(
             select(Tutela).where(

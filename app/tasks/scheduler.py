@@ -44,6 +44,30 @@ def _agregar_job():
         misfire_grace_time=300,
     )
 
+    # ─── Recordatorios a usuarios a la espera ───────────────────────
+    # Cada hora, 24/7: la ventana de 24 h de Meta corre desde el último mensaje
+    # del usuario, no desde su horario de atención, así que un recordatorio a
+    # las 9 pm igual sirve. Comparte el switch manual del panel (un solo
+    # interruptor para toda la automatización).
+    if scheduler.get_job("recordatorios_inactivos") is None:
+
+        def _job_recordatorios():
+            if not _automatico_enabled:
+                logger.info("Recordatorios pausados (toggle del panel admin)")
+                return
+            app.tasks.jobs.enviar_recordatorios_inactivos()
+
+        scheduler.add_job(
+            _job_recordatorios,
+            trigger="cron",
+            minute="5",
+            timezone="America/Bogota",
+            id="recordatorios_inactivos",
+            replace_existing=True,
+            max_instances=1,
+            misfire_grace_time=300,
+        )
+
 
 def iniciar_scheduler():
     """Scheduler de radicación automática.

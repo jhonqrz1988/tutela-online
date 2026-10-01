@@ -132,6 +132,18 @@ def _migrar_esquema(conn):
             if "envio_estado" not in columnas:
                 # NULL = mensaje entrante cuyo envío aún no se midió (histórico).
                 conn.execute(text("ALTER TABLE mensajes_whatsapp ADD COLUMN envio_estado VARCHAR(20)"))
+        if "users" in tablas_existentes:
+            columnas = {c["name"] for c in inspector.get_columns("users")}
+            resultado["columnas"] = sorted(columnas)
+            # Seguimiento de usuarios que quedaron a la espera. create_all no
+            # agrega columnas a tablas ya creadas.
+            if "recordatorio_enviado_at" not in columnas:
+                conn.execute(text("ALTER TABLE users ADD COLUMN recordatorio_enviado_at TIMESTAMP"))
+            if "recordatorio_estado" not in columnas:
+                conn.execute(text("ALTER TABLE users ADD COLUMN recordatorio_estado VARCHAR(50)"))
+            # DEFAULT 0 rompe en PostgreSQL (BOOLEAN + literal entero).
+            if "no_mensajes_proactivos" not in columnas:
+                conn.execute(text("ALTER TABLE users ADD COLUMN no_mensajes_proactivos BOOLEAN NOT NULL DEFAULT false"))
         resultado["ok"] = True
     except Exception as e:  # noqa: BLE001 - la migración nunca debe impedir el boot
         logger.warning(f"No se pudo ajustar el esquema: {e}")
