@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import socket
+import unicodedata
 from contextvars import ContextVar
 from urllib.parse import urlparse
 
@@ -574,6 +575,66 @@ def _registrar_envio(fn):
     return wrapper
 
 
+# Sinónimos aceptados para abandonar y reiniciar el proceso.
+_COMANDOS_SALIR = frozenset({
+    "salir", "reiniciar", "reinicio", "empezar de nuevo",
+    "nuevo proceso", "nueva tutela", "cancelar tutela", "cancelar",
+    "dejar la tutela", "abandonar", "salir del proceso",
+})
+
+
+def _normalizar_texto_entrada(texto: str) -> str:
+    """Minúsculas, sin acentos ni puntuación, para comparar comandos.
+
+    Los usuarios escriben "Salir.", "SALIR", "salir " o "sálir"; sin esto el
+    comando de escape se guarda como nombre/apellido y el usuario queda
+    atrapado en el flujo sin salida.
+    """
+    texto = (texto or "").strip().lower()
+    # Descomponer para quitar diacríticos: "sálir" -> "salir".
+    texto = "".join(
+        ch for ch in unicodedata.normalize("NFD", texto) if unicodedata.category(ch) != "Mn"
+    )
+    # Quitar puntuación y signos que WhatsApp añade al final.
+    return "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in texto).strip()
+
+
+def _es_comando_salir(body: str) -> bool:
+    """True si el texto es un comando para abandonar y reiniciar el flujo.
+
+    Solo si el mensaje es EXACTAMENTE el comando: "salir" dentro de una frase
+    ("quiero salir de aquí") no debe borrar los datos de la persona.
+    """
+    return _normalizar_texto_entrada(body) in _COMANDOS_SALIR
+
+
+def _reiniciar_flujo(session, user, telefono: str, respuestas: list[str]) -> None:
+    """Borra lo del usuario y lo devuelve al inicio, con el aviso de privacidad.
+
+    No se borra el histórico de mensajes (``MensajeWhatsApp``): solo se eliminan
+    tutelas, citas pendientes y radicaciones. Así el usuario conserva su
+    conversación y el panel no pierde el registro de que estuvo aquí.
+    """
+    tutela_ids = session.execute(
+        select(Tutela.id).where(Tutela.user_id == user.id)
+    ).scalars().all()
+    if tutela_ids:
+        session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
+        _borrar_radicaciones(session, tutela_ids)
+    for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
+        session.delete(t)
+
+    user.estado = "nuevo"
+    user.consentimiento = False
+    user.consentimiento_version = None
+    user.consentimiento_timestamp = None
+    session.commit()
+
+    _r(respuestas, telefono, "🔄 *Flujo reiniciado.*\n\nSe borraron los datos anteriores y empiezas de cero.")
+    _r(respuestas, telefono, BIENVENIDA)
+    _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto"), ("salir", "🚪 Salir")])
+
+
 @_registrar_envio
 async def procesar_mensaje(
     session, telefono: str, body: str, num_media: int, media_url: str, es_audio: bool,
@@ -613,26 +674,16 @@ async def procesar_mensaje(
         session.add(user)
         session.commit()
         _r(respuestas, telefono, BIENVENIDA)
-        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto"), ("salir", "🚪 Salir")])
         return {"ok": True, "respuestas": respuestas}
 
     # ─── SALIR / REINICIAR — borra datos y empieza de cero como nuevo usuario ──
-    if body in ("salir", "reiniciar", "empezar de nuevo", "nuevo proceso", "nueva tutela", "cancelar tutela", "dejar la tutela"):
-        session.query(MensajeWhatsApp).where(MensajeWhatsApp.from_number == telefono).delete()
-        tutela_ids = session.execute(select(Tutela.id).where(Tutela.user_id == user.id)).scalars().all()
-        if tutela_ids:
-            session.execute(delete(CitaPendiente).where(CitaPendiente.tutela_id.in_(tutela_ids)))
-            _borrar_radicaciones(session, tutela_ids)
-        for t in session.execute(select(Tutela).where(Tutela.user_id == user.id)).scalars():
-            session.delete(t)
-        user.estado = "nuevo"
-        user.consentimiento = False
-        user.consentimiento_version = None
-        user.consentimiento_timestamp = None
-        session.commit()
-        _r(respuestas, telefono, "🔄 *Flujo reiniciado.*\n\nSe borraron los datos anteriores y empiezas de cero.")
-        _r(respuestas, telefono, BIENVENIDA)
-        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+    # Va ANTES de cualquier lógica de estado a propósito: el comando de escape
+    # debe funcionar aunque el bot esté pidiendo un dato. Sin esto, escribir
+    # "salir" se guardaba como nombre/apellido y el usuario quedaba atrapado
+    # sin forma de corregir.
+    if _es_comando_salir(body):
+        _reiniciar_flujo(session, user, telefono, respuestas)
         return {"ok": True, "respuestas": respuestas}
 
     # ─── ELIMINAR DATOS ──────────────────────────────────────────────
@@ -671,13 +722,17 @@ async def procesar_mensaje(
             campo, msg = DATOS_PERSONALES_STEPS[0]
             _r(respuestas, telefono, "✅ *Consentimiento registrado.*\n\nAhora necesito tus datos personales.")
             _r(respuestas, telefono, msg)
+            # Aviso de salida: se dice aquí, al empezar a pedir datos, que en
+            # cualquier momento se puede empezar de cero. Sin esto, quien se
+            # equivoca en un campo no sabe cómo escapar del flujo.
+            _r(respuestas, telefono, AVISO_SALIR)
             return {"ok": True, "respuestas": respuestas}
         elif body in ("no", "no acepto", "cancelar"):
             user.estado = "rechazado"
             session.commit()
             _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
             return {"ok": True, "respuestas": respuestas}
-        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto")])
+        _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto"), ("salir", "🚪 Salir")])
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
@@ -1582,6 +1637,11 @@ BIENVENIDA = (
     "Comencemos con la autorización de datos."
 )
 
+AVISO_SALIR = (
+    "🚪 *¿Te equivocaste en algún dato?* Escribe *Salir* en cualquier momento "
+    "y borramos lo capturado para empezar de cero."
+)
+
 def aviso_privacidad() -> str:
     """Aviso de tratamiento de datos con el link según el dominio configurado (app_url)."""
     return (
@@ -1592,7 +1652,7 @@ def aviso_privacidad() -> str:
         "🔹 *Datos Sensibles:* Al continuar, autorizas el procesamiento de tu caso médico "
         "únicamente para este trámite.\n"
         "🔹 *Tus Derechos:* Puedes actualizar o eliminar tus datos en cualquier momento "
-        "escribiendo *Eliminar mis datos*.\n\n"
+        "escribiendo *Eliminar mis datos*, o *Salir* para empezar el proceso de cero.\n\n"
         f"Consulta nuestra política completa aquí: {settings.app_url}/privacidad\n\n"
         "¿Autorizas el tratamiento de tus datos para iniciar?"
     )
