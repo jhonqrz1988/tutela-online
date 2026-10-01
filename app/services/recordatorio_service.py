@@ -29,7 +29,7 @@ from sqlalchemy import func, select
 
 from app.models.tutela import Tutela
 from app.models.user import User
-from app.models.whatsapp import MensajeWhatsApp
+from app.models.whatsapp import EnvioWhatsApp, MensajeWhatsApp
 from app.services.seguimiento_service import ESTADOS_TERMINALES
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,11 @@ VENTANA_META_HORAS = 24
 ENFRIAMIENTO_HORAS = 10
 # Tope de envíos por corrida (evita una ráfaga si algo sale mal).
 MAX_POR_CORRIDA = 50
+# Candado para los envíos a mano (botón del panel / caja de prueba). El job
+# automático ya usa ENFRIAMIENTO_HORAS; esto cubre los clics, que son
+# instantáneos y podían repetirse tantas veces como se pulsara (bug: 3
+# recordatorios a la misma persona).
+MINUTOS_ENTRE_ENVIO = 15
 
 TEXTO_RECORDATORIO = (
     "Hola 👋 Tu solicitud de TutelApp quedó a la espera de un dato. "
@@ -132,22 +137,104 @@ def candidatos(
     return elegibles
 
 
-def enviar_recordatorio(session, telefono: str, estado: str = "") -> bool:
-    """Manda el recordatorio con botón. Marca el envío para el enfriamiento."""
+def _estado_real_de_usuario(session, user) -> str:
+    """Estado de la tutela abierta del usuario (para el enfriamiento).
+
+    Importa que sea el estado REAL y no una etiqueta fija: el enfriamiento
+    compara ``recordatorio_estado == tutela.estado``, así que marcar
+    "prueba_manual" haces que nunca coincida y el usuario recibe el mensaje
+    una y otra vez (bug: 3 recordatorios a la misma persona).
+    """
+    if user is None:
+        return ""
+    tutela = session.execute(
+        select(Tutela)
+        .where(Tutela.user_id == user.id, Tutela.estado.notin_(ESTADOS_TERMINALES))
+        .order_by(Tutela.created_at.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return tutela.estado if tutela is not None else ""
+
+
+def _registrar_envio(session, telefono: str, user) -> None:
+    """Guarda el wamid del recordatorio como EnvioWhatsApp.
+
+    El accumulate ``_WAMIDS`` de whatsapp_service solo se vuelca a la base
+    dentro del webhook (``_registrar_envio``). Los envíos que nacen del panel o
+    del job nunca pasaban por ahí, así que quedaban invisibles en el reporte de
+    entrega: no había forma de saber cuántos se habían mandado a mano.
+    """
+    from app.services.whatsapp_service import reiniciar_wamids_envio, wamids_envio
+
+    pendientes = wamids_envio()
+    if not pendientes:
+        return
+    tutela_id = None
+    if user is not None:
+        tutela = session.execute(
+            select(Tutela)
+            .where(Tutela.user_id == user.id)
+            .order_by(Tutela.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        tutela_id = tutela.id if tutela is not None else None
+    for item in pendientes:
+        session.add(EnvioWhatsApp(
+            wamid=item["wamid"][:255],
+            from_number=(telefono or "")[:20],
+            tutela_id=tutela_id,
+        ))
+    session.commit()
+    # Se vacía siempre: si no, el wamid se arrastra al siguiente envío.
+    reiniciar_wamids_envio()
+
+
+def enviar_recordatorio(
+    session, telefono: str, estado: str = "", forzar: bool = False,
+) -> bool:
+    """Manda el recordatorio con botón y marca el envío (enfriamiento + wamid).
+
+    ``forzar=True`` omite el candado de repeats (lo usa el dueño al testear).
+    """
     from app.services.whatsapp_service import enviar_botones
+
+    user = session.execute(
+        select(User).where(User.telefono == telefono)
+    ).scalar_one_or_none()
+
+    # Candado de servidor: el botón del navegador se deshabilita, pero el POST
+    # se podía repetir. Sin esto, N clics = N mensajes a la misma persona.
+    if not forzar and user is not None and user.recordatorio_enviado_at is not None:
+        transcurrido = (_utc_naive() - user.recordatorio_enviado_at).total_seconds() / 60.0
+        if transcurrido < MINUTOS_ENTRE_ENVIO:
+            logger.info(
+                "Recordatorio omitido a %s: ya se envió hace %.0f min",
+                telefono[:6] + "***", transcurrido,
+            )
+            return False
 
     ok = enviar_botones(telefono, TEXTO_RECORDATORIO, [BOTON_CONTINUAR])
     if ok:
-        try:
-            user = session.execute(
-                select(User).where(User.telefono == telefono)
-            ).scalar_one_or_none()
-            if user is not None:
+        # Primero la marca de enfriamiento, en su propia transacción: si el
+        # registro del wamid falla, NO puede perderse la marca (si se perdía, el
+        # usuario volvía a entrar como candidato y recibía otro recordatorio).
+        if user is not None:
+            try:
                 user.recordatorio_enviado_at = _utc_naive()
-                user.recordatorio_estado = estado or None
+                user.recordatorio_estado = _estado_real_de_usuario(session, user) or None
                 session.commit()
-        except Exception as e:  # noqa: BLE001 - marcar no debe romper el envío
-            logger.error("No se pudo marcar el recordatorio de %s: %s", telefono[:6] + "***", e)
+            except Exception as e:  # noqa: BLE001 - marcar no debe romper el envío
+                logger.error(
+                    "No se pudo marcar el recordatorio de %s: %s", telefono[:6] + "***", e
+                )
+                session.rollback()
+        try:
+            _registrar_envio(session, telefono, user)
+        except Exception as e:  # noqa: BLE001 - contabilidad aparte del envío
+            logger.warning(
+                "Recordatorio enviado a %s pero sin registrar el wamid: %s",
+                telefono[:6] + "***", e,
+            )
             session.rollback()
     return ok
 

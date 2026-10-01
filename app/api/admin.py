@@ -716,8 +716,10 @@ def recordatorios_candidatos(request: Request, session=Depends(get_session), _=D
 async def recordatorio_prueba(request: Request, session=Depends(get_session), _=Depends(require_admin)):
     """Envía un recordatorio de prueba a un número (para testear con el propio).
 
-    No aplica horarios, ventanas ni enfriamiento: manda el texto exacto con su
-    botón. Es una herramienta de prueba, no el job automático.
+    No aplica la ventana de las 4-24 h (para eso está el job), pero sí un
+    candado de ``MINUTOS_ENTRE_ENVIO`` minutos: sin él, cada clic era un
+    mensaje a la misma persona. ``?fuerza=1`` lo salta para poder testear en
+    cadena sin esperar.
     """
     from app.services.recordatorio_service import (
         TEXTO_RECORDATORIO,
@@ -729,23 +731,31 @@ async def recordatorio_prueba(request: Request, session=Depends(get_session), _=
     data = await request.form()
     if data:
         telefono = (data.get("telefono") or "").strip()
+        forzar = str(data.get("fuerza") or "").strip().lower() in {"1", "true", "si", "sí"}
     else:
         try:
             cuerpo = await request.json()
             telefono = str(cuerpo.get("telefono") or "").strip()
+            forzar = bool(cuerpo.get("fuerza"))
         except Exception:  # noqa: BLE001 - body vacío o inválido
             telefono = ""
+            forzar = False
     if not telefono:
         return {"ok": False, "error": "Falta el teléfono"}
 
-    # Reutiliza el envío real (registra el wamid y marca el enfriamiento).
-    enviado = enviar_recordatorio(session, telefono, "prueba_manual")
+    # Reutiliza el envío real: registra el wamid y marca el enfriamiento con el
+    # estado REAL de la tutela (no una etiqueta fija, que rompía la comparación).
+    enviado = enviar_recordatorio(session, telefono, "prueba_manual", forzar=forzar)
     return {
         "ok": bool(enviado),
         "telefono": telefono,
         "texto": texto_recordatorio() or TEXTO_RECORDATORIO,
         "boton": BOTON_CONTINUAR[1],
-        "error": None if enviado else "El proveedor rechazó el envío",
+        "forzado": forzar,
+        "error": None if enviado else (
+            "Ese número ya recibió un recordatorio hace poco. "
+            "Espera unos minutos o marca 'forzar' para mandarlo igual."
+        ),
     }
 
 
