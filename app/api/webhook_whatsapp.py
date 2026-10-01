@@ -294,6 +294,14 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
 
     signature = request.headers.get("X-Hub-Signature-256", "")
     if not _verify_meta_signature(raw_body, signature):
+        # Un webhook rechazado era 100% silencioso: el bot dejaba de responder a
+        # TODOS los números sin ninguna pista. Ahora queda en el log con el
+        # emisor (si el payload se puede leer) para poder diagnosticarlo.
+        logger.error(
+            "Webhook Meta RECHAZADO por firma inválida (header %s, %d bytes de payload)",
+            "presente" if signature else "ausente",
+            len(raw_body),
+        )
         return {"ok": False, "error": "Invalid signature"}
 
     import json as _json

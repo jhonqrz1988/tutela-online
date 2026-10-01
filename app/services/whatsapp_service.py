@@ -188,6 +188,13 @@ def enviar_botones(telefono: str, texto: str, botones: list[tuple[str, str]]) ->
             },
         }
         r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=15)
+        if not r.is_success:
+            logger.error(
+                "Meta botones RECHAZADO to=%s http=%s body=%s",
+                telefono[:6] + "***",
+                r.status_code,
+                (r.text or "")[:400],
+            )
         return r.is_success
     except Exception as e:
         logger.error(f"Error enviar_botones: {e}")
@@ -204,6 +211,16 @@ def _enviar_meta_texto(telefono: str, mensaje: str) -> bool:
             "text": {"body": mensaje},
         }
         r = httpx.post(url, json=payload, headers=_meta_headers(), timeout=15)
+        if not r.is_success:
+            # Antes se devolvía False sin dejar rastro del motivo: imposible
+            # saber por qué un número no recibe (bloqueo, ventana de 24 h,
+            # número inválido...). Meta explica el error en el cuerpo.
+            logger.error(
+                "Meta texto RECHAZADO to=%s http=%s body=%s",
+                telefono[:6] + "***",
+                r.status_code,
+                (r.text or "")[:400],
+            )
         return r.is_success
     except Exception as e:
         logger.error(f"Error _enviar_meta_texto: {e}")
