@@ -1256,7 +1256,9 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "confirmar_pago":
         if body in ("confirmar_pago", "si pagar", "sí pagar", "pagar", "1"):
-            link_pago = f"{settings.app_url}/pago/{tutela.id}"
+            from app.api.pagos import enlace_pago
+
+            link_pago = enlace_pago(tutela.id)
             _r(respuestas, telefono,
                f"💰 *Procesamiento automático*\n\n"
                f"Para completar el pago de *{texto_precio()}*:\n\n"
@@ -1338,8 +1340,15 @@ def _r(respuestas: list[str], telefono: str, mensaje: str) -> None:
 
 
 def _enviar_link_pago(respuestas: list[str], telefono: str, tutela) -> None:
-    """Envía el mensaje con el link de pago de Mercado Pago."""
-    link_pago = f"{settings.app_url}/pago/{tutela.id}"
+    """Envía el mensaje con el link de pago de Mercado Pago.
+
+    El link va con token: ``/pago/{id}`` es público y el id es correlativo, así
+    que sin token enumerar ids filtraba el correo del accionante (ver
+    test_seguridad_pago.py).
+    """
+    from app.api.pagos import enlace_pago
+
+    link_pago = enlace_pago(tutela.id)
     _r(respuestas, telefono,
        f"💰 *Procesamiento automático*\n\n"
        f"Para completar el pago de *{texto_precio()}*:\n\n"

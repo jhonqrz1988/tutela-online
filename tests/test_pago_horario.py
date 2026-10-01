@@ -56,7 +56,12 @@ class TestPaginaPagoHorario(unittest.TestCase):
 
         app.dependency_overrides[get_session] = _override_get_session
         try:
-            return client.get(f"/pago/{tutela_id}")
+            # /pago/{id} exige token desde el fix anti-IDOR (ver
+            # test_seguridad_pago.py): aquí se prueba el contenido de la página,
+            # no la autorización, así que se usa el token válido.
+            from app.api.pagos import token_pago
+
+            return client.get(f"/pago/{tutela_id}?t={token_pago(tutela_id)}")
         finally:
             app.dependency_overrides.pop(get_session, None)
             client.__exit__(None, None, None)
@@ -158,7 +163,10 @@ class TestPaginaPagoHorario(unittest.TestCase):
                       "Debe avisar del posible código que llega al correo")
         self.assertIn("compártenos ese", html,
                       "Debe pedir que compartan el código por WhatsApp")
-        self.assertIn("ana@correo.com", html, "Debe mostrar el correo del usuario")
+        self.assertIn("a***@correo.com", html,
+                      "Debe mostrar el correo del usuario ENMASCARADO")
+        self.assertNotIn("ana@correo.com", html,
+                         "El correo completo es dato personal y no va en la página")
         self.assertNotIn("Nequi", html, "Nequi no está activo y no debe mencionarse")
         self.assertNotIn("transferencia", html,
                          "Transferencia no está activa y no debe mencionarse")

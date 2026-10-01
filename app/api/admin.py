@@ -61,6 +61,17 @@ SESSION_TTL = 12 * 3600  # 12 horas
 CSRF_COOKIE = "tutela_admin_csrf"
 
 
+def _enlace_pago(tutela_id: int) -> str:
+    """Enlace de pago con token, para reenviar desde el panel."""
+    try:
+        from app.api.pagos import enlace_pago
+
+        return enlace_pago(tutela_id)
+    except Exception as e:  # noqa: BLE001 - el panel nunca debe romperse
+        logger.error("No se pudo generar el enlace de pago de %s: %s", tutela_id, e)
+        return f"{settings.app_url}/pago/{tutela_id}"
+
+
 def _fecha_bogota(dt) -> str:
     """Convierte un datetime naive guardado como UTC a hora de Bogotá (UTC-5).
 
@@ -599,7 +610,9 @@ def detalle_tutela(tutela_id: int, request: Request, session=Depends(get_session
         "estado": t.estado,
         "cedula": (datos.get("accionante_cedula") or "").strip(),
         "referencia": f"TUT-{t.id}",
-        "link_pago": f"{settings.app_url}/pago/{t.id}",
+        # Con token: /pago/{id} sin token ya no sirve (403). Este es el enlace
+        # que soporte debe reenviar si el link del bot caducó.
+        "link_pago": _enlace_pago(t.id),
         "datos": datos,
         "pdf_path": t.pdf_path,
         "created_at": _fecha_bogota(t.created_at),

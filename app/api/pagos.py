@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import logging
 from html import escape
@@ -25,6 +27,71 @@ from app.tasks.jobs import es_horario_habil
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ─── Token del enlace de pago (anti-IDOR) ─────────────────────────────
+# `/pago/{id}` es público por necesidad (el usuario abre el link desde su
+# WhatsApp) y el id es un entero correlativo: sin token, probar 1, 2, 3...
+# devuelve el correo del accionante de cada tutela, escribe en su registro y
+# crea una preferencia real de Mercado Pago (verificado en producción).
+#
+# Token = HMAC-SHA256(SECRET_KEY, "pago:<id>") en hex. No se adivina, no exige
+# columna nueva ni migración, y se invalida solo al rotar SECRET_KEY.
+_TOKEN_PAGO_LONGITUD = 32
+
+
+def token_pago(tutela_id: int) -> str:
+    """Token de un solo uso práctico: identifica esa tutela sin adivinarlo."""
+    mensaje = f"pago:{tutela_id}".encode()
+    return hmac.new(
+        settings.secret_key.encode(), mensaje, hashlib.sha256
+    ).hexdigest()[:_TOKEN_PAGO_LONGITUD]
+
+
+def token_pago_valido(tutela_id: int, token: str | None) -> bool:
+    if not token:
+        return False
+    return hmac.compare_digest(token_pago(tutela_id), token)
+
+
+def enlace_pago(tutela_id: int) -> str:
+    """Enlace completo que se manda por WhatsApp (con token)."""
+    return f"{settings.app_url}/pago/{tutela_id}?t={token_pago(tutela_id)}"
+
+
+def enmascarar_email(email: str) -> str:
+    """'juan.perez@correo.com' -> 'j***@correo.com'.
+
+    El correo se usa para mostrarle al usuario a qué dirección llegará el
+    código de la Rama Judicial. No hace falta mostrarlo completo: es dato
+    personal y estas páginas se comparten por captura de pantalla.
+    """
+    email = (email or "").strip()
+    if "@" not in email:
+        return ""
+    local, _, dominio = email.partition("@")
+    if not dominio:
+        return ""
+    return f"{local[:1]}***@{dominio}"
+
+
+def _pagina_enlace_invalido() -> str:
+    """403 sin revelar si esa tutela existe (evita enumerar ids)."""
+    return """<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enlace no válido</title><style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+         max-width: 480px; margin: 0 auto; padding: 24px 18px; text-align:center;
+         font-size:19px; line-height:1.55; color:#222; -webkit-text-size-adjust:100%; }
+  .card { border:1px solid #e0e0e0; border-radius:16px; padding:28px 22px; background:#fff;
+          box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  h1 { font-size:24px; margin:0 0 12px; color:#b3261e; }
+  p { margin:0 0 10px; }
+</style></head><body><div class="card">
+<h1>Este enlace no es válido</h1>
+<p>El link de pago puede haber caducado.</p>
+<p>Escríbenos por WhatsApp y te lo reenviamos al momento.</p>
+</div></body></html>"""
 
 
 def texto_aviso_horario(habile: bool) -> str:
@@ -148,12 +215,25 @@ async def resultado_pago(request: Request, session: Session = Depends(get_sessio
 @router.get("/pago/{tutela_id}")
 async def iniciar_pago(
     tutela_id: int,
+    request: Request,
     session: Session = Depends(get_session),
 ):
-    """Crea una preferencia en Mercado Pago y redirige al checkout alojado."""
+    """Crea una preferencia en Mercado Pago y redirige al checkout alojado.
+
+    EXIGE token: el id es correlativo y esta ruta es pública (el usuario abre el
+    link desde su WhatsApp). Sin el token, enumerar ids filtraba el correo del
+    accionante, escribía en su tutela y creaba preferencias de MP.
+    """
+    if not token_pago_valido(tutela_id, request.query_params.get("t")):
+        logger.warning(
+            "Pago sin token válido para tutela %s (posible sondeo de ids)", tutela_id
+        )
+        return HTMLResponse(_pagina_enlace_invalido(), status_code=403)
+
     tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not tutela:
-        raise HTTPException(404, "Tutela no encontrada")
+        # Mismo 403: no confirmamos si el id existe.
+        return HTMLResponse(_pagina_enlace_invalido(), status_code=403)
 
     reference = f"TUT-{tutela_id}"
 
@@ -170,7 +250,7 @@ async def iniciar_pago(
             aviso = texto_aviso_horario(es_horario_habil())
             return HTMLResponse(_pagina_pago(
                 aviso,
-                email=datos.get("accionante_email", ""),
+                email=enmascarar_email(datos.get("accionante_email", "")),
                 init_point=init_point,
             ))
 
@@ -179,7 +259,7 @@ async def iniciar_pago(
     aviso = texto_aviso_horario(es_horario_habil())
     return HTMLResponse(_pagina_pago(
         aviso,
-        email=datos.get("accionante_email", ""),
+        email=enmascarar_email(datos.get("accionante_email", "")),
     ))
 
 
@@ -275,9 +355,22 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
 @router.post("/pago/{tutela_id}/verificar")
 async def verificar_pago(
     tutela_id: int,
+    request: Request,
     session: Session = Depends(get_session),
 ):
-    """Respaldo: verifica el pago consultando el payment_id guardado en la tutela."""
+    """Respaldo: verifica el pago consultando el payment_id guardado en la tutela.
+
+    EXIGE token como ``/pago/{id}``: sin él, quien encontrara el id podía
+    forzar la transición a ``pago_confirmado`` y disparar el envío por WhatsApp
+    de una tutela ajena.
+    """
+    if not token_pago_valido(tutela_id, request.query_params.get("t")):
+        logger.warning(
+            "Verificación de pago sin token válido para tutela %s (posible sondeo)",
+            tutela_id,
+        )
+        raise HTTPException(403, "Enlace no válido")
+
     tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not tutela:
         raise HTTPException(404, "Tutela no encontrada")
