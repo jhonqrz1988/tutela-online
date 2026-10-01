@@ -23,7 +23,7 @@ from app.models.cita_legal import CitaLegal, CitaPendiente
 from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.tutela import Tutela
 from app.models.user import User
-from app.models.whatsapp import MensajeWhatsApp
+from app.models.whatsapp import EnvioWhatsApp, MensajeWhatsApp
 from app.services.documento_service import generar_pdf
 from app.services.mercadopago_service import texto_precio
 from app.services.ia_service import (
@@ -43,7 +43,14 @@ from app.services.verificacion_service import (
     limpiar_texto_para_pdf,
     verificar_citas,
 )
-from app.services.whatsapp_service import enviar_botones, enviar_documento, enviar_texto
+from app.services.whatsapp_service import (
+    META_ERRORES_CONOCIDOS,
+    enviar_botones,
+    enviar_documento,
+    enviar_texto,
+    reiniciar_wamids_envio,
+    wamids_envio,
+)
 from app.utils.file_utils import path_prueba
 from app.utils.validacion import procesar_campo_personal, validar_campo_personal
 
@@ -326,6 +333,9 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
         changes = e.get("changes", [])
         for c in changes:
             value = c.get("value", {})
+            # Entrega real de los envíos anteriores (delivered/read/failed).
+            # Va antes de ``messages``: un payload puede traer solo estados.
+            _procesar_statuses(session, value)
             messages = value.get("messages", [])
             # Origen por número de usuario (referral/ad_id + número receptor).
             origenes = {o["telefono"]: o for o in _aislar_origen(value)}
@@ -447,6 +457,99 @@ def _marcar_estado_envio(session, registro: dict) -> None:
             session.rollback()
 
 
+def _registrar_envios_wamids(session, telefono: str) -> None:
+    """Deja una fila por cada mensaje saliente aceptado por Meta (best-effort).
+
+    Solo así se pueden casar los ``statuses`` posteriores: sin guardar el
+    ``wamid`` no hay forma de saber si la respuesta llegó al teléfono.
+    """
+    pendientes = wamids_envio()
+    if not pendientes:
+        return
+    try:
+        tutela_id = None
+        if telefono:
+            tutela_id = session.execute(
+                select(Tutela.id)
+                .join(User, Tutela.user_id == User.id)
+                .where(User.telefono == telefono)
+                .order_by(Tutela.id.desc())
+                .limit(1)
+            ).scalars().first()
+        for item in pendientes:
+            session.add(
+                EnvioWhatsApp(
+                    wamid=item["wamid"][:255],
+                    from_number=(telefono or "")[:20],
+                    tutela_id=tutela_id,
+                )
+            )
+        session.commit()
+    except Exception:  # noqa: BLE001 - el diagnóstico nunca debe romper el flujo
+        logger.warning("No se pudieron registrar los envíos (wamids)", exc_info=True)
+        with contextlib.suppress(Exception):
+            session.rollback()
+
+
+def _procesar_statuses(session, value: dict) -> None:
+    """Aplica los estados de entrega que notifica Meta tras un envío aceptado.
+
+    El POST a la Graph API devuelve 200 y eso no prueba entrega. Meta notifica
+    ``sent``/``delivered``/``read``/``failed`` aquí: es el único dato que dice si
+    el usuario recibió de verdad la respuesta del bot.
+    """
+    for st in value.get("statuses") or []:
+        if not isinstance(st, dict):
+            continue
+        wamid = str(st.get("id") or "")[:255]
+        estado = str(st.get("status") or "")[:20]
+        if not wamid or not estado:
+            continue
+
+        errores = st.get("errors") or []
+        codigo = None
+        detalle = None
+        if isinstance(errores, list) and errores and isinstance(errores[0], dict):
+            codigo = errores[0].get("code")
+            detalle = (
+                errores[0].get("error_data", {}).get("details")
+                if isinstance(errores[0].get("error_data"), dict)
+                else None
+            ) or errores[0].get("message")
+            try:
+                codigo = int(codigo)
+            except (TypeError, ValueError):
+                codigo = None
+
+        nuevo = "leido" if estado == "read" else ("fallido" if estado == "failed" else "entregado")
+        try:
+            fila = session.query(EnvioWhatsApp).filter(EnvioWhatsApp.wamid == wamid).first()
+            if fila is None:
+                logger.info("Status de un envío no registrado: %s %s", wamid[:24], estado)
+                continue
+            # Nunca se retrocede el estado (Meta puede reenviar 'sent' tarde).
+            orden = {"aceptado": 0, "entregado": 1, "leido": 2, "fallido": 3}
+            if orden.get(nuevo, 0) >= orden.get(fila.estado or "aceptado", 0):
+                fila.estado = nuevo
+            if nuevo == "fallido":
+                fila.error_code = codigo
+                fila.error_detalle = (str(detalle)[:500] if detalle else None)
+            session.commit()
+
+            if nuevo == "fallido":
+                logger.error(
+                    "Meta NO entregó el mensaje to=%s code=%s motivo=%s (%s)",
+                    (fila.from_number or "")[:6] + "***",
+                    codigo,
+                    META_ERRORES_CONOCIDOS.get(codigo, (detalle or "sin detalle")[:120]),
+                    estado,
+                )
+        except Exception:  # noqa: BLE001 - nunca romper el webhook por un status
+            logger.warning("No se pudo aplicar el status de Meta", exc_info=True)
+            with contextlib.suppress(Exception):
+                session.rollback()
+
+
 def _registrar_envio(fn):
     """Envoltorio de ``procesar_mensaje``: mide si la respuesta llegó a enviarse.
 
@@ -457,6 +560,7 @@ def _registrar_envio(fn):
     @functools.wraps(fn)
     async def wrapper(session, telefono, *args, **kwargs):
         token = _ENVIOS.set({"ok": True, "n": 0, "msg": None})
+        reiniciar_wamids_envio()
         try:
             return await fn(session, telefono, *args, **kwargs)
         finally:
@@ -464,6 +568,8 @@ def _registrar_envio(fn):
             _ENVIOS.reset(token)
             if registro is not None:
                 _marcar_estado_envio(session, registro)
+            _registrar_envios_wamids(session, telefono)
+            reiniciar_wamids_envio()
 
     return wrapper
 

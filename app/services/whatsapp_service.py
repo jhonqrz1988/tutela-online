@@ -1,4 +1,5 @@
 import logging
+from contextvars import ContextVar
 
 import httpx
 
@@ -15,6 +16,53 @@ META_NUMERO_FIELDS = (
     "display_phone_number,verified_name,code_verification_status,"
     "platform_type,throughput"
 )
+
+# wamids devueltos por Meta en los envíos aceptados. El POST solo confirma que
+# la API lo recibió; la entrega real llega después como ``statuses``. Se acumulan
+# aquí para casarlos con la tabla ``envios_whatsapp`` sin cambiar la firma
+# ``bool`` de enviar_texto/enviar_botones (unos ~50 call sites).
+_WAMIDS: ContextVar[list[dict] | None] = ContextVar("wamids_envio", default=None)
+
+
+def wamids_envio() -> list[dict]:
+    """Wamids de los envíos aceptados durante el mensaje entrante en curso."""
+    return list(_WAMIDS.get() or [])
+
+
+def reiniciar_wamids_envio() -> None:
+    _WAMIDS.set([])
+
+
+def _notificar_envio_aceptado(respuesta_json) -> None:
+    """Extrae el wamid de una respuesta 200 de la Graph API y lo anota."""
+    try:
+        mensajes = (respuesta_json or {}).get("messages") or []
+        wamid = (mensajes[0] or {}).get("id")
+    except (AttributeError, IndexError, TypeError):
+        wamid = None
+    if not wamid:
+        return
+    lista = _WAMIDS.get()
+    if lista is None:
+        lista = []
+        _WAMIDS.set(lista)
+    if not any(item.get("wamid") == wamid for item in lista):
+        lista.append({"wamid": str(wamid)})
+
+
+# Códigos de error de Meta más útiles para diagnóstico, de la doc de Cloud API.
+META_ERRORES_CONOCIDOS = {
+    131047: "Re-engagement: el usuario no escribió en los últimos 24 h",
+    131026: "Mensaje no entregable (número no está en WhatsApp)",
+    131051: "Tipo de mensaje no soportado por este número",
+    131052: "Ventana de 24 h cerrada: el usuario debe escribir primero",
+    131053: "No se puede enviar multimedia a este número",
+    132000: "La plantilla del mensaje no está aprobada",
+    133000: "La cuenta tiene límite de mensajes alcanzado",
+    133005: "Demasiados envíos: el usuario bloqueó al negocio",
+    133010: "El número del usuario no existe en WhatsApp",
+    135000: "Error general de Meta; ver cuerpo del webhook",
+}
 
 
 def consultar_estado_numero() -> dict:
@@ -199,10 +247,20 @@ def enviar_botones(telefono: str, texto: str, botones: list[tuple[str, str]]) ->
                 r.status_code,
                 (r.text or "")[:400],
             )
+        else:
+            _notificar_envio_aceptado(_json_de(r))
         return r.is_success
     except Exception as e:
         logger.error(f"Error enviar_botones: {e}")
         return False
+
+
+def _json_de(respuesta):
+    """Body JSON de una respuesta httpx, o ``None`` si no lo es (nunca lanza)."""
+    try:
+        return respuesta.json()
+    except Exception:  # noqa: BLE001 - diagnóstico, no debe romper el envío
+        return None
 
 
 def _enviar_meta_texto(telefono: str, mensaje: str) -> bool:
@@ -228,6 +286,8 @@ def _enviar_meta_texto(telefono: str, mensaje: str) -> bool:
                 r.status_code,
                 (r.text or "")[:400],
             )
+        else:
+            _notificar_envio_aceptado(_json_de(r))
         return r.is_success
     except Exception as e:
         logger.error(f"Error _enviar_meta_texto: {e}")
