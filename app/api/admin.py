@@ -19,6 +19,8 @@ from app.database import get_session
 from app.models.radicacion import PasoRadicacion, Radicacion
 from app.models.clic import ClicWhatsApp
 from app.models.tutela import Tutela
+from app.models.user import User
+from app.models.whatsapp import MensajeWhatsApp
 from app.models.visita import VisitaLanding
 from app.services.visitas_service import (
     agrupar_por_periodo,
@@ -710,6 +712,95 @@ def recordatorios_candidatos(request: Request, session=Depends(get_session), _=D
     from app.services.recordatorio_service import HORAS_RECORDATORIO, candidatos
 
     return {"ok": True, "horas": HORAS_RECORDATORIO, "candidatos": candidatos(session)}
+
+
+@router.get("/api/recordatorios/auditoria")
+def recordatorios_auditoria(request: Request, session=Depends(get_session), _=Depends(require_admin)):
+    """A quién se le mandó un recordatorio, cuándo y desde dónde.
+
+    Existe para auditar el bug de "llegó 3 veces": los envíos
+    iniciados desde el panel nunca se registraban como EnvioWhatsApp (el
+    accumulate de wamids solo se volcaba dentro del webhook), así que el reporte
+    de entrega NO mostraba los recordatorios. Esta auditoría lee la marca del
+    enfriamiento, que sí quedó en la base.
+
+    Campo clave: ``origen``. El código anterior marcaba los envíos manuales con
+    ``recordatorio_estado = "prueba_manual"``, un valor que jamás coincide con un
+    estado real de tutela. Por eso esas filas son la huella exacta de los envíos
+    hechos a mano desde el panel (el código arreglado ya no escribe ese valor).
+    """
+    from app.services.recordatorio_service import (
+        ENFRIAMIENTO_HORAS,
+        HORAS_RECORDATORIO,
+        VENTANA_META_HORAS,
+        _utc_naive,
+    )
+    from app.services.seguimiento_service import ESTADOS_TERMINALES
+
+    ahora = _utc_naive()
+    usuarios = session.execute(
+        select(User).where(User.recordatorio_enviado_at.is_not(None))
+    ).scalars().all()
+
+    filas = []
+    for user in usuarios:
+        if not user.telefono:
+            continue
+        tutela = session.execute(
+            select(Tutela)
+            .where(Tutela.user_id == user.id, Tutela.estado.notin_(ESTADOS_TERMINALES))
+            .order_by(Tutela.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+        ultima = session.execute(
+            select(func.max(MensajeWhatsApp.created_at))
+            .where(MensajeWhatsApp.from_number == user.telefono)
+        ).scalar()
+        referencia = ultima or (tutela.created_at if tutela is not None else None)
+
+        silencio = None
+        if referencia is not None:
+            silencio = round((ahora - referencia).total_seconds() / 3600.0, 1)
+
+        marca = user.recordatorio_estado or ""
+        # "prueba_manual" no es un estado de tutela: solo lo escribía el panel.
+        manual = marca == "prueba_manual"
+        # Cuántos automáticos pudo haber recibido como máximo (techo de ventana).
+        automatico_techo = 0
+        if silencio is not None and silencio >= HORAS_RECORDATORIO:
+            automatico_techo = 1
+            if silencio >= HORAS_RECORDATORIO + ENFRIAMIENTO_HORAS:
+                automatico_techo = 2
+
+        filas.append({
+            "telefono": user.telefono,
+            "recordatorio_enviado_at": user.recordatorio_enviado_at.isoformat(),
+            "marcado_como": marca or None,
+            "origen": "manual" if manual else ("automatico" if marca else "sin_marca"),
+            "estado_actual": tutela.estado if tutela is not None else None,
+            "ultima_escritura": ultima.isoformat() if ultima is not None else None,
+            "silencio_horas": silencio,
+            "automatico_techo": automatico_techo,
+            # Si hubo un manual y el silencio daba para automáticos, pudo sumar 3+.
+            "riesgo_ternero": bool(manual and automatico_techo >= 1),
+            "telefono_valido": bool(user.telefono and user.consentimiento
+                                    and not user.no_mensajes_proactivos),
+        })
+
+    filas.sort(key=lambda f: f["recordatorio_enviado_at"], reverse=True)
+    return {
+        "ok": True,
+        "ventana_horas": [HORAS_RECORDATORIO, VENTANA_META_HORAS],
+        "enfriamiento_horas": ENFRIAMIENTO_HORAS,
+        "resumen": {
+            "marcados": len(filas),
+            "manuales": sum(1 for f in filas if f["origen"] == "manual"),
+            "automaticos": sum(1 for f in filas if f["origen"] == "automatico"),
+            "riesgo_ternero": sum(1 for f in filas if f["riesgo_ternero"]),
+        },
+        "filas": filas,
+    }
 
 
 @router.post("/api/recordatorios/enviar")
