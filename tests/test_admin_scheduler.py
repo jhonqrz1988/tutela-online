@@ -299,15 +299,22 @@ class TestFiltroMensual(unittest.TestCase):
     def test_panel_por_defecto_usa_mes_actual(self):
         """Sin ?mes=, el panel debe usar el mes calendario actual (Bogotá)."""
         from datetime import datetime, timezone
+        from zoneinfo import ZoneInfo
 
         settings.admin_password = "test-password"
         settings.secret_key = "test-key-fijo"
         session = _nueva_sesion()
+        # El panel sin ?mes= muestra SOLO el mes actual, así que la fila centinela
+        # debe crearse dentro de ese mes. Con una fecha fija este test caducaba
+        # el día 1 del mes siguiente.
+        mes_actual = datetime.now(ZoneInfo("America/Bogota")).strftime("%Y-%m")
         user = User(telefono="573009990106", nombre="Mesdos", consentimiento=True)
         session.add(user)
         session.flush()
         t1 = Tutela(user_id=user.id, tipo="salud", estado="borrador", datos_json="{}")
-        t1.created_at = datetime(2026, 9, 5, 15, 0, 0, tzinfo=timezone.utc)
+        t1.created_at = datetime.strptime(f"{mes_actual}-01", "%Y-%m-%d").replace(
+            hour=15, tzinfo=timezone.utc
+        )
         session.add(t1)
         session.commit()
 
@@ -328,6 +335,11 @@ class TestFiltroMensual(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertIn("Mesdos", resp.text)
+        self.assertIn(
+            f'value="{mes_actual}" selected',
+            resp.text,
+            "El selector debe venir con el mes calendario actual de Bogotá",
+        )
 
 
 if __name__ == "__main__":
