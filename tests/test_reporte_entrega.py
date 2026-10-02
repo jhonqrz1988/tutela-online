@@ -220,6 +220,31 @@ class TestEstadoDelBot(unittest.TestCase):
         ))
         self.session.commit()
 
+    def test_respondimos_y_no_creo_tutela_es_no_acepto(self):
+        """Entregado/leído sin tutela no es un bot caído: no pulsó aceptar."""
+        _msg(self.session, from_number="573202408785", body="¡hola! quiero más información")
+        self.session.add(EnvioWhatsApp(
+            wamid="wamid.info", from_number="573202408785", estado="entregado",
+        ))
+        self.session.commit()
+
+        r = entrega_service.reporte_entrega(self.session)
+        fila = r["conversaciones"][0]
+        self.assertEqual(fila["bot_etiqueta"], "No aceptó")
+        self.assertEqual(r["resumen"]["no_acepto"], 1)
+        self.assertEqual(r["resumen"]["sin_arrancar"], 0)
+        self.assertEqual(r["resumen"]["arrancaron"], 0)
+
+    def test_leido_sin_tutela_tambien_es_no_acepto(self):
+        _msg(self.session, from_number="573128543296")
+        self.session.add(EnvioWhatsApp(
+            wamid="wamid.leido", from_number="573128543296", estado="leido",
+        ))
+        self.session.commit()
+
+        r = entrega_service.reporte_entrega(self.session)
+        self.assertEqual(r["conversaciones"][0]["bot_etiqueta"], "No aceptó")
+
     def test_escribio_sin_tutela_es_no_arranco(self):
         _msg(self.session, from_number="573000000001")
 

@@ -76,8 +76,8 @@
       <div class="label">Bot arrancó</div>
     </div>
     <div class="stat-card mal">
-      <div class="num">{{ reporte.resumen.sin_arrancar }}</div>
-      <div class="label">Bot NO arrancó</div>
+      <div class="num">{{ reporte.resumen.no_acepto }}</div>
+      <div class="label">No aceptó</div>
     </div>
     <div class="stat-card aviso">
       <div class="num">{{ reporte.resumen.sin_respuesta }}</div>
@@ -180,7 +180,7 @@
     </tr>
     {% endfor %}
   </table>
-  <p class="pie" style="margin-top:-15px">"Bot NO arrancó" = escribió pero no existe tutela: el mensaje no llegó a procesarse o murió antes del consentimiento. Las horas son de Bogotá.</p>
+  <p class="pie" style="margin-top:-15px">"No aceptó" = el bot sí respondió y la persona no pulsó aceptar. "No arrancó" = no hay tutela y tampoco hay entrega confirmada. Las horas son de Bogotá.</p>
 
   {% if reporte.sin_respuesta %}
   <h2>Números que escribieron y no hay ninguna salida registrada</h2>

@@ -76,6 +76,10 @@ def _basura_del_bug(session) -> dict:
     return {"usuarios_sin_numero": int(usuarios), "tutelas_sin_numero": int(tutelas)}
 
 
+# Meta aceptó el envío. "leido" implica que además lo abrió.
+_RESPUESTAS_ENTREGADAS = frozenset({"aceptado", "entregado", "leido"})
+
+
 def _etapa(estado: str | None) -> tuple[str, str]:
     """Traduce el estado de la tutela a "hasta dónde llegó el bot" + tono.
 
@@ -174,6 +178,7 @@ def reporte_entrega(session, dias: int = DIAS_POR_DEFECTO, limite: int = 100) ->
     conversaciones: list[dict] = []
     respondidos = 0
     sin_arrancar = 0
+    no_acepto = 0
 
     for from_number, total, ultimo in entrantes:
         if _sin_digitos(from_number):
@@ -199,8 +204,13 @@ def reporte_entrega(session, dias: int = DIAS_POR_DEFECTO, limite: int = 100) ->
             entrega = envio.estado
             respondidos += 1
 
+        if etiqueta == "No arrancó" and entrega in _RESPUESTAS_ENTREGADAS:
+            # El bot sí contestó (aviso de privacidad). La persona no pulsó aceptar.
+            etiqueta, tono = "No aceptó", "aviso"
         if etiqueta == "No arrancó":
             sin_arrancar += 1
+        elif etiqueta == "No aceptó":
+            no_acepto += 1
         conversaciones.append({
             **base,
             "bot_estado": tutela.estado if tutela else None,
@@ -257,7 +267,8 @@ def reporte_entrega(session, dias: int = DIAS_POR_DEFECTO, limite: int = 100) ->
             "con_envio_fallido": len(fallidos),
             "sin_respuesta": len(sin_respuesta),
             "sin_arrancar": sin_arrancar,
-            "arrancaron": numeros_escribieron - sin_arrancar,
+            "no_acepto": no_acepto,
+            "arrancaron": numeros_escribieron - sin_arrancar - no_acepto,
         },
         "estados_envio": estados,
         "errores_meta": errores,
@@ -265,7 +276,11 @@ def reporte_entrega(session, dias: int = DIAS_POR_DEFECTO, limite: int = 100) ->
         "fallidos": fallidos[:limite],
         "conversaciones": sorted(
             conversaciones[:limite],
-            key=lambda item: (item["bot_etiqueta"] == "No arrancó", item["ultimo"] or ""),
+            key=lambda item: (
+                item["bot_etiqueta"] == "No arrancó",
+                item["bot_etiqueta"] == "No aceptó",
+                item["ultimo"] or "",
+            ),
             reverse=True,
         ),
         "basura_del_bug": _basura_del_bug(session),
