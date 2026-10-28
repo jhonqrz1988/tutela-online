@@ -179,11 +179,15 @@ class TestHorasBogota(unittest.TestCase):
 
     def test_fecha_se_muestra_en_bogota_no_utc(self):
         # 15:00 UTC son las 10:00 en Colombia (UTC-5, sin horario de verano).
-        _msg(self.session, from_number="573999999999",
-             created_at=datetime.datetime(2026, 10, 1, 15, 0, 0))
+        # La fecha se calcula desde AHORA (no fija): el reporte solo mira la
+        # ventana de días, así que una fecha clavada caducaba sola.
+        creado = AHORA.replace(hour=15, minute=0, second=0, microsecond=0)
+        _msg(self.session, from_number="573999999999", created_at=creado)
 
         r = entrega_service.reporte_entrega(self.session)
-        self.assertEqual(r["conversaciones"][0]["ultimo"], "2026-10-01 10:00")
+        self.assertEqual(
+            r["conversaciones"][0]["ultimo"], f"{creado.date().isoformat()} 10:00"
+        )
 
     def test_generado_usa_hora_local(self):
         # El naive de la BD es UTC; hay que marcarlo como UTC antes de convertir.
@@ -195,10 +199,11 @@ class TestHorasBogota(unittest.TestCase):
 
     def test_orden_por_ultimo_sigue_funcionando(self):
         # El orden usa strings "YYYY-MM-DD HH:MM": debe seguir siendo cronológico.
+        # Fechas dentro de la ventana de días (relativas, no fijas).
         _msg(self.session, from_number="573111111111",
-             created_at=datetime.datetime(2026, 10, 1, 20, 0, 0))
+             created_at=AHORA.replace(hour=20, minute=0, second=0, microsecond=0))
         _msg(self.session, from_number="573222222222",
-             created_at=datetime.datetime(2026, 10, 1, 18, 0, 0))
+             created_at=AHORA.replace(hour=18, minute=0, second=0, microsecond=0))
 
         r = entrega_service.reporte_entrega(self.session)
         orden = [c["telefono"] for c in r["conversaciones"]]
@@ -309,10 +314,10 @@ class TestEstadoDelBot(unittest.TestCase):
 
     def test_las_que_no_arrancan_van_arriba(self):
         _msg(self.session, from_number="573000000005",
-             created_at=datetime.datetime(2026, 10, 1, 19, 0, 0))
+             created_at=AHORA.replace(hour=19, minute=0, second=0, microsecond=0))
         self._con_tutela("573000000005", "recogiendo_datos")
         _msg(self.session, from_number="573000000006",
-             created_at=datetime.datetime(2026, 10, 1, 20, 0, 0))
+             created_at=AHORA.replace(hour=20, minute=0, second=0, microsecond=0))
 
         r = entrega_service.reporte_entrega(self.session)
         # Aunque el que arrancó es más reciente, el que NO arrancó va primero:

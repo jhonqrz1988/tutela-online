@@ -61,16 +61,30 @@ class Base(DeclarativeBase):
     pass
 
 
-def init_db():
+def init_db() -> bool:
+    """Crea las tablas y ajusta el esquema. Devuelve True si la BD respondió.
+
+    Nunca aborta el arranque: si la base no responde tras los reintentos se
+    loguea el error y la app arranca igual, en modo degradado.
+
+    Antes propagaba la excepción ("la app no debe arrancar sin base de datos"),
+    pero eso convertía una caída del proveedor en un bucle de reinicios: uvicorn
+    salía con status 3, Render reintentaba el contenedor y el servicio quedaba
+    muerto sin que nadie lo viera. Arrancar degradado es mejor: ``/health``
+    reporta ``database: unreachable`` (el monitor grita) y el webhook devuelve
+    500 para que Meta reintente en vez de perder los mensajes.
+    """
     import app.models  # noqa: F401
-    _crear_tablas_con_reintentos()
+
+    return _crear_tablas_con_reintentos()
 
 
-def _crear_tablas_con_reintentos():
+def _crear_tablas_con_reintentos() -> bool:
     """Crea las tablas reconectando con backoff si el gestor está reiniciando.
 
-    El fallo es transitorio: se re-intenta con una pausa corta y, si al final
-    sigue caído, se propaga (la app no debe arrancar sin base de datos).
+    El fallo suele ser transitorio: se reintenta con una pausa corta. Si tras
+    agotar los intentos la base sigue caída, se loguea y se devuelve False (el
+    llamador decide cómo degradar). Nunca lanza.
     """
     from sqlalchemy import exc
 
@@ -81,7 +95,7 @@ def _crear_tablas_con_reintentos():
                 conn.execute(text("SELECT 1"))
                 _migrar_esquema(conn)
             Base.metadata.create_all(bind=engine)
-            return
+            return True
         except exc.OperationalError as e:
             ultimo_error = e
             logger.warning(
@@ -90,7 +104,13 @@ def _crear_tablas_con_reintentos():
             )
             if intento < DB_REINTENTOS:
                 time.sleep(DB_ESPERA_SEG)
-    raise ultimo_error
+    logger.error(
+        "Base de datos no disponible tras %s intentos: %s. "
+        "Se arranca en modo DEGRADADO (la app sigue arriba; /health lo reporta).",
+        DB_REINTENTOS,
+        ultimo_error,
+    )
+    return False
 
 
 def _migrar_esquema(conn):

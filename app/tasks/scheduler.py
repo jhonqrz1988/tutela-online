@@ -69,24 +69,60 @@ def _agregar_job():
         )
 
 
-def iniciar_scheduler():
-    """Scheduler de radicación automática.
+def _agregar_job_retencion():
+    """Registra la purga diaria de visitas/clics (mantenimiento de la BD).
 
-    Ejecuta la cola de radicación cada 15 minutos durante horario hábil
-    (8am-12pm y 2pm-5pm, lunes a viernes). El job ya valida horario internamente.
-    Si enable_scheduler=False el scheduler no se arranca (no crea hilos) pero
-    queda disponible para activarlo en caliente desde el panel admin.
+    A propósito NO cuelga de ``_automatico_enabled``: si el admin apaga la
+    radicación desde el panel, la limpieza debe seguir corriendo. Se controla
+    con su propio flag (``ENABLE_RETENCION``).
+    """
+    if not settings.enable_retencion:
+        return
+    if scheduler.get_job("retencion_datos") is not None:
+        return
+
+    import app.tasks.jobs
+
+    scheduler.add_job(
+        app.tasks.jobs.purgar_datos_antiguos,
+        trigger="cron",
+        hour=3,
+        minute=0,
+        # 03:00 Bogotá = valle de tráfico; además el DELETE diario mantiene la
+        # base activa, lo que evita la pausa por inactividad de Supabase Free.
+        timezone="America/Bogota",
+        id="retencion_datos",
+        replace_existing=True,
+        max_instances=1,
+        misfire_grace_time=3600,
+    )
+
+
+def iniciar_scheduler():
+    """Scheduler de radicación automática + mantenimiento de la BD.
+
+    Radicación: cada 15 minutos en horario hábil (8am-12pm y 2pm-5pm, lun-vie).
+    El job ya valida horario internamente.
+    Retención: purga diaria a las 03:00 Bogotá, con su propio flag.
+    Si ambos flags están apagados no se crean hilos, pero el scheduler queda
+    disponible para activar la radicación en caliente desde el panel admin.
     """
     global _automatico_enabled
     _automatico_enabled = settings.enable_scheduler
-    if not _automatico_enabled:
+    if _automatico_enabled:
+        _agregar_job()
+    _agregar_job_retencion()
+
+    if not (_automatico_enabled or settings.enable_retencion):
         logger.info("Scheduler deshabilitado (enable_scheduler=False); puede activarse desde el panel admin")
         return
 
-    _agregar_job()
     if not scheduler.running:
         scheduler.start()
-    logger.info("Scheduler de radicación iniciado (cada 15min, lun-vie 8-16h)")
+    if _automatico_enabled:
+        logger.info("Scheduler de radicación iniciado (cada 15min, lun-vie 8-16h)")
+    if settings.enable_retencion:
+        logger.info("Retención de datos activa (purga diaria 03:00 Bogotá)")
 
 
 def scheduler_en_ejecucion() -> bool:
@@ -105,6 +141,9 @@ def set_scheduler_automatico(habilitar: bool) -> bool:
     _automatico_enabled = bool(habilitar)
     if _automatico_enabled:
         _agregar_job()
+        # La retención no depende de este switch, pero si el hilo arranca aquí
+        # (nunca se inició al boot) hay que registrarla también.
+        _agregar_job_retencion()
         if not scheduler.running:
             scheduler.start()
         logger.info("Radicación automática ACTIVADA desde el panel admin")

@@ -1,20 +1,19 @@
 # Configuración de Render (https://render.com) para TutelApp.
 # Deploy: https://tutelapp.co
 #
-# NOTA sobre el plan:
-# - El servicio se duerme tras ~15 min sin tráfico entrante.
-# - Para mantenerlo despierto, un monitor externo gratuito (p. ej. UptimeRobot
-#   con intervalo <= 10 min) debe hacer ping a https://tutelapp.co/health
-#   y tener "Auto-Wake" (despertar con petición entrante) activo.
-# - El plan gratis NO dispone de Persistent Disk: los archivos en storage/
-#   se pierden en cada redeploy. PRODUCCIÓN usa plan Starter (~$7/mes) con
-#   Persistent Disk montado en /data: los valores declarados aquí
-#   (STORAGE_DIR=/data/storage, SIMULATE_BOT=false, ENABLE_SCHEDULER=true,
-#   horario de radicación) reflejan esa configuración.
+# IMPORTANTE — este archivo debe reflejar la REALIDAD del servicio:
+# - El servicio corre con **Docker** (`runtime: docker`), no con el runtime
+#   Python. Chromium/Playwright vienen en la imagen (ver Dockerfile); si alguien
+#   re-sincroniza el Blueprint con `runtime: python`, el bot de radicación deja
+#   de tener navegador y todas las radicaciones fallan.
+# - Plan real: Standard (1 vCPU / 2 GB, id interno `1c-2g`), región oregon,
+#   1 instancia, Persistent Disk `tutela-data` montado en /data.
+# - `healthCheckPath: /health` está declarado aquí; verifica que el servicio
+#   tenga el health check activo en el dashboard (reporta BD, disco y esquema).
 #
-# PERSISTENT DISK /data (importante, en el dashboard de Render):
+# PERSISTENT DISK /data:
 #   1. Service -> Disks -> "Create Persistent Disk".
-#   2. Mount Path: /data  — la app ya crea /data/storage automáticamente
+#   2. Mount Path: /data  — la app crea /data/storage automáticamente
 #      (_ensure_sqlite_dir) y el Dockerfile declara VOLUME ["/data"].
 #   3. Si la BD es SQLite local (no Postgres), apuntar DATABASE_URL a
 #      sqlite:////data/tutelas.db para que la BD también sobreviva redeploys.
@@ -27,14 +26,16 @@
 services:
   - type: web
     name: tutela-online
-    runtime: python
-    plan: starter
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python run_server.py
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: standard
     healthCheckPath: /health
+    disk:
+      name: tutela-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.12.7
       - key: WHATSAPP_PROVIDER
         value: meta
       - key: META_PHONE_NUMBER_ID
@@ -79,3 +80,17 @@ services:
         value: "false"
       - key: STORAGE_DIR
         value: /data/storage
+      # Retención de datos de tráfico: la purga diaria (03:00 Bogotá) mantiene
+      # visitas/clics bajo control. En Supabase Free el techo es 500 MB por
+      # proyecto; 90 días deja años de margen. Va aparte del switch de
+      # radicación: si se pausa el bot, la limpieza sigue corriendo.
+      - key: ENABLE_RETENCION
+        value: "true"
+      - key: RETENCION_VISITAS_DIAS
+        value: "90"
+      - key: RETENCION_CLICS_DIAS
+        value: "90"
+      - key: RETENCION_LOTE
+        value: "5000"
+      - key: RETENCION_MAX_POR_CORRIDA
+        value: "50000"

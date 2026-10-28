@@ -54,6 +54,33 @@ def enviar_recordatorios_inactivos():
         return {"enviados": 0, "fallidos": 0, "candidatos": 0}
 
 
+def purgar_datos_antiguos():
+    """Purga visitas/clics fuera de la ventana de retención (mantenimiento).
+
+    Independiente del switch de radicación del panel: si el admin pausa el bot,
+    la limpieza de la BD debe seguir corriendo para que las tablas de tráfico
+    no crezcan sin control (en Supabase Free el techo es 500 MB por proyecto).
+    """
+    from app.services.visitas_service import purgar_antiguos
+
+    try:
+        resultado = purgar_antiguos()
+    except Exception as e:  # noqa: BLE001 - un job nunca debe romper el ciclo
+        logger.error(f"Error en job de retención: {e}")
+        return {"visitas": 0, "clics": 0, "error": str(e)[:200]}
+
+    if resultado.get("visitas") or resultado.get("clics"):
+        logger.info(
+            "Retención: %s visitas y %s clics borrados (cortes: %s)",
+            resultado.get("visitas"),
+            resultado.get("clics"),
+            resultado.get("cortes"),
+        )
+    else:
+        logger.info("Retención: nada que borrar")
+    return resultado
+
+
 def procesar_cola_radicacion():
     """Procesa todas las tutelas pendientes de radicación.
 

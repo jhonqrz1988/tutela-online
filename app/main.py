@@ -28,14 +28,32 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
-    from seed_citas import seed_citas
-    seed_citas()
+    # Arranque degradado, nunca fatal: si la BD no responde, la app DEBE quedar
+    # arriba para que /health lo reporte y el webhook devuelva 500 (Meta
+    # reintenta) en vez de salir con status 3 y entrar en bucle de reinicios.
+    bd_ok = init_db()
+    if bd_ok:
+        _sembrar_citas()
+    else:
+        logging.getLogger(__name__).error(
+            "Arranque DEGRADADO: la base de datos no respondió. "
+            "La app sigue arriba; /health reportará database: unreachable."
+        )
     from app.api.admin import _validar_secret_key_prod
     _validar_secret_key_prod()
     from app.tasks.scheduler import iniciar_scheduler
     iniciar_scheduler()
     yield
+
+
+def _sembrar_citas() -> None:
+    """Siembra el catálogo de citas legales. Nunca aborta el arranque."""
+    try:
+        from seed_citas import seed_citas
+
+        seed_citas()
+    except Exception as e:  # noqa: BLE001 - el seed no debe tumbar el servicio
+        logging.getLogger(__name__).error(f"No se pudo sembrar el catálogo de citas: {e}")
 
 
 def _allowed_origins(app_url: str, cors_origins: str = "") -> list[str]:

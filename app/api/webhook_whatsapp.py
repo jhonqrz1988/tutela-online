@@ -17,6 +17,7 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import DBAPIError
 
 from app.config import settings
 from app.database import get_session
@@ -29,7 +30,6 @@ from app.services.documento_service import generar_pdf
 from app.services.mercadopago_service import texto_precio
 from app.services.ia_service import (
     aplicar_extraccion,
-    analizar_imagen,
     campos_faltantes,
     extraer_citas,
     extraer_datos_caso,
@@ -371,6 +371,23 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
                     )
                     if isinstance(respuesta, dict) and respuesta.get("respuestas"):
                         respuestas.extend(respuesta["respuestas"])
+                except DBAPIError as e:
+                    # La BD no responde. Devolver 200 aquí (comportamiento
+                    # anterior) hace que Meta considere el mensaje ENTREGADO y no
+                    # lo reintente: durante la caída del 2026-10-28 se perdieron
+                    # ~2 h de mensajes en silencio. Un 500 dispara el reintento
+                    # de Meta, así que el usuario recibe respuesta al volver la BD.
+                    logger.error(
+                        f"Webhook Meta: base de datos no disponible procesando "
+                        f"{msg_type} de {telefono}: {e}",
+                        exc_info=True,
+                    )
+                    with contextlib.suppress(Exception):
+                        session.rollback()
+                    return JSONResponse(
+                        {"ok": False, "error": "database_unavailable"},
+                        status_code=500,
+                    )
                 except Exception as e:
                     logger.error(f"Error procesando mensaje {msg_type} de {telefono}: {e}", exc_info=True)
     return {"ok": True, "respuestas": respuestas} if respuestas else {"ok": True}
@@ -1158,19 +1175,12 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             ruta_local = await _descargar_prueba(media_url)
             if ruta_local:
                 datos.setdefault("pruebas_paths", []).append(ruta_local)
-                # Los PDFs de soporte NO se interpretan: solo se guardan para
-                # fusionarse intactos al final del PDF de la tutela. La vision
-                # solo aplica a fotos (imagenes).
-                if not ruta_local.lower().endswith(".pdf"):
-                    try:
-                        analisis = await analizar_imagen(ruta_local)
-                    except Exception as e:
-                        logger.error(f"Error analizando imagen: {e}")
-                        analisis = ""
-                else:
-                    analisis = ""
-                if analisis:
-                    datos.setdefault("pruebas_analizadas", []).append(analisis)
+                # Las pruebas NO se interpretan con IA: la foto/PDF se incrusta
+                # tal cual como anexo del PDF final (documento_service). El
+                # análisis solo servía de pie de foto y, peor, desalineaba
+                # `pruebas_analizadas` (se indexa por posición): si una prueba no
+                # se analizaba, el pie de una terminaba en otra.
+                datos.pop("pruebas_analizadas", None)
                 tutela.datos_json = json.dumps(datos)
                 session.commit()
                 num_soportes = len(datos.get("pruebas_paths", []))

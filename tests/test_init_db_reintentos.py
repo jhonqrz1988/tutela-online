@@ -1,9 +1,13 @@
 """Tests para el arranque resiliente: `init_db` con reconexión.
 
 En Render, Postgres puede recién reiniciarse justo al desplegar y la primera
-conexión SSL falla ("SSL connection has been closed unexpectedly") -> uvicorn
-abortaba el boot con status 3. `_crear_tablas_con_reintentos` reintenta con
-backoff hasta que la base responde, y solo propaga el error si agota todos.
+conexión SSL falla ("SSL connection has been closed unexpectedly") ->
+`_crear_tablas_con_reintentos` reintenta con backoff hasta que la base responde.
+
+Si tras agotar los reintentos sigue caída, **no** propaga: el arranque degrada.
+Antes propagaba y uvicorn salía con status 3 -> Render reiniciaba el contenedor
+en bucle y el servicio quedaba muerto sin que nadie lo viera (incidente del
+2026-10-28, con ~2 h de bot mudo y 8 reinicios fallidos).
 """
 import unittest
 from unittest import mock
@@ -34,29 +38,41 @@ class TestInitDbConReintentos(unittest.TestCase):
              mock.patch("app.database.time.sleep") as dormir, \
              mock.patch("app.database.Base.metadata.create_all") as crear:
             motor.connect.side_effect = fake_connect
-            init_db()
+            arranco = init_db()
 
+        self.assertTrue(arranco)
         self.assertEqual(llamadas["n"], 3)
         crear.assert_called_once()
         dormir.assert_called()
 
-    def test_agota_reintentos_y_propaga(self):
-        """Si la base sigue caída tras los reintentos, el error se propaga
-        (la app no debe arrancar sin base de datos)."""
+    def test_agota_reintentos_y_degrada_sin_lanzar(self):
+        """Si la base sigue caída tras los reintentos, NO se cae el arranque.
+
+        Devuelve False y loguea el error para que /health lo reporte; si
+        lanzara, uvicorn saldría con status 3 y Render entraría en bucle de
+        reinicios con el bot mudo (bug de producción del 2026-10-28).
+        """
         with mock.patch("app.database.engine") as motor, \
-             mock.patch("app.database.time.sleep"):
+             mock.patch("app.database.time.sleep"), \
+             self.assertLogs("app.database", level="ERROR") as logs:
             motor.connect.side_effect = _error_operacional()
-            with self.assertRaises(sqlalchemy.exc.OperationalError):
-                init_db()
+            arranco = init_db()  # no debe lanzar
+
+        self.assertFalse(arranco)
         self.assertEqual(motor.connect.call_count, DB_REINTENTOS)
+        self.assertTrue(
+            any("DEGRADADO" in linea for linea in logs.output),
+            "debe quedar constancia en el log del arranque degradado",
+        )
 
     def test_base_sana_no_reintenta(self):
         """Con la base en línea se crean las tablas al primer intento."""
         with mock.patch("app.database.engine") as motor, \
              mock.patch("app.database.time.sleep") as dormir, \
              mock.patch("app.database.Base.metadata.create_all") as crear:
-            init_db()
+            arranco = init_db()
 
+        self.assertTrue(arranco)
         motor.connect.assert_called_once()
         crear.assert_called_once()
         dormir.assert_not_called()

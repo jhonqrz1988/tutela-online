@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     simulate_bot: bool = True
     enable_scheduler: bool = False  # radicación automática nocturna (bot) — desactivada
 
+    # === Retención de datos de tráfico (visitas/clics de la landing) ===
+    # Días que se conservan las filas de visitas_landing y clics_whatsapp.
+    # 0 = desactivado (no borra nada). En Supabase Free el techo es 500 MB por
+    # proyecto: la purga evita que la tabla de visitas lo alcance algún día.
+    retencion_visitas_dias: int = 90
+    retencion_clics_dias: int = 90
+    # Borrado por lotes: un DELETE gigante bloquea la tabla en Postgres (la
+    # instancia Micro de Supabase) y puede tumbar el health check.
+    retencion_lote: int = 5000
+    retencion_max_por_corrida: int = 50000
+    # Job diario de purga. Independiente del switch de radicación: si el admin
+    # pausa el bot, el mantenimiento de la BD debe seguir corriendo.
+    enable_retencion: bool = False
+
     twocaptcha_api_key: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

@@ -9,8 +9,9 @@ from datetime import date, datetime, timedelta, timezone
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.clic import ClicWhatsApp
 from app.models.visita import VisitaLanding
@@ -424,3 +425,75 @@ def registrar_clic_whatsapp(query_string: str, ubicacion: str, user_agent: str =
             session.close()
     except Exception:
         logger.exception("No se pudo registrar el clic a WhatsApp")
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  RETENCIÓN — purga de visitas y clics antiguos
+# ═══════════════════════════════════════════════════════════════════
+
+def _utc_naive_ahora() -> datetime:
+    """UTC sin zona: es como la BD guarda ``created_at`` (``func.now()``)."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _purgar_tabla(modelo, corte: datetime, lote: int, maximo: int) -> int:
+    """Borra en lotes las filas de ``modelo`` con ``created_at < corte``.
+
+    Se borra por lotes (no un DELETE único) porque en PostgreSQL un borrado
+    masivo bloquea la tabla: en Supabase Free (instancia Micro) eso puede
+    tumbar el health check. Devuelve el total borrado.
+    """
+    borradas = 0
+    session = SessionLocal()
+    try:
+        while borradas < maximo:
+            tam = min(lote, maximo - borradas)
+            ids = session.execute(
+                select(modelo.id).where(modelo.created_at < corte).limit(tam)
+            ).scalars().all()
+            if not ids:
+                break
+            session.execute(delete(modelo).where(modelo.id.in_(ids)))
+            session.commit()
+            borradas += len(ids)
+            if len(ids) < tam:
+                break
+    finally:
+        session.close()
+    return borradas
+
+
+def purgar_antiguos(
+    dias_visitas: int | None = None,
+    dias_clics: int | None = None,
+    lote: int | None = None,
+    maximo: int | None = None,
+) -> dict:
+    """Borra visitas y clics más antiguos que la ventana de retención.
+
+    Es mantenimiento: **nunca lanza** (mismo criterio que el registro de
+    visitas). Un valor de días <= 0 desactiva la purga de esa tabla.
+
+    Devuelve ``{visitas, clics, cortes, error}`` con el conteo borrado, útil
+    para el log del job y para los tests.
+    """
+    resultado: dict = {"visitas": 0, "clics": 0, "cortes": {}, "error": None}
+    dv = settings.retencion_visitas_dias if dias_visitas is None else dias_visitas
+    dc = settings.retencion_clics_dias if dias_clics is None else dias_clics
+    lote = max(1, int(settings.retencion_lote if lote is None else lote))
+    maximo = max(1, int(settings.retencion_max_por_corrida if maximo is None else maximo))
+
+    try:
+        ahora = _utc_naive_ahora()
+        if dv and int(dv) > 0:
+            corte = ahora - timedelta(days=int(dv))
+            resultado["cortes"]["visitas"] = corte.strftime("%Y-%m-%d %H:%M")
+            resultado["visitas"] = _purgar_tabla(VisitaLanding, corte, lote, maximo)
+        if dc and int(dc) > 0:
+            corte = ahora - timedelta(days=int(dc))
+            resultado["cortes"]["clics"] = corte.strftime("%Y-%m-%d %H:%M")
+            resultado["clics"] = _purgar_tabla(ClicWhatsApp, corte, lote, maximo)
+    except Exception as e:  # noqa: BLE001 - la purga jamás debe romper el job
+        logger.error(f"Error en la purga por retención: {e}")
+        resultado["error"] = str(e)[:200]
+    return resultado

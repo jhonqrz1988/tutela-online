@@ -1,11 +1,9 @@
 import asyncio
-import base64
 import json
 import logging
 import unicodedata
 
 import aiofiles
-import httpx
 from anyio import Path
 from openai import AsyncOpenAI
 
@@ -272,46 +270,18 @@ async def extraer_datos_caso(texto: str) -> dict:
 
 
 async def analizar_imagen(url_imagen: str) -> str:
-    """Analiza una imagen (prueba/documento) usando visión por IA."""
-    client = _get_client()
-    if not client:
-        return ""
-    try:
-        if await Path(url_imagen).is_file():
-            async with aiofiles.open(url_imagen, "rb") as f:
-                img_b64 = base64.b64encode(await f.read()).decode()
-        else:
-            async with httpx.AsyncClient(timeout=20) as c:
-                r = await c.get(url_imagen)
-            img_b64 = base64.b64encode(r.content).decode()
-        resp = await client.chat.completions.create(
-            model=settings.ai_chat_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Analiza esta imagen de un documento legal colombiano. "
-                                    "Extrae: tipo de documento, número de documento, nombres, "
-                                    "fechas, entidad emisora, y cualquier información relevante. "
-                                    "Resume en texto plano.",
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{img_b64}",
-                                "detail": "high",
-                            },
-                        },
-                    ],
-                },
-            ],
-        )
-        return resp.choices[0].message.content or ""
-    except Exception as e:
-        logger.error(f"Error en analizar_imagen: {e}")
-        return ""
+    """DEPRECADA — no se usa y no funciona con los modelos configurados.
+
+    Enviaba el contenido como lista de partes (formato de visión de GPT-4o),
+    pero el proveedor activo (Groq) solo acepta texto y respondía siempre 400
+    (``messages[0].content must be a string``): cada foto costaba un round-trip
+    inútil solo para un pie de foto opcional.
+
+    El flujo de pruebas ya NO la llama: la imagen se guarda tal cual y se
+    incrusta como anexo del PDF (``documento_service._anexar_pruebas``), sin
+    interpretarla. Se mantiene la firma por compatibilidad, sin llamar a la IA.
+    """
+    return ""
 
 
 def campos_faltantes(datos: dict) -> list[str]:

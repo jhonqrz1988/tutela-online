@@ -6,7 +6,7 @@ intactos al final del PDF de la tutela y nunca pasan por la visión de la IA
 como si fuera una imagen, "inventando" fotos).
 
 Cubre:
-1. recibiendo_pruebas NO llama analizar_imagen para un PDF; sí para una imagen
+1. recibiendo_pruebas NO llama a la IA: foto y PDF solo se guardan para el anexo
 2. generar_pdf fusiona el PDF de soporte conservando su texto (no rasterizado)
 3. una imagen de prueba sigue incrustándose como anexo (regresión de Fase E)
 """
@@ -73,8 +73,8 @@ class TestRecibiendoPruebas(unittest.TestCase):
             )
         return resp, mock_b
 
-    def test_pdf_no_se_analiza_con_vision(self):
-        """Un PDF solo se descarga y guarda: analizar_imagen NO debe llamarse."""
+    def test_pdf_solo_se_guarda_sin_vision(self):
+        """Un PDF solo se descarga y guarda: no pasa por la IA."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         ruta_pdf = os.path.join(tmp.name, "soporte.pdf")
@@ -88,20 +88,21 @@ class TestRecibiendoPruebas(unittest.TestCase):
         with mock.patch.object(
             webhook_whatsapp, "_descargar_prueba",
             new=mock.AsyncMock(return_value=ruta_pdf),
-        ), mock.patch.object(
-            webhook_whatsapp, "analizar_imagen",
-            new=mock.AsyncMock(return_value="analisis inventado"),
-        ) as mock_ia:
+        ):
             asyncio.run(self._procesar(session, user.telefono, "", num_media=1,
                                        media_url="https://cdn.x/123"))
-        self.assertFalse(mock_ia.await_count, "un PDF no debe pasar por vision")
         tutela_guardada = session.execute(select(Tutela)).scalars().all()[0]
         datos = json.loads(tutela_guardada.datos_json)
         self.assertEqual(datos.get("pruebas_paths"), [ruta_pdf])
         self.assertNotIn("pruebas_analizadas", datos)
 
-    def test_imagen_si_se_analiza_con_vision(self):
-        """Las fotos sí pasan por vision para generar la descripcion del anexo."""
+    def test_imagen_solo_se_guarda_sin_vision(self):
+        """Las fotos tampoco pasan por IA: se incrustan tal cual en el anexo.
+
+        Antes se llamaba a `analizar_imagen` solo para el pie de foto; con el
+        proveedor activo (solo texto) esa llamada devolvía 400 siempre, así que
+        cada soporte pagaba un round-trip inútil. La imagen no se toca.
+        """
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         ruta_img = os.path.join(tmp.name, "foto.jpg")
@@ -116,17 +117,46 @@ class TestRecibiendoPruebas(unittest.TestCase):
         with mock.patch.object(
             webhook_whatsapp, "_descargar_prueba",
             new=mock.AsyncMock(return_value=ruta_img),
-        ), mock.patch.object(
-            webhook_whatsapp, "analizar_imagen",
+        ), mock.patch(
+            "app.services.ia_service.analizar_imagen",
             new=mock.AsyncMock(return_value="Historia clinica visible"),
         ) as mock_ia:
             asyncio.run(self._procesar(session, user.telefono, "", num_media=1,
                                        media_url="https://cdn.x/456"))
-        self.assertEqual(mock_ia.await_count, 1)
+        self.assertEqual(mock_ia.await_count, 0, "la imagen no debe pasar por IA")
         tutela_guardada = session.execute(select(Tutela)).scalars().all()[0]
         datos = json.loads(tutela_guardada.datos_json)
         self.assertEqual(datos.get("pruebas_paths"), [ruta_img])
-        self.assertEqual(datos.get("pruebas_analizadas"), ["Historia clinica visible"])
+        self.assertNotIn("pruebas_analizadas", datos)
+
+    def test_imagen_no_arrastra_analisis_previos(self):
+        """Un `pruebas_analizadas` viejo (de antes del cambio) se descarta.
+
+        Se indexaba por posición junto a `pruebas_paths`: si una prueba no se
+        analizaba, el pie de foto de una se pegaba en otra. Al dejar de
+        analizar, se limpia para no arrastrar pies cruzados.
+        """
+        session = _nueva_sesion()
+        ruta_img = os.path.join(tempfile.gettempdir(), "foto_vieja.jpg")
+        with open(ruta_img, "wb") as f:
+            f.write(b"JPEG")
+        self.addCleanup(os.remove, ruta_img)
+
+        user, tutela = self._crear_usuario_tutela(
+            session, "recibiendo_pruebas",
+            {"tipo": "salud", "pruebas_analizadas": ["pie de otra prueba"]},
+        )
+
+        with mock.patch.object(
+            webhook_whatsapp, "_descargar_prueba",
+            new=mock.AsyncMock(return_value=ruta_img),
+        ):
+            asyncio.run(self._procesar(session, user.telefono, "", num_media=1,
+                                       media_url="https://cdn.x/789"))
+        tutela_guardada = session.execute(select(Tutela)).scalars().all()[0]
+        datos = json.loads(tutela_guardada.datos_json)
+        self.assertEqual(datos.get("pruebas_paths"), [ruta_img])
+        self.assertNotIn("pruebas_analizadas", datos)
 
 
 class TestGenerarPdfConPdfSoporte(unittest.TestCase):
