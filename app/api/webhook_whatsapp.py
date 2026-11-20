@@ -634,6 +634,26 @@ _COMANDOS_SALIR = frozenset({
     "dejar la tutela", "abandonar", "salir del proceso",
 })
 
+# Respuestas aceptadas en la pantalla de consentimiento (normalizadas).
+_COMANDOS_ACEPTO = frozenset({
+    "acepto", "si", "ok", "si acepto", "autorizo", "si autorizo",
+    "claro", "claro que si", "bueno", "dale", "listo", "de acuerdo",
+    "estoy de acuerdo", "1", "continuar", "empezar", "iniciar",
+    "aceptar", "confirmo", "si quiero",
+})
+
+_COMANDOS_RECHAZO = frozenset({
+    "no", "no acepto", "no autorizo", "cancelar", "2",
+})
+
+# Saludos / textos pre-llenados de la landing para iniciar o retomar el flujo.
+_COMANDOS_INICIO = frozenset({
+    "hola", "menu", "inicio", "empezar", "continuar", "continuar mi tutela",
+    "hola necesito hacer una tutela de salud",
+    "hola quiero generar mi documento de tutela de salud",
+    "hola quiero que redacten y radiquen mi tutela de salud",
+})
+
 
 def _normalizar_texto_entrada(texto: str) -> str:
     """Minúsculas, sin acentos ni puntuación, para comparar comandos.
@@ -647,8 +667,9 @@ def _normalizar_texto_entrada(texto: str) -> str:
     texto = "".join(
         ch for ch in unicodedata.normalize("NFD", texto) if unicodedata.category(ch) != "Mn"
     )
-    # Quitar puntuación y signos que WhatsApp añade al final.
-    return "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in texto).strip()
+    # Quitar puntuación y colapsar espacios múltiples ("Sí, acepto" -> "si acepto").
+    limpio = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in texto)
+    return " ".join(limpio.split())
 
 
 def _es_comando_salir(body: str) -> bool:
@@ -658,6 +679,29 @@ def _es_comando_salir(body: str) -> bool:
     ("quiero salir de aquí") no debe borrar los datos de la persona.
     """
     return _normalizar_texto_entrada(body) in _COMANDOS_SALIR
+
+
+def _es_comando_inicio(body: str) -> bool:
+    """True si el usuario saluda, pide menú/continuar o llega desde un link wa.me."""
+    return _normalizar_texto_entrada(body) in _COMANDOS_INICIO
+
+
+def _iniciar_tutela_con_consentimiento(session, user: User, telefono: str, respuestas: list[str]) -> None:
+    """Registra el consentimiento, crea una nueva tutela y pide el primer dato personal."""
+    now = datetime.datetime.now(datetime.UTC)
+    user.consentimiento = True
+    user.consentimiento_version = CONSENTIMIENTO_VERSION
+    user.consentimiento_timestamp = now
+    user.estado = "activo"
+    user.no_mensajes_proactivos = False
+    session.commit()
+    tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
+    datos = {"tipo": "salud", "_step": 0}
+    tutela.datos_json = json.dumps(datos)
+    session.add(tutela)
+    session.commit()
+    _, msg = DATOS_PERSONALES_STEPS[0]
+    _r(respuestas, telefono, f"✅ *Consentimiento registrado.*\n\nAhora necesito tus datos personales.\n\n{msg}")
 
 
 def _reiniciar_flujo(session, user, telefono: str, respuestas: list[str]) -> None:
@@ -763,23 +807,12 @@ async def procesar_mensaje(
         return {"ok": True, "respuestas": respuestas}
 
     # ─── CONSENTIMIENTO ──────────────────────────────────────────────
+    norm_body = _normalizar_texto_entrada(body)
     if user.estado == "nuevo":
-        if body in ("acepto", "sí", "si", "ok", "si acepto", "sí acepto"):
-            now = datetime.datetime.now(datetime.UTC)
-            user.consentimiento = True
-            user.consentimiento_version = CONSENTIMIENTO_VERSION
-            user.consentimiento_timestamp = now
-            user.estado = "activo"
-            session.commit()
-            tutela = Tutela(user_id=user.id, tipo="salud", estado="recogiendo_datos")
-            datos = {"tipo": "salud", "_step": 0}
-            tutela.datos_json = json.dumps(datos)
-            session.add(tutela)
-            session.commit()
-            campo, msg = DATOS_PERSONALES_STEPS[0]
-            _r(respuestas, telefono, f"✅ *Consentimiento registrado.*\n\nAhora necesito tus datos personales.\n\n{msg}")
+        if norm_body in _COMANDOS_ACEPTO:
+            _iniciar_tutela_con_consentimiento(session, user, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("no", "no acepto", "cancelar"):
+        elif norm_body in _COMANDOS_RECHAZO:
             user.estado = "rechazado"
             session.commit()
             _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
@@ -788,13 +821,21 @@ async def procesar_mensaje(
         return {"ok": True, "respuestas": respuestas}
 
     if user.estado == "rechazado":
+        if norm_body in _COMANDOS_ACEPTO:
+            _iniciar_tutela_con_consentimiento(session, user, telefono, respuestas)
+            return {"ok": True, "respuestas": respuestas}
+        if _es_comando_inicio(body) or norm_body.startswith("hola"):
+            user.estado = "nuevo"
+            session.commit()
+            _b(respuestas, telefono, aviso_privacidad(), [("acepto", "✅ Sí, acepto"), ("no", "❌ No acepto"), ("salir", "🚪 Salir")])
+            return {"ok": True, "respuestas": respuestas}
         _r(respuestas, telefono, "Entendido. Sin tu autorización no podemos procesar tus datos. Si cambias de opinión, escribe *Hola* para empezar de nuevo. ¡Feliz día!")
         return {"ok": True, "respuestas": respuestas}
 
     # ─── HOLA / CONTINUAR (usuario existente) ────────────────────────────
     # "continuar mi tutela" es el botón del recordatorio: si lo pulsó, retoma
     # exactamente donde se quedó (misma rama que "hola").
-    if body in ("hola", "menú", "menu", "inicio", "empezar", "continuar", "continuar mi tutela"):
+    if _es_comando_inicio(body):
         user.estado = "activo"
         # Volvió a escribir: si antes pidió "detener", se reactiva.
         user.no_mensajes_proactivos = False
@@ -822,14 +863,39 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
                     _r(respuestas, telefono, msg)
                 else:
                     _mostrar_confirmacion_datos(telefono, respuestas, datos)
+            elif tutela.estado == "confirmar_datos_personales":
+                _mostrar_confirmacion_datos(telefono, respuestas, datos)
+            elif tutela.estado == "corrigiendo_datos_personales":
+                campo_corr = datos.get("_campo_corregir")
+                if campo_corr:
+                    _r(respuestas, telefono, _mensaje_campo_personal(campo_corr))
+                else:
+                    _r(respuestas, telefono, "Escribe el número del dato que quieres corregir:\n\n" + _menu_campos_personales())
             elif tutela.estado == "narracion":
                 _r(respuestas, telefono, NARRACION)
+            elif tutela.estado == "confirmar_audio":
+                _b(respuestas, telefono, "¿La transcripción es correcta?", [("1", "✅ Sí"), ("2", "✍️ No, escribir")])
             elif tutela.estado == "revision_datos":
                 await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
+            elif tutela.estado == "preguntas_clinicas":
+                step_c = datos.get("_step_clinico", 1)
+                idx_c = min(max(1, step_c) - 1, len(DATOS_CLINICOS_STEPS) - 1)
+                _r(respuestas, telefono, DATOS_CLINICOS_STEPS[idx_c][1])
             elif tutela.estado == "pruebas_pendiente":
                 _b(respuestas, telefono, PRUEBAS_PREGUNTA, [("adjuntar", "📎 Adjuntar pruebas"), ("saltar", "⏭️ Sin soportes")])
+            elif tutela.estado == "recibiendo_pruebas":
+                _b(respuestas, telefono, "Envía tus soportes. Cuando termines, presiona el botón.", [("listo", "✅ No tengo más")])
             elif tutela.estado == "datos_listos":
                 _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
+            elif tutela.estado == "esperando_decision_radicacion":
+                _b(respuestas, telefono, POST_PDF_OPCIONES, [("1", "💳 Procesamiento $29k"), ("2", "✍️ Hazlo tú mismo")])
+            elif tutela.estado == "hazlo_tu_mismo":
+                _b(respuestas, telefono,
+                   "📄 Recibiste el PDF de tu tutela. ¿Qué prefieres hacer?\n\n"
+                   f"1️⃣ *Que la procesen por ti* — {texto_precio()}\n"
+                   "2️⃣ *Seguir tú mismo*", [("1", "💳 Procesen $29k"), ("2", "✍️ Sigo yo")])
+            elif tutela.estado == "esperando_pago":
+                _enviar_link_pago(respuestas, telefono, tutela)
             else:
                 _r(respuestas, telefono, "🤖 *TutelApp* — Continúa donde lo dejaste.")
             return {"ok": True, "respuestas": respuestas}
@@ -962,12 +1028,12 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     #   CONFIRMAR DATOS PERSONALES — el cliente confirma o corrige
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "confirmar_datos_personales":
-        if body in ("1", "si", "sí", "correcto", "correctos", "confirmar"):
+        if norm_body in ("1", "si", "correcto", "correctos", "confirmar", "si correctos", "ok", "estan bien", "todo bien"):
             tutela.estado = "narracion"
             session.commit()
             _r(respuestas, telefono, f"✅ *¡Datos confirmados!*\n\n{NARRACION}")
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "corregir", "modificar", "no"):
+        elif norm_body in ("2", "corregir", "modificar", "no"):
             tutela.estado = "corrigiendo_datos_personales"
             session.commit()
             _r(respuestas, telefono,
@@ -1041,6 +1107,19 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             _r(respuestas, telefono, "No pude procesar el audio. Escribe tu caso.")
             return {"ok": True, "respuestas": respuestas}
 
+        if num_media > 0 and media_url and not raw_body:
+            ruta_local = await _descargar_prueba(media_url)
+            if ruta_local:
+                datos.setdefault("pruebas_paths", []).append(ruta_local)
+                tutela.datos_json = json.dumps(datos)
+                session.commit()
+            _r(respuestas, telefono, "📎 Recibí tu archivo. Ahora cuéntame en texto o nota de voz qué pasó con tu EPS (qué te negaron y desde cuándo) para redactar los hechos.")
+            return {"ok": True, "respuestas": respuestas}
+
+        if not raw_body:
+            _r(respuestas, telefono, NARRACION)
+            return {"ok": True, "respuestas": respuestas}
+
         try:
             datos_ia = await extraer_datos_caso(raw_body)
             aplicar_extraccion(datos, datos_ia)
@@ -1060,7 +1139,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "confirmar_audio":
         texto_audio = datos.get("_audio_temp", "")
-        if body in ("1", "sí", "si", "correcto") or (body == "reintentar" and texto_audio):
+        if norm_body in ("1", "si", "correcto", "si es correcto", "ok") or (norm_body == "reintentar" and texto_audio):
             datos.pop("_audio_temp", None)
             try:
                 datos_ia = await extraer_datos_caso(texto_audio)
@@ -1078,7 +1157,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             session.commit()
             await _mostrar_revision_datos(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "no"):
+        elif norm_body in ("2", "no", "no escribir", "escribir"):
             datos.pop("_audio_temp", None)
             tutela.datos_json = json.dumps(datos)
             session.commit()
@@ -1093,7 +1172,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     #   REVISION DATOS — cliente revisa extracción de IA
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "revision_datos":
-        if body in ("1", "confirmar", "si", "sí", "correcto", "verdadero"):
+        if norm_body in ("1", "confirmar", "si", "correcto", "verdadero", "si confirmar", "ok", "esta bien"):
             faltantes = campos_faltantes(datos)
             if faltantes:
                 _r(respuestas, telefono, f"⚠️ *Faltan datos importantes:* {', '.join(faltantes)}")
@@ -1109,7 +1188,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             _r(respuestas, telefono, "📋 *Para completar tu caso, responde estas preguntas:*")
             _r(respuestas, telefono, DATOS_CLINICOS_STEPS[0][1])
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "corregir", "no", "editar"):
+        elif norm_body in ("2", "corregir", "no", "editar"):
             _r(respuestas, telefono, "✍️ *Escribe tu caso de nuevo con más detalles o correcciones:*")
             _r(respuestas, telefono, NARRACION)
             tutela.estado = "narracion"
@@ -1199,10 +1278,10 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     #   DATOS LISTOS — resumen + juramento
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "datos_listos":
-        if body in ("1", "sí juro", "si juro", "juro"):
+        if norm_body in ("1", "si juro", "juro", "si", "acepto", "confirmo"):
             await _generar_con_verificacion(session, tutela, datos, telefono, respuestas)
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "no"):
+        elif norm_body in ("2", "no", "no juro"):
             _r(respuestas, telefono, "Sin el juramento no podemos generar la tutela. Si cambias de opinión, responde *Juro*.")
             return {"ok": True, "respuestas": respuestas}
         _b(respuestas, telefono, JURAMENTO_TEXTO, [("1", "✅ Sí, juro"), ("2", "❌ No")])
@@ -1212,12 +1291,17 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     #   POST-PDF — decisión: pagar o hazlo tú mismo
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_decision_radicacion":
-        if body in ("1", "pagar", "radicar", "si radicar"):
+        if body in ("1", "pagar", "radicar", "si radicar") or norm_body in (
+            "1", "pagar", "radicar", "si radicar", "radicacion 29k",
+            "procesamiento 29k", "procesen 29k", "quiero que la radiquen", "si",
+        ):
             _enviar_link_pago(respuestas, telefono, tutela)
             tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo"):
+        elif body in ("2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo") or norm_body in (
+            "2", "no", "gratis", "hacer yo mismo", "hazlo yo mismo",
+        ):
             _r(respuestas, telefono, f"Entendido. Recibiste el PDF de tu tutela por este chat.\n\n"
                                      f"Si al intentar radicarla lo ves complejo, "
                                      f"pulsa el botón y lo hacemos por ti por *{texto_precio()}* "
@@ -1235,12 +1319,19 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     if tutela.estado == "hazlo_tu_mismo":
         if body in ("1", "pagar", "radicar", "quiero que la radiquen", "quiero que lo radiquen",
                     "si radicar", "mejor pagar", "lo hacen ustedes", "quiero pagar", "no puedo",
-                    "me parece complejo", "es complejo", "me ayudan", "radiquenla"):
+                    "me parece complejo", "es complejo", "me ayudan", "radiquenla") or norm_body in (
+            "1", "pagar", "radicar", "quiero que la radiquen", "quiero que lo radiquen",
+            "si radicar", "mejor pagar", "lo hacen ustedes", "quiero pagar", "no puedo",
+            "me parece complejo", "es complejo", "me ayudan", "radiquenla",
+            "procesamiento 29k", "procesen 29k", "radicacion 29k", "si",
+        ):
             _enviar_link_pago(respuestas, telefono, tutela)
             tutela.estado = "esperando_pago"
             session.commit()
             return {"ok": True, "respuestas": respuestas}
-        elif body in ("2", "no", "lo intento yo", "hacer yo mismo", "ya lo logre", "no necesito"):
+        elif body in ("2", "no", "lo intento yo", "hacer yo mismo", "ya lo logre", "no necesito") or norm_body in (
+            "2", "no", "lo intento yo", "hacer yo mismo", "ya lo logre", "no necesito", "sigo yo", "lo hago yo",
+        ):
             _r(respuestas, telefono, "Perfecto. Tu tutela quedó enviada en el PDF de este chat. "
                                      "Si cambias de opinión, pulsa el botón y te ayudamos.")
             tutela.estado = "completado"
@@ -1284,7 +1375,7 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
     #   ESPERANDO PAGO — el equipo humano confirma el pago desde el admin
     # ══════════════════════════════════════════════════════════════════
     if tutela.estado == "esperando_pago":
-        if body in ("pagado", "pago confirmado", "si", "ok", "1"):
+        if norm_body in ("pagado", "pago confirmado", "ya pague", "pague", "si", "ok", "1"):
             _r(respuestas, telefono,
                "✅ *¡Pago recibido!*\n\n"
                f"Hemos confirmado tu pago por {texto_precio()}. "
@@ -1295,7 +1386,8 @@ Tutela.estado.in_(["recogiendo_datos", "narracion", "confirmar_audio", "revision
             session.commit()
             logger.info(f"Tutela {tutela.id}: usuario reporta pago, queda pago_por_confirmar")
             return {"ok": True, "respuestas": respuestas}
-        _r(respuestas, telefono, "Estamos esperando la confirmación de tu pago. Te avisaremos por este chat.")
+        _enviar_link_pago(respuestas, telefono, tutela)
+        _r(respuestas, telefono, "Si ya realizaste el pago, escribe *Pagado*.")
         return {"ok": True, "respuestas": respuestas}
 
     # ══════════════════════════════════════════════════════════════════
@@ -1702,7 +1794,8 @@ def aviso_privacidad() -> str:
         "🔹 *Tus Derechos:* Puedes actualizar o eliminar tus datos en cualquier momento "
         "escribiendo *Eliminar mis datos*, o *Salir* para empezar el proceso de cero.\n\n"
         f"Consulta nuestra política completa aquí: {settings.app_url}/privacidad\n\n"
-        "¿Autorizas el tratamiento de tus datos para iniciar?"
+        "¿Autorizas el tratamiento de tus datos para iniciar?\n"
+        "👇 *Toca el botón «✅ Sí, acepto»* (o escribe *Acepto*):"
     )
 
 NARRACION = (

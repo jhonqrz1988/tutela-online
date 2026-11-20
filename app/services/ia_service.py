@@ -225,6 +225,19 @@ def _transcribir_con_gemini_sync(ruta_audio: str) -> str | None:
         return None
 
 
+def _modelo_whisper() -> str:
+    """Resuelve el modelo de Whisper compatible con el proveedor activo.
+
+    En Groq el modelo `whisper-1` (de OpenAI) no existe y devuelve 400; si quedó
+    el default de OpenAI con `ai_provider == "groq"`, se usa
+    `whisper-large-v3-turbo`.
+    """
+    modelo = (settings.ai_whisper_model or "").strip()
+    if settings.ai_provider == "groq" and (not modelo or modelo == "whisper-1"):
+        return "whisper-large-v3-turbo"
+    return modelo or "whisper-1"
+
+
 async def transcribir_audio(ruta_audio: str) -> str | None:
     """Transcribe audio. Con provider=gemini usa el SDK nativo (multimodal);
     con openai/groq usa Whisper."""
@@ -244,7 +257,7 @@ async def transcribir_audio(ruta_audio: str) -> str | None:
         async with aiofiles.open(ruta_audio, "rb") as f:
             contenido = await f.read()
         transcript = await client.audio.transcriptions.create(
-            model=settings.ai_whisper_model,
+            model=_modelo_whisper(),
             file=(nombre, contenido),
             language="es",
         )

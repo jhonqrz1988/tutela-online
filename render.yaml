@@ -50,6 +50,8 @@ services:
         value: groq
       - key: AI_CHAT_MODEL
         value: openai/gpt-oss-120b
+      - key: AI_WHISPER_MODEL
+        value: whisper-large-v3-turbo
       - key: AI_API_KEY
         sync: false
       - key: DATABASE_URL

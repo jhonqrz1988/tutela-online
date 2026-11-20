@@ -42,6 +42,14 @@ class _EventoTikTok(BaseModel):
     ttp: str | None = None
 
 
+def _ip_cliente(request: Request) -> str:
+    """Obtiene la IP real del cliente detrás de proxies inversos (Render)."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "desconocido"
+
+
 def _permite(ip: str, ahora: float | None = None) -> bool:
     """Rate limit por IP (ventana deslizante). True si puede enviar."""
     ahora = ahora if ahora is not None else time.time()
@@ -61,7 +69,7 @@ def salud():
 
 @router.post("/track")
 async def track(payload: _EventoTikTok, request: Request):
-    ip = request.client.host if request.client else "desconocido"
+    ip = _ip_cliente(request)
     if not _permite(ip):
         return JSONResponse({"ok": False, "error": "rate limit"}, status_code=429)
 
