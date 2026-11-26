@@ -5,7 +5,7 @@ import logging
 from html import escape
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -288,11 +288,30 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
 
     if not verificar_firma(x_signature, x_request_id, payment_id):
         logger.error(f"Webhook Mercado Pago rechazado: firma inválida ({payment_id})")
-        return {"ok": False}
+        return JSONResponse({"ok": False, "error": "Firma inválida"}, status_code=401)
 
     logger.info(f"Webhook MP pago={payment_id} — consultando estado...")
     txn = await consultar_pago(payment_id)
     if not txn or txn.get("status") != "approved":
+        return {"ok": True}
+
+    monto = txn.get("transaction_amount")
+    if monto is not None:
+        try:
+            if float(monto) < float(settings.mercadopago_amount):
+                logger.error(
+                    f"Webhook MP rechazado: monto insuficiente {monto} < {settings.mercadopago_amount} (pago {payment_id})"
+                )
+                return {"ok": True}
+        except (TypeError, ValueError):
+            logger.error(f"Webhook MP rechazado: monto inválido {monto!r} (pago {payment_id})")
+            return {"ok": True}
+
+    moneda = txn.get("currency_id")
+    if moneda and str(moneda).upper() != settings.mercadopago_currency.upper():
+        logger.error(
+            f"Webhook MP rechazado: moneda inesperada {moneda!r} != {settings.mercadopago_currency} (pago {payment_id})"
+        )
         return {"ok": True}
 
     reference = (txn.get("external_reference") or "").strip()
@@ -306,6 +325,20 @@ async def webhook_mercadopago(request: Request, session: Session = Depends(get_s
     tutela = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
     if not tutela:
         return {"ok": True}
+
+    # Prevenir reutilización del mismo payment_id en otra tutela distinta.
+    otras = session.execute(
+        select(Tutela.id, Tutela.datos_json).where(Tutela.id != tutela.id)
+    ).all()
+    for _, otra_json in otras:
+        try:
+            if json.loads(otra_json or "{}").get("mercadopago_payment_id") == payment_id:
+                logger.error(
+                    f"Webhook MP rechazado: payment_id {payment_id} ya usado en otra tutela"
+                )
+                return {"ok": True}
+        except Exception:  # noqa: BLE001
+            continue
 
     if tutela.estado not in ("esperando_pago", "confirmar_pago", "pago_por_confirmar", "pago_confirmado"):
         return {"ok": True}

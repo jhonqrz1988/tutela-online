@@ -116,6 +116,7 @@ def _nombre_mes_activo(clave: str) -> str:
 # Rate-limit del login: máx intentos fallidos por ventana por IP.
 _LOGIN_MAX_ATTEMPTS = 8
 _LOGIN_WINDOW_SECS = 15 * 60  # 15 minutos
+_MAX_LOGIN_IPS = 5000
 _contador_login: dict[str, list[float]] = {}
 _limite_login = _LOGIN_MAX_ATTEMPTS
 
@@ -124,7 +125,7 @@ def _ip_cliente(request: Request) -> str:
     # Render y proxies inversos; usa X-Forwarded-For si está presente.
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[0].strip()[:64]
     return request.client.host if request.client else "unknown"
 
 
@@ -142,14 +143,29 @@ def _validar_secret_key_prod():
         )
 
 
+def _purgar_mapa_rate_limit(mapa: dict[str, list[float]], ventana: float, max_keys: int = _MAX_LOGIN_IPS) -> None:
+    if len(mapa) < max_keys:
+        return
+    ahora = time.time()
+    expiradas = [k for k, ts in mapa.items() if not ts or (ahora - ts[-1] >= ventana)]
+    for k in expiradas:
+        mapa.pop(k, None)
+    if len(mapa) >= max_keys:
+        mapa.clear()
+
+
 def _intentos_recientes(ip: str) -> int:
     ahora = time.time()
     lista = [t for t in _contador_login.get(ip, []) if ahora - t < _LOGIN_WINDOW_SECS]
-    _contador_login[ip] = lista
+    if lista:
+        _contador_login[ip] = lista
+    else:
+        _contador_login.pop(ip, None)
     return len(lista)
 
 
 def _registrar_intento(ip: str):
+    _purgar_mapa_rate_limit(_contador_login, _LOGIN_WINDOW_SECS)
     _contador_login.setdefault(ip, []).append(time.time())
 
 
@@ -212,28 +228,48 @@ class NoAuthRedirect(Exception):
     """Excepción interna para redirigir a /admin/login cuando no hay sesión."""
 
 
+def _verificar_origen_csrf(request: Request) -> None:
+    """Bloquea peticiones mutadoras cross-site en rutas protegidas del admin."""
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return
+    sec_fetch = (request.headers.get("sec-fetch-site") or "").strip().lower()
+    if sec_fetch == "cross-site":
+        raise HTTPException(403, "Origen no permitido")
+    origin = (request.headers.get("origin") or "").strip().rstrip("/").lower()
+    if origin:
+        host = (request.headers.get("host") or "").strip().lower()
+        permitidos = {o for o in (
+            settings.app_url.strip().rstrip("/").lower(),
+            f"{request.url.scheme.lower()}://{host}" if host else "",
+            f"https://{host}" if host else "",
+        ) if o}
+        if origin not in permitidos:
+            raise HTTPException(403, "Origen no permitido")
+
+
 def require_admin(request: Request):
     """Dependencia que protege el panel. Redirige a /admin/login si no hay sesión."""
     if not settings.admin_password:
         raise HTTPException(401, "ADMIN_PASSWORD no está configurado")
     if not _validar_sesion(request.cookies.get(SESSION_COOKIE)):
         raise NoAuthRedirect()
+    _verificar_origen_csrf(request)
     return True
 
 
 @router.get("/login", response_class=HTMLResponse)
 def admin_login(request: Request):
-    resp = HTMLResponse(_LOGIN_HTML)
-    return _establecer_csrf(resp)
+    return _establecer_csrf(_LOGIN_HTML, status_code=200)
 
 
-def _establecer_csrf(resp):
+def _establecer_csrf(html_o_resp, status_code: int = 200) -> HTMLResponse:
+    html_base = html_o_resp if isinstance(html_o_resp, str) else _LOGIN_HTML
     token = secrets.token_urlsafe(32)
-    html = _LOGIN_HTML.replace(
+    html = html_base.replace(
         "<!--CSRF-->",
         f'<input type="hidden" name="csrf" value="{token}">',
     )
-    resp = HTMLResponse(html)
+    resp = HTMLResponse(html, status_code=status_code)
     resp.set_cookie(
         CSRF_COOKIE, token, max_age=3600, httponly=True, samesite="strict", secure=_cookie_secure()
     )
@@ -248,32 +284,29 @@ def _cookie_secure() -> bool:
 async def admin_login_post(request: Request):
     ip = _ip_cliente(request)
     if _login_bloqueado(ip):
-        resp = HTMLResponse(
+        return _establecer_csrf(
             _LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Demasiados intentos. Espera unos minutos.</p>'),
             status_code=429,
         )
-        _establecer_csrf(resp)
-        return resp
 
     data = await request.form()
-    password = data.get("password", "")
-    csrf = data.get("csrf", "")
+    password = str(data.get("password", ""))
+    csrf = str(data.get("csrf", ""))
     csrf_esperado = request.cookies.get(CSRF_COOKIE, "")
     if not csrf_esperado or not hmac.compare_digest(csrf_esperado, csrf):
-        resp = HTMLResponse(
+        return _establecer_csrf(
             _LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Sesión inválida, recarga la página.</p>'),
             status_code=403,
         )
-        _establecer_csrf(resp)
-        return resp
 
     if not settings.admin_password:
         return HTMLResponse("<h3>ADMIN_PASSWORD no está configurado en el servidor.</h3>", status_code=400)
-    if password != settings.admin_password:
+    if not hmac.compare_digest(password, settings.admin_password):
         _registrar_intento(ip)
-        resp = HTMLResponse(_LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Contraseña incorrecta</p>'), status_code=401)
-        _establecer_csrf(resp)
-        return resp
+        return _establecer_csrf(
+            _LOGIN_HTML.replace("<!--ERROR-->", '<p style="color:#c62828">Contraseña incorrecta</p>'),
+            status_code=401,
+        )
 
     _contador_login.pop(ip, None)
     resp = RedirectResponse("/admin", status_code=303)
@@ -289,8 +322,9 @@ async def admin_login_post(request: Request):
     return resp
 
 
-@router.get("/logout")
-def admin_logout():
+@router.post("/logout")
+def admin_logout(request: Request):
+    _verificar_origen_csrf(request)
     resp = RedirectResponse("/admin/login", status_code=303)
     resp.delete_cookie(SESSION_COOKIE)
     return resp
@@ -659,7 +693,16 @@ def reintentar_radicacion(tutela_id: int, request: Request, session=Depends(get_
         resultado["scheduler_automatico"] = automatico_activo()
         return resultado
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        logger.error("Error despachando radicación tutela %s: %s", tutela_id, e, exc_info=True)
+        return {"ok": False, "error": "Error interno al despachar radicación"}
+
+
+@router.get("/api/health")
+def admin_health(request: Request, _=Depends(require_admin)):
+    """Diagnóstico completo del sistema (solo administradores)."""
+    from app.api.health import diagnostico_completo
+
+    return diagnostico_completo()
 
 
 @router.get("/api/scheduler")
@@ -983,6 +1026,19 @@ def confirmar_pago(tutela_id: int, request: Request, session=Depends(get_session
     return {"ok": True, "estado": t.estado}
 
 
+_MAX_CONSTANCIA_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _dentro_de_storage(ruta: str) -> bool:
+    """True si ``ruta`` apunta dentro de ``settings.storage_dir``."""
+    try:
+        base = Path(settings.storage_dir or "storage").resolve()
+        objetivo = Path(ruta).resolve()
+        return objetivo.is_relative_to(base)
+    except (OSError, ValueError):
+        return False
+
+
 @router.post("/tutelas/{tutela_id}/registrar-radicado")
 async def registrar_radicado_manual(
     tutela_id: int,
@@ -1003,21 +1059,33 @@ async def registrar_radicado_manual(
     constancia_img = data.get("constancia_img")
     ruta_constancia = ""
     if constancia_img and getattr(constancia_img, "filename", ""):
-        try:
-            contenido = await constancia_img.read()
-            if contenido:
-                ext = os.path.splitext(constancia_img.filename or "")[1].lower()
-                if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
-                    ext = ".png"
-                from app.utils.file_utils import path_constancia_imagen
+        contenido = await constancia_img.read(_MAX_CONSTANCIA_BYTES + 1)
+        if len(contenido) > _MAX_CONSTANCIA_BYTES:
+            return JSONResponse(
+                {"ok": False, "error": "La imagen supera el límite de 10 MB"},
+                status_code=413,
+            )
+        if contenido:
+            import io
+            from PIL import Image, UnidentifiedImageError
 
-                import aiofiles
+            try:
+                with Image.open(io.BytesIO(contenido)) as img_probe:
+                    img_probe.verify()
+            except (UnidentifiedImageError, OSError, ValueError):
+                return JSONResponse(
+                    {"ok": False, "error": "Archivo de imagen inválido"},
+                    status_code=400,
+                )
+            ext = os.path.splitext(constancia_img.filename or "")[1].lower()
+            if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
+                ext = ".png"
+            from app.utils.file_utils import path_constancia_imagen
+            import aiofiles
 
-                ruta_constancia = path_constancia_imagen(ext)
-                async with aiofiles.open(ruta_constancia, "wb") as f:
-                    await f.write(contenido)
-        except Exception as e:
-            logger.error(f"Error guardando constancia imagen tutela {tutela_id}: {e}")
+            ruta_constancia = path_constancia_imagen(ext)
+            async with aiofiles.open(ruta_constancia, "wb") as f:
+                await f.write(contenido)
 
     rad = None
     if t.radicacion:
@@ -1060,7 +1128,7 @@ def chat_page(request: Request, _=Depends(require_admin)):
 @router.get("/tutelas/{tutela_id}/pdf")
 def descargar_pdf(tutela_id: int, request: Request, session=Depends(get_session), _=Depends(require_admin)):
     t = session.execute(select(Tutela).where(Tutela.id == tutela_id)).scalar_one_or_none()
-    if not t or not t.pdf_path or not os.path.exists(t.pdf_path):
+    if not t or not t.pdf_path or not _dentro_de_storage(t.pdf_path) or not os.path.exists(t.pdf_path):
         return JSONResponse({"error": "PDF no encontrado"}, status_code=404)
     return FileResponse(t.pdf_path, filename=os.path.basename(t.pdf_path), media_type="application/pdf")
 
@@ -1070,7 +1138,12 @@ def descargar_constancia(tutela_id: int, request: Request, session=Depends(get_s
     r = session.execute(
         select(Radicacion).where(Radicacion.tutela_id == tutela_id)
     ).scalar_one_or_none()
-    if not r or not r.constancia_path or not os.path.exists(r.constancia_path):
+    if (
+        not r
+        or not r.constancia_path
+        or not _dentro_de_storage(r.constancia_path)
+        or not os.path.exists(r.constancia_path)
+    ):
         return JSONResponse({"error": "Constancia no encontrada"}, status_code=404)
 
     ext = os.path.splitext(r.constancia_path)[1].lower()

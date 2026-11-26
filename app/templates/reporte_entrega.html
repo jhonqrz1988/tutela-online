@@ -110,7 +110,7 @@
       <td><span class="badge badge-mal">{{ fila.estado }}</span></td>
       <td class="mono">{{ fila.silencio_horas }} h</td>
       <td>
-        <button class="btn-desbloquear" onclick="recordar({{ fila.user_id }}, '{{ fila.telefono }}', this)">
+        <button class="btn-desbloquear js-recordar" data-user-id="{{ fila.user_id }}" data-telefono="{{ fila.telefono }}">
           Enviar recordatorio
         </button>
       </td>
@@ -140,7 +140,7 @@
       <td><span class="badge badge-mal">{{ fila.estado }}</span></td>
       <td class="mono">{{ fila.ultima_actividad or "—" }}</td>
       <td>
-        <button class="btn-desbloquear" onclick="desbloquear({{ fila.user_id }}, '{{ fila.telefono }}', this)">
+        <button class="btn-desbloquear js-desbloquear" data-user-id="{{ fila.user_id }}" data-telefono="{{ fila.telefono }}">
           Desbloquear
         </button>
       </td>
@@ -244,22 +244,45 @@
 </div>
 
 <script>
+function appendMsg(el, cls, text, replace) {
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = text;
+  if (replace) {
+    el.replaceChildren(span);
+  } else {
+    el.insertAdjacentElement('afterend', span);
+  }
+}
+
+document.querySelectorAll('.js-recordar').forEach(btn => {
+  btn.addEventListener('click', () => {
+    recordar(btn.dataset.userId, btn.dataset.telefono, btn);
+  });
+});
+
+document.querySelectorAll('.js-desbloquear').forEach(btn => {
+  btn.addEventListener('click', () => {
+    desbloquear(btn.dataset.userId, btn.dataset.telefono, btn);
+  });
+});
+
 async function desbloquear(userId, telefono, btn) {
   if (!confirm('¿Reiniciar el flujo de +' + telefono + '?\n\nSe borrará la tutela en curso y volverá al inicio. El historial de mensajes se conserva.')) return;
   btn.disabled = true;
   btn.textContent = 'Desbloqueando...';
   try {
-    const r = await fetch('/admin/api/atrapados/' + userId + '/desbloquear', { method: 'POST' });
+    const r = await fetch('/admin/api/atrapados/' + encodeURIComponent(userId) + '/desbloquear', { method: 'POST' });
     const j = await r.json();
     if (j.ok) {
       btn.textContent = '✓ Listo';
     } else {
       btn.textContent = 'Error';
-      btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + (j.error || 'falló') + '</span>');
+      appendMsg(btn, 'err-msg', ' ' + (j.error || 'falló'), false);
     }
   } catch (e) {
     btn.textContent = 'Error';
-    btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + e.message + '</span>');
+    appendMsg(btn, 'err-msg', ' ' + e.message, false);
   }
 }
 
@@ -267,10 +290,10 @@ async function probarRecordatorio(btn) {
   const input = document.getElementById('tel-prueba');
   const salida = document.getElementById('res-prueba');
   const telefono = (input.value || '').replace(/\D/g, '');
-  if (!telefono) { salida.innerHTML = '<span class="err-msg">escribe un número</span>'; return; }
+  if (!telefono) { appendMsg(salida, 'err-msg', 'escribe un número', true); return; }
   btn.disabled = true;
   btn.textContent = 'Enviando...';
-  salida.innerHTML = '';
+  salida.textContent = '';
   try {
     const r = await fetch('/admin/api/recordatorios/enviar', {
       method: 'POST',
@@ -280,14 +303,14 @@ async function probarRecordatorio(btn) {
     const j = await r.json();
     if (j.ok) {
       btn.textContent = '✓ Enviado';
-      salida.innerHTML = '<span class="ok-msg"> enviado a +' + telefono + '</span>';
+      appendMsg(salida, 'ok-msg', ' enviado a +' + telefono, true);
     } else {
       btn.textContent = 'Error';
-      salida.innerHTML = '<span class="err-msg"> ' + (j.error || 'falló') + '</span>';
+      appendMsg(salida, 'err-msg', ' ' + (j.error || 'falló'), true);
     }
   } catch (e) {
     btn.textContent = 'Error';
-    salida.innerHTML = '<span class="err-msg"> ' + e.message + '</span>';
+    appendMsg(salida, 'err-msg', ' ' + e.message, true);
   }
 }
 
@@ -305,11 +328,11 @@ async function recordar(userId, telefono, btn) {
       btn.textContent = '✓ Enviado';
     } else {
       btn.textContent = 'Error';
-      btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + (j.error || 'falló') + '</span>');
+      appendMsg(btn, 'err-msg', ' ' + (j.error || 'falló'), false);
     }
   } catch (e) {
     btn.textContent = 'Error';
-    btn.insertAdjacentHTML('afterend', '<span class="err-msg"> ' + e.message + '</span>');
+    appendMsg(btn, 'err-msg', ' ' + e.message, false);
   }
 }
 </script>

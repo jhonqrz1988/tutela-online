@@ -171,12 +171,12 @@ def build_user_prompt(datos_caso: dict) -> str:
 
 if __name__ == "__main__":
     ejemplo = {
-        "nombre": "Johny Alejandro Jaramillo Lopera",
-        "cedula": "10.171.276.60",
+        "nombre": "María Ejemplo Pérez",
+        "cedula": "1000000000",
         "ciudad_expedicion": "Medellín",
-        "direccion": "Calle 123 #48-116, Barrio El Playón, Medellín, Antioquia",
-        "telefono": "310 253 7054",
-        "correo": "aplicacionesudea@gmail.com",
+        "direccion": "Calle 1 # 2-3, Medellín, Antioquia",
+        "telefono": "300 000 0000",
+        "correo": "ejemplo@correo.test",
         "entidad_accionada": "EPS SURA S.A.",
         "nit_entidad": "800.088.702-5",
         "correo_notificacion_entidad": "notificacionesjudiciales@suramericana.com.co",

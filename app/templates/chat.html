@@ -59,8 +59,14 @@ const sendBtn = document.getElementById('sendBtn');
 function addMsg(text, tipo) {
   const div = document.createElement('div');
   div.className = 'msg ' + tipo;
+  const bodySpan = document.createElement('span');
+  bodySpan.textContent = text;
   const now = new Date();
-  div.innerHTML = text + '<div class="time">' + now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0') + '</div>';
+  const timeDiv = document.createElement('div');
+  timeDiv.className = 'time';
+  timeDiv.textContent = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
+  div.appendChild(bodySpan);
+  div.appendChild(timeDiv);
   messages.appendChild(div);
   messages.scrollTop = messages.scrollHeight;
 }

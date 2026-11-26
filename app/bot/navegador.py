@@ -456,12 +456,13 @@ def _info_archivo(ruta: str) -> dict:
     if not os.path.isfile(ruta):
         return {"ruta": ruta, "error": "archivo no existe"}
     with open(ruta, "rb") as f:
-        digest = hashlib.sha1(f.read()).hexdigest()
+        digest = hashlib.sha256(f.read()).hexdigest()
     return {
         "ruta": ruta,
         "basename": os.path.basename(ruta),
         "bytes": os.path.getsize(ruta),
         "sha1": digest,
+        "sha256": digest,
     }
 
 

@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api/tiktok", tags=["tiktok"])
 # la cuota de la API de TikTok usando nuestro access_token.
 _LIMITE_POR_MINUTO = 30
 _VENTANA_SEG = 60
+_MAX_IPS_EN_MEMORIA = 5000
 
 # IP -> [timestamps] de envíos recientes.
 _LIMIT_POR_IP: dict[str, list[float]] = {}
@@ -46,13 +47,22 @@ def _ip_cliente(request: Request) -> str:
     """Obtiene la IP real del cliente detrás de proxies inversos (Render)."""
     fwd = request.headers.get("x-forwarded-for")
     if fwd:
-        return fwd.split(",")[0].strip()
+        return fwd.split(",")[0].strip()[:64]
     return request.client.host if request.client else "desconocido"
 
 
 def _permite(ip: str, ahora: float | None = None) -> bool:
     """Rate limit por IP (ventana deslizante). True si puede enviar."""
     ahora = ahora if ahora is not None else time.time()
+    if len(_LIMIT_POR_IP) >= _MAX_IPS_EN_MEMORIA:
+        expiradas = [
+            k for k, ts in _LIMIT_POR_IP.items()
+            if not ts or (ahora - ts[-1] >= _VENTANA_SEG)
+        ]
+        for k in expiradas:
+            _LIMIT_POR_IP.pop(k, None)
+        if len(_LIMIT_POR_IP) >= _MAX_IPS_EN_MEMORIA:
+            _LIMIT_POR_IP.clear()
     lista = _LIMIT_POR_IP.setdefault(ip, [])
     lista[:] = [t for t in lista if ahora - t < _VENTANA_SEG]
     if len(lista) >= _LIMITE_POR_MINUTO:

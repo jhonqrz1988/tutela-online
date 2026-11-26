@@ -267,17 +267,22 @@ async def transcribir_audio(ruta_audio: str) -> str | None:
         return None
 
 
+_MAX_TEXTO_USUARIO = 12000
+
+
 async def extraer_datos_caso(texto: str) -> dict:
     client = _get_client()
     if not client:
         return {}
+    texto_acotado = (texto or "")[:_MAX_TEXTO_USUARIO]
     resp = await client.chat.completions.create(
         model=settings.ai_chat_model,
         messages=[
             {"role": "system", "content": SISTEMA_EXTRACCION_CASO},
-            {"role": "user", "content": texto},
+            {"role": "user", "content": texto_acotado},
         ],
         response_format={"type": "json_object"},
+        max_tokens=1200,
     )
     return json.loads(resp.choices[0].message.content)
 
@@ -385,16 +390,17 @@ async def generar_tutela(datos: dict, citas: list[dict] | None = None) -> str | 
         model=settings.ai_chat_model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": prompt[:_MAX_TEXTO_USUARIO * 2]},
         ],
         temperature=0.3,
+        max_tokens=3500,
     )
     return resp.choices[0].message.content
 
 
 SISTEMA_PREVIEW_TUTELA = """Eres un asistente legal que genera resúmenes claros de acciones de tutela.
 
-Basado en los datos proporcionados, genera un RESUMEN CLIENTE-FRIENDLY que incluya:
+Basado en los datos proporcionados por el usuario, genera un RESUMEN CLIENTE-FRIENDLY que incluya:
 
 1. RESUMEN DE DATOS: Lista los datos recolectados
 2. HECHOS EXTRAÍDOS: Cronología clara con fechas
@@ -404,9 +410,7 @@ Basado en los datos proporcionados, genera un RESUMEN CLIENTE-FRIENDLY que inclu
 
 Si faltan datos importantes, indica qué falta. Si los hechos son muy breves, sugiere más detalles.
 
-Formato: Texto claro, sin formato legal complejo. Usa viñetas y numeración para legibilidad.
-
-Datos: {datos_json}"""
+Formato: Texto claro, sin formato legal complejo. Usa viñetas y numeración para legibilidad."""
 
 
 async def generar_preview(datos: dict) -> str:
@@ -415,12 +419,14 @@ async def generar_preview(datos: dict) -> str:
     if not client:
         return "No se puede generar preview sin conexión a IA"
 
+    datos_texto = json.dumps(datos or {}, ensure_ascii=False, indent=2)[:_MAX_TEXTO_USUARIO]
     resp = await client.chat.completions.create(
         model=settings.ai_chat_model,
         messages=[
-            {"role": "system", "content": SISTEMA_PREVIEW_TUTELA.format(datos_json=json.dumps(datos, ensure_ascii=False, indent=2))},
-            {"role": "user", "content": "Genera el preview"},
+            {"role": "system", "content": SISTEMA_PREVIEW_TUTELA},
+            {"role": "user", "content": f"Genera el preview con estos datos:\n{datos_texto}"},
         ],
+        max_tokens=1200,
     )
     return resp.choices[0].message.content
 
@@ -456,10 +462,11 @@ async def extraer_citas(texto_tutela: str) -> list[dict]:
         model=settings.ai_chat_model,
         messages=[
             {"role": "system", "content": SISTEMA_EXTRACCION_CITAS},
-            {"role": "user", "content": texto_tutela},
+            {"role": "user", "content": (texto_tutela or "")[:_MAX_TEXTO_USUARIO]},
         ],
         temperature=0,
         response_format={"type": "json_object"},
+        max_tokens=1200,
     )
     data = json.loads(resp.choices[0].message.content)
     return data.get("citas", [])

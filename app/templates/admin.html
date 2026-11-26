@@ -76,7 +76,7 @@
     &nbsp; <a href="#" class="toggle-sched" id="wa-status" onclick="waStatus(event)" title="Consultar estado del n&uacute;mero de WhatsApp en la Graph API (verificado/expirado)">&#x1F4F1; WhatsApp</a>
     &nbsp; <a href="/admin/reporte-entrega" title="Qui&eacute;n escribi&oacute; y nunca recibi&oacute; respuesta, y por qu&eacute;">&#x1F4CA; Entrega</a>
     &nbsp; <a href="#" class="toggle-sched" onclick="limpiarHistorial(event)" title="Borra radicaciones de intentos previos y screenshots sueltos">&#x1F9F9; Limpiar historial</a>
-    &nbsp; <span>N&deg; de tutela actual: <strong>{{ total_tutelas }}</strong></span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <a href="/admin/logout" class="refresh" title="Cerrar sesi&oacute;n">Salir</a>
+    &nbsp; <span>N&deg; de tutela actual: <strong>{{ total_tutelas }}</strong></span> &nbsp; <a href="/admin" class="refresh" title="Recargar">&#x21BB;</a> &nbsp; <form method="post" action="/admin/logout" style="display:inline;"><button type="submit" class="refresh" style="background:none;border:none;cursor:pointer;font-family:inherit;" title="Cerrar sesi&oacute;n">Salir</button></form>
   </div>
 </div>
 
@@ -237,11 +237,11 @@
 
     <div style="display:flex; gap:15px; flex-wrap:wrap; margin-top:15px;">
       {% for serie in [
-        {"titulo": "Por semana &mdash; visitas ({{ mes_etiqueta }})", "rows": visitas.por_semana, "cols": ["n", "pauta"]},
-        {"titulo": "Por semana &mdash; tutelas ({{ mes_etiqueta }})", "rows": visitas.tutelas_por_semana, "cols": ["tutelas", "radicadas"]}
+        {"titulo": "Por semana — visitas (" ~ mes_etiqueta ~ ")", "rows": visitas.por_semana, "cols": ["n", "pauta"]},
+        {"titulo": "Por semana — tutelas (" ~ mes_etiqueta ~ ")", "rows": visitas.tutelas_por_semana, "cols": ["tutelas", "radicadas"]}
       ] %}
       <div style="background:#fff; border-radius:10px; padding:15px; box-shadow:0 1px 3px rgba(0,0,0,.1); flex:1; min-width:230px;">
-        <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">{{ serie.titulo|safe }}</h3>
+        <h3 style="font-size:12px; text-transform:uppercase; color:#999; margin-bottom:8px;">{{ serie.titulo }}</h3>
         {% if serie.rows %}
         <table style="width:100%; border-collapse:collapse;">
           {% for r in serie.rows[:10] %}
@@ -437,7 +437,7 @@ async function abrirDetalle(id, silencioso) {
     cargarEvidencias();
   } catch(e) {
     if (!silencioso) {
-      document.getElementById('modal-body').innerHTML = '<div class="error-box">Error al cargar: ' + e.message + '</div>';
+      document.getElementById('modal-body').innerHTML = '<div class="error-box">Error al cargar: ' + escapeHtml(e.message) + '</div>';
     }
   }
 }
@@ -447,7 +447,7 @@ async function cargarEvidencias() {
   if (!cont) return;
   const tid = tutelaActual ? tutelaActual.id : null;
   try {
-    const res = await fetch('/admin/screenshots' + (tid ? '?tutela_id=' + tid : ''));
+    const res = await fetch('/admin/screenshots' + (tid ? '?tutela_id=' + encodeURIComponent(tid) : ''));
     const data = await res.json();
     const imgs = data.imagenes || [];
     if (!imgs.length) {
@@ -455,7 +455,7 @@ async function cargarEvidencias() {
       return;
     }
     cont.innerHTML = imgs.map(i =>
-      `<a href="/admin/screenshots/${encodeURIComponent(i.nombre)}" target="_blank" style="text-decoration:none;color:inherit;display:block;">
+      `<a href="/admin/screenshots/${encodeURIComponent(i.nombre)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;color:inherit;display:block;">
         <img src="/admin/screenshots/${encodeURIComponent(i.nombre)}" loading="lazy" style="width:100%;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;" title="${escapeHtml(i.nombre)}">
         <small style="display:block;margin-top:4px;color:#666;font-size:11px;line-height:1.3;">${escapeHtml(i.nombre)}<br>${escapeHtml(i.modificado)}</small>
       </a>`
@@ -476,7 +476,8 @@ async function monitorizarModal() {
 function renderDetalle() {
   const t = tutelaActual;
   if (!t) return;
-  document.getElementById('modal-titulo').textContent = 'Tutela #' + t.id + ' - ' + t.tipo;
+  const tid = parseInt(t.id, 10) || 0;
+  document.getElementById('modal-titulo').textContent = 'Tutela #' + tid + ' - ' + (t.tipo || '');
 
   const d = t.datos || {};
   const r = t.radicacion || {};
@@ -486,29 +487,31 @@ function renderDetalle() {
   const puedeReintentar = ['fallida', 'pdf_generado', 'pendiente_radicacion', 'pago_confirmado', 'esperando_codigo_email', 'pago_por_confirmar'].includes(t.estado);
   const puedeConfirmarPago = t.estado === 'esperando_pago' || t.estado === 'pago_por_confirmar' || t.estado === 'confirmar_pago';
   const puedeRegistrarRadicado = true; // Radicación manual siempre disponible como respaldo si el bot falla
+  const badgeEstado = t.estado === 'radicada' ? 'success' : t.estado === 'fallida' ? 'error' : 'warning';
+  const linkPagoSeguro = t.link_pago ? safeUrl(t.link_pago) : '';
 
   document.getElementById('modal-body').innerHTML = `
     <div class="modal-section">
       <h3>Informaci&oacute;n General</h3>
       <div class="detail-grid">
-        <div class="detail-item"><label>ID</label><span>${t.id}</span></div>
-        <div class="detail-item"><label>C&eacute;dula</label><span>${t.cedula || '&mdash;'}</span></div>
-        <div class="detail-item"><label>Tipo</label><span>${t.tipo}</span></div>
-        <div class="detail-item"><label>Estado</label><span class="badge badge-${t.estado === 'radicada' ? 'success' : t.estado === 'fallida' ? 'error' : 'warning'}">${t.estado}</span></div>
-        <div class="detail-item"><label>Creada</label><span>${t.created_at || '—'}</span></div>
-        <div class="detail-item"><label>Actualizada</label><span>${t.updated_at || '—'}</span></div>
-        <div class="detail-item"><label>PDF</label><span>${t.pdf_path ? '<a href="/admin/tutelas/' + t.id + '/pdf" target="_blank">Descargar</a>' : '—'}</span></div>
-        <div class="detail-item"><label>Referencia</label><span>${t.referencia || '—'}</span></div>
-        <div class="detail-item"><label>Link de pago</label><span>${t.link_pago ? '<a href="' + t.link_pago + '" target="_blank">Abrir</a>' : '—'}</span></div>
+        <div class="detail-item"><label>ID</label><span>${escapeHtml(tid)}</span></div>
+        <div class="detail-item"><label>C&eacute;dula</label><span>${escapeHtml(t.cedula) || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Tipo</label><span>${escapeHtml(t.tipo)}</span></div>
+        <div class="detail-item"><label>Estado</label><span class="badge badge-${badgeEstado}">${escapeHtml(t.estado)}</span></div>
+        <div class="detail-item"><label>Creada</label><span>${escapeHtml(t.created_at) || '—'}</span></div>
+        <div class="detail-item"><label>Actualizada</label><span>${escapeHtml(t.updated_at) || '—'}</span></div>
+        <div class="detail-item"><label>PDF</label><span>${t.pdf_path ? '<a href="/admin/tutelas/' + tid + '/pdf" target="_blank" rel="noopener noreferrer">Descargar</a>' : '—'}</span></div>
+        <div class="detail-item"><label>Referencia</label><span>${escapeHtml(t.referencia) || '—'}</span></div>
+        <div class="detail-item"><label>Link de pago</label><span>${linkPagoSeguro !== '#' && t.link_pago ? '<a href="' + escapeHtml(linkPagoSeguro) + '" target="_blank" rel="noopener noreferrer">Abrir</a>' : '—'}</span></div>
       </div>
     </div>
 
     <div class="modal-section">
       <h3>Usuario</h3>
       <div class="detail-grid">
-        <div class="detail-item"><label>Tel&eacute;fono</label><span>${t.usuario.telefono || '&mdash;'}</span></div>
-        <div class="detail-item"><label>Nombre</label><span>${t.usuario.nombre || '&mdash;'}</span></div>
-        <div class="detail-item"><label>Estado</label><span>${t.usuario.estado || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Tel&eacute;fono</label><span>${escapeHtml(t.usuario && t.usuario.telefono) || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Nombre</label><span>${escapeHtml(t.usuario && t.usuario.nombre) || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Estado</label><span>${escapeHtml(t.usuario && t.usuario.estado) || '&mdash;'}</span></div>
       </div>
     </div>
 
@@ -521,10 +524,10 @@ function renderDetalle() {
     <div class="modal-section">
       <h3>Radicaci&oacute;n</h3>
       <div class="detail-grid">
-        <div class="detail-item"><label>Estado</label><span>${r.estado || '&mdash;'}</span></div>
-        <div class="detail-item"><label>N&deg; Radicado</label><span>${r.num_radicado || '&mdash;'}</span></div>
-        <div class="detail-item"><label>Intentos</label><span>${r.intentos || 0}</span></div>
-        <div class="detail-item"><label>Radicado</label><span>${r.created_at || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Estado</label><span>${escapeHtml(r.estado) || '&mdash;'}</span></div>
+        <div class="detail-item"><label>N&deg; Radicado</label><span>${escapeHtml(r.num_radicado) || '&mdash;'}</span></div>
+        <div class="detail-item"><label>Intentos</label><span>${escapeHtml(r.intentos || 0)}</span></div>
+        <div class="detail-item"><label>Radicado</label><span>${escapeHtml(r.created_at) || '&mdash;'}</span></div>
       </div>
       ${errores}
     </div>
@@ -535,7 +538,7 @@ function renderDetalle() {
       <h3>Secuencia de Radicaci&oacute;n</h3>
       ${r.pasos.map(p => `
         <div class="msg-item">
-          <span class="badge ${p.estado === 'ok' ? 'badge-success' : 'badge-error'}">${p.estado}</span>
+          <span class="badge ${p.estado === 'ok' ? 'badge-success' : 'badge-error'}">${escapeHtml(p.estado)}</span>
           <span>${escapeHtml(p.paso)}</span>
           ${p.detalle ? `<small style="color:#666;">${escapeHtml(p.detalle)}</small>` : ''}
           <small style="color:#aaa; margin-left:auto; white-space:nowrap;">${escapeHtml(p.created_at)}</small>
@@ -844,8 +847,19 @@ function cerrarModal() {
 }
 
 function escapeHtml(s) {
-  if (!s) return '';
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeUrl(u) {
+  const s = String(u || '').trim();
+  if (/^(https?:\/\/|\/)/i.test(s)) return s;
+  return '#';
 }
 
 function filtrar() {

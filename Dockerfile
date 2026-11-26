@@ -2,6 +2,8 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -16,7 +18,11 @@ RUN python -m playwright install --with-deps chromium \
 
 COPY . .
 
-RUN mkdir -p storage/tutelas storage/pruebas storage/constancias /data
+RUN useradd --create-home --shell /bin/bash appuser \
+    && mkdir -p storage/tutelas storage/pruebas storage/constancias /data \
+    && chown -R appuser:appuser /app /data /ms-playwright
+
+USER appuser
 
 EXPOSE 8000
 

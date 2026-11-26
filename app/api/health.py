@@ -38,15 +38,26 @@ def _disco() -> dict:
         }
 
 
-@router.get("/health")
-async def health():
-    """Healthcheck: valida que el proceso responde, la BD es accesible y el
-    disco de almacenamiento es escribible.
+def _disco_publico(disco: dict) -> dict:
+    """Subconjunto público de disco (sin rutas internas ni texto de excepción)."""
+    res = {"writable": bool(disco.get("writable"))}
+    if "free_bytes" in disco:
+        res["free_bytes"] = disco["free_bytes"]
+    if "total_bytes" in disco:
+        res["total_bytes"] = disco["total_bytes"]
+    return res
 
-    El plan gratis de Render duerme el servicio por inactividad; un monitor
-    externo (p. ej. UptimeRobot) debe hacer ping a esta ruta cada pocos
-    minutos para mantenerlo despierto.
-    """
+
+def _esquema_publico(esquema: dict) -> dict:
+    """Subconjunto público de esquema (sin texto crudo de error)."""
+    return {
+        "tablas": esquema.get("tablas", {}),
+        "visitas_landing": esquema.get("visitas_landing", {"es_bot": False, "user_agent": False}),
+    }
+
+
+def diagnostico_completo() -> dict:
+    """Diagnóstico completo de sistema, esquema y presencia de configuración (solo admin)."""
     disco = _disco()
     try:
         with SessionLocal() as session:
@@ -68,6 +79,34 @@ async def health():
         "config": _config_diagnostico(),
         "schema": _esquema_bd(),
         "migracion": _ULTIMA_MIGRACION,
+    }
+
+
+@router.get("/health")
+async def health():
+    """Healthcheck público mínimo para Render / UptimeRobot.
+
+    No expone ``config``, ``migracion``, rutas del sistema ni errores crudos;
+    el diagnóstico detallado vive en ``/admin/api/health``.
+    """
+    disco = _disco()
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+        database = "ok"
+        status = "ok" if disco.get("writable") else "degraded"
+    except Exception:
+        return {
+            "status": "degraded",
+            "database": "unreachable",
+            "disk": _disco_publico(disco),
+            "schema": _esquema_publico(_esquema_bd()),
+        }
+    return {
+        "status": status,
+        "database": database,
+        "disk": _disco_publico(disco),
+        "schema": _esquema_publico(_esquema_bd()),
     }
 
 

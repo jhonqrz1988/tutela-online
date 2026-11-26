@@ -101,6 +101,55 @@ app.add_middleware(
 )
 
 
+_CSP_LANDING = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://connect.facebook.net https://analytics.tiktok.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data: https://www.facebook.com https://analytics.tiktok.com; "
+    "connect-src 'self' https://www.facebook.com https://connect.facebook.net https://analytics.tiktok.com; "
+    "frame-ancestors 'none'; base-uri 'self'"
+)
+_CSP_ADMIN = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: blob:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'"
+)
+_CSP_PAGO = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'"
+)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if path.startswith("/pago") or path.startswith("/admin"):
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+    else:
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if settings.app_url.lower().startswith("https"):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    if path.startswith("/admin"):
+        response.headers.setdefault("Content-Security-Policy", _CSP_ADMIN)
+    elif path.startswith("/pago"):
+        response.headers.setdefault("Content-Security-Policy", _CSP_PAGO)
+    else:
+        response.headers.setdefault("Content-Security-Policy", _CSP_LANDING)
+    return response
+
+
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 

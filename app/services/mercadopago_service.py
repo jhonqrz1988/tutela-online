@@ -1,12 +1,15 @@
 import hashlib
 import hmac
 import logging
+import time
 
 import httpx
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_WEBHOOK_MAX_AGE_SECS = 300
 
 
 def formatear_monto() -> str:
@@ -81,23 +84,35 @@ async def consultar_pago(payment_id: str) -> dict | None:
                 "id": d.get("id"),
                 "status": d.get("status"),
                 "external_reference": d.get("external_reference"),
+                "transaction_amount": d.get("transaction_amount"),
+                "currency_id": d.get("currency_id"),
             }
     except Exception as e:  # noqa: BLE001
         logger.error(f"MercadoPago consultar_pago exception: {e}")
     return None
 
 
-def verificar_firma(x_signature: str, x_request_id: str, data_id: str) -> bool:
+def verificar_firma(
+    x_signature: str,
+    x_request_id: str,
+    data_id: str,
+    max_age_secs: int = _DEFAULT_WEBHOOK_MAX_AGE_SECS,
+) -> bool:
     """Valida la firma de una notificación webhook de Mercado Pago.
 
     ``x-signature`` llega como ``ts=<timestamp>,v1=<hash>``. Manifest según la
     documentación: ``id:<data_id>;request-id:<x_request_id>;ts:<timestamp>;``
     firmado con el webhook_secret mediante HMAC-SHA256.
 
-    Si ``MERCADOPAGO_WEBHOOK_SECRET`` no está configurado, se acepta la notificación
-    (modo pruebas) con un warning, igual que el webhook de Meta.
+    En producción (``mercadopago_env == "production"``) o con
+    ``strict_webhook_firma=True``, un ``MERCADOPAGO_WEBHOOK_SECRET`` vacío se
+    rechaza (fail-closed). Además valida que ``ts`` sea numérico y no supere
+    ``max_age_secs`` (protección contra replay).
     """
     if not settings.mercadopago_webhook_secret:
+        if settings.mercadopago_env == "production" or settings.strict_webhook_firma:
+            logger.error("verificar_firma: MERCADOPAGO_WEBHOOK_SECRET vacío en producción/estricto — rechazando")
+            return False
         logger.warning("mercadopago_webhook_secret vacío; aceptando webhook sin verificar firma (modo pruebas)")
         return True
     if not x_signature:
@@ -110,6 +125,14 @@ def verificar_firma(x_signature: str, x_request_id: str, data_id: str) -> bool:
     ts = params.get("ts", "")
     firma = params.get("v1", "")
     if not ts or not firma:
+        return False
+    try:
+        ts_num = float(ts)
+    except ValueError:
+        return False
+    ts_secs = ts_num / 1000.0 if ts_num > 1e12 else ts_num
+    if max_age_secs > 0 and abs(time.time() - ts_secs) > max_age_secs:
+        logger.warning(f"Webhook MP rechazado: timestamp fuera de ventana ({ts})")
         return False
     manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
     esperado = hmac.new(

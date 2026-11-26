@@ -125,8 +125,8 @@ async def webhook_whatsapp(request: Request, session=Depends(get_session)):
             es_audio = "audio" in str(form.get("MediaContentType0", ""))
             return await procesar_mensaje(session, telefono, body_text, num_media, media_url, es_audio)
     except Exception as e:
-        logger.error(f"Error en webhook_whatsapp: {e}")
-        return {"ok": False, "error": str(e)}
+        logger.error(f"Error en webhook_whatsapp: {e}", exc_info=True)
+        return {"ok": False, "error": "Error interno procesando mensaje"}
 
 
 def _verify_meta_signature(payload: bytes, signature_header: str) -> bool:
@@ -157,12 +157,16 @@ def _verify_meta_signature(payload: bytes, signature_header: str) -> bool:
 
 @router.get("/webhook/meta")
 async def verificar_webhook_meta(request: Request):
-    modo = request.query_params.get("hub.mode")
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
-    if modo == "subscribe" and token == settings.meta_verify_token:
+    modo = request.query_params.get("hub.mode") or ""
+    token = request.query_params.get("hub.verify_token") or ""
+    challenge = request.query_params.get("hub.challenge") or ""
+    if (
+        settings.meta_verify_token
+        and modo == "subscribe"
+        and hmac.compare_digest(token, settings.meta_verify_token)
+    ):
         return PlainTextResponse(challenge)
-    return {"error": "Verification failed"}
+    return JSONResponse({"error": "Verification failed"}, status_code=403)
 
 
 def _numero_util(telefono: str | None) -> bool:
@@ -320,7 +324,7 @@ async def webhook_meta(request: Request, session=Depends(get_session)):
             "presente" if signature else "ausente",
             len(raw_body),
         )
-        return {"ok": False, "error": "Invalid signature"}
+        return JSONResponse({"ok": False, "error": "Invalid signature"}, status_code=401)
 
     import json as _json
     try:
@@ -1641,24 +1645,81 @@ async def _descargar_prueba(url: str) -> str | None:
             auth = httpx.BasicAuth(settings.twilio_account_sid, settings.twilio_auth_token)
             headers = {}
 
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
-            r = await c.get(url, headers=headers, auth=auth)
-        logger.info(f"_descargar_prueba: download status={r.status_code} bytes={len(r.content)}")
-        # Tras redirects, el host final también debe ser permitido.
-        if not _permite_descargar(str(r.url)):
-            logger.error(f"_descargar_prueba: redirect final rechazado: {str(r.url)[:80]}")
-            return None
-        if len(r.content) > MAX_PRUEBA_BYTES:
-            pesos_mb = MAX_PRUEBA_BYTES // (1024 * 1024)
-            _ultimo_error_descarga = (
-                f"El archivo pesa más de {pesos_mb} MB, y WhatsApp no acepta "
-                "documentos más grandes. Comprímelo o reduce su tamaño y envíalo de nuevo."
-            )
-            logger.error(f"_descargar_prueba: archivo demasiado grande: {len(r.content)} bytes")
-            return None
-        if r.status_code == 200:
+        from urllib.parse import urljoin
+
+        async def _leer_contenido(resp_obj) -> bytes | None:
+            if len(resp_obj.content) > MAX_PRUEBA_BYTES:
+                return None
+            return resp_obj.content
+
+        async with httpx.AsyncClient(timeout=30, follow_redirects=False) as c:
+            actual_url = url
+            actual_headers = dict(headers)
+            actual_auth = auth
+            contenido: bytes | None = None
+            status_code = 0
+
+            for _hop in range(4):
+                if hasattr(c, "stream"):
+                    async with c.stream(
+                        "GET",
+                        actual_url,
+                        headers=actual_headers,
+                        auth=actual_auth,
+                    ) as r_stream:
+                        status_code = r_stream.status_code
+                        if status_code in (301, 302, 303, 307, 308):
+                            loc = r_stream.headers.get("location", "")
+                            next_url = urljoin(actual_url, loc)
+                            if not _permite_descargar(next_url):
+                                logger.error(f"_descargar_prueba: redirect rechazado: {next_url[:80]}")
+                                return None
+                            if urlparse(next_url).hostname != urlparse(actual_url).hostname:
+                                actual_headers = {}
+                                actual_auth = None
+                            actual_url = next_url
+                            continue
+                        chunks: list[bytes] = []
+                        total = 0
+                        async for chunk in r_stream.aiter_bytes():
+                            total += len(chunk)
+                            if total > MAX_PRUEBA_BYTES:
+                                pesos_mb = MAX_PRUEBA_BYTES // (1024 * 1024)
+                                _ultimo_error_descarga = (
+                                    f"El archivo pesa más de {pesos_mb} MB, y WhatsApp no acepta "
+                                    "documentos más grandes. Comprímelo o reduce su tamaño y envíalo de nuevo."
+                                )
+                                logger.error(f"_descargar_prueba: archivo demasiado grande (> {MAX_PRUEBA_BYTES} bytes)")
+                                return None
+                            chunks.append(chunk)
+                        contenido = b"".join(chunks)
+                        break
+                else:
+                    r = await c.get(actual_url, headers=actual_headers, auth=actual_auth)
+                    status_code = r.status_code
+                    if not _permite_descargar(str(r.url)):
+                        logger.error(f"_descargar_prueba: redirect final rechazado: {str(r.url)[:80]}")
+                        return None
+                    contenido = await _leer_contenido(r)
+                    if contenido is None:
+                        pesos_mb = MAX_PRUEBA_BYTES // (1024 * 1024)
+                        _ultimo_error_descarga = (
+                            f"El archivo pesa más de {pesos_mb} MB, y WhatsApp no acepta "
+                            "documentos más grandes. Comprímelo o reduce su tamaño y envíalo de nuevo."
+                        )
+                        logger.error(f"_descargar_prueba: archivo demasiado grande: {len(r.content)} bytes")
+                        return None
+                    break
+            else:
+                logger.error("_descargar_prueba: demasiados redirects")
+                return None
+
+        logger.info(
+            f"_descargar_prueba: download status={status_code} bytes={len(contenido or b'')}"
+        )
+        if status_code == 200 and contenido is not None:
             async with aiofiles.open(ruta, "wb") as f:
-                await f.write(r.content)
+                await f.write(contenido)
             return ruta
     except Exception as e:
         logger.error(f"Error descargando prueba: {e}")
