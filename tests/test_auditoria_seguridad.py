@@ -395,6 +395,14 @@ class TestLLMTemplatesYPII(unittest.TestCase):
         chat_html = Path("app/templates/chat.html").read_text(encoding="utf-8")
         self.assertNotIn("div.innerHTML = text", chat_html)
 
+    def test_dockerfile_ajusta_permisos_data_y_baja_a_appuser_con_gosu(self):
+        df = Path("Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("gosu", df)
+        self.assertIn("PLAYWRIGHT_BROWSERS_PATH=/ms-playwright", df)
+        self.assertIn('VOLUME ["/data"]', df)
+        self.assertIn("chown -R appuser:appuser /data", df)
+        self.assertIn("exec gosu appuser python run_server.py", df)
+
 
 if __name__ == "__main__":
     unittest.main()

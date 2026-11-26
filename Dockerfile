@@ -4,8 +4,9 @@ WORKDIR /app
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    gosu \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -22,8 +23,8 @@ RUN useradd --create-home --shell /bin/bash appuser \
     && mkdir -p storage/tutelas storage/pruebas storage/constancias /data \
     && chown -R appuser:appuser /app /data /ms-playwright
 
-USER appuser
+VOLUME ["/data"]
 
 EXPOSE 8000
 
-CMD ["python", "run_server.py"]
+CMD ["sh", "-c", "mkdir -p /data/storage/tutelas /data/storage/pruebas /data/storage/constancias /data/storage/screenshots && chown -R appuser:appuser /data && exec gosu appuser python run_server.py"]
